@@ -13,6 +13,19 @@ ZAMIANA miejscowości na powiat:
 - itp.
 """
 
+import unicodedata
+
+
+def _lookup_key(value: str) -> str:
+    """Normalizuje wielkość liter oraz polskie znaki na potrzeby słowników."""
+    decomposed = unicodedata.normalize("NFD", str(value).casefold())
+    without_marks = "".join(
+        char for char in decomposed if unicodedata.category(char) != "Mn"
+    )
+    # Ł/ł nie rozkłada się do litery bazowej w Unicode NFD.
+    return without_marks.translate(str.maketrans({"ł": "l"}))
+
+
 # ============================================================================
 # SŁOWNIK: MIEJSCOWOŚĆ → NAZWA POWIATU
 # ============================================================================
@@ -255,6 +268,14 @@ CITY_TO_POWIAT = {
     "Kraków": "krakowski",
 }
 
+# Słownik jest wpisany w zapisie tytułowym, ale dane z wypisów bywają
+# zapisane małymi/wielkimi literami albo bez polskich znaków. Indeks
+# znormalizowany zapewnia, że forma zapisu wejściowego nie blokuje odmiany.
+CITY_TO_POWIAT_LOOKUP = {
+    _lookup_key(city): county for city, county in CITY_TO_POWIAT.items()
+}
+
+
 # ============================================================================
 # MIEJSCOWOŚCI - odmiana miejscownik (gdzie?)
 # ============================================================================
@@ -321,6 +342,11 @@ CITY_DECLENSIONS = {
     "Władysławowo": "Władysławowie",
     "Wladyslawowo": "Władysławowie",
 }
+
+CITY_DECLENSIONS_LOOKUP = {
+    _lookup_key(city): declined for city, declined in CITY_DECLENSIONS.items()
+}
+
 
 # ============================================================================
 # ODMIANA ULIC
@@ -414,13 +440,9 @@ def city_to_powiat(city: str) -> str:
     
     normalized = city.strip()
     
-    # Sprawdź bezpośrednio
-    if normalized in CITY_TO_POWIAT:
-        return CITY_TO_POWIAT[normalized]
-    
-    # Sprawdź z małymi literami
-    if normalized.lower() in CITY_TO_POWIAT:
-        return CITY_TO_POWIAT[normalized.lower()]
+    mapped_county = CITY_TO_POWIAT_LOOKUP.get(_lookup_key(normalized))
+    if mapped_county is not None:
+        return mapped_county
     
     # Jeśli już jest nazwą powiatu (kończy się na -ski/-cki/-dzki), zwróć jak jest
     if normalized.lower().endswith(("ski", "cka", "dzka", "skie", "ckie", "dzkie")):
@@ -449,15 +471,14 @@ def decline_city(city: str) -> str:
     if normalized.lower().endswith(("ski", "cka", "dzka", "skie", "ckie", "dzkie")):
         return normalized
     
-    # Słownik miejscowości
-    if normalized in CITY_DECLENSIONS:
-        return CITY_DECLENSIONS[normalized]
-    
-    if normalized.lower() in CITY_DECLENSIONS:
-        found = CITY_DECLENSIONS[normalized.lower()]
-        if normalized[0].isupper():
-            return found[0].upper() + found[1:]
-        return found
+    # Słownik miejscowości (niezależnie od wielkości liter wejścia).
+    declined_city = CITY_DECLENSIONS_LOOKUP.get(_lookup_key(normalized))
+    if declined_city is not None:
+        if normalized.isupper():
+            return declined_city.upper()
+        if normalized.islower():
+            return declined_city.lower()
+        return declined_city
     
     # Automatyczna odmiana dla żeńskich nazw na -a
     if normalized.lower().endswith("a") and not normalized.lower().endswith("ia"):

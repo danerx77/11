@@ -171,6 +171,100 @@ def remove_paragraph_borders(doc: Document):
             pBdr = pPr.find(qn('w:pBdr'))
             if pBdr is not None: pPr.remove(pBdr)
 
+def _transform_comma_separated(value, transform):
+    """Przetwarza każdą niepustą wartość z listy rozdzielonej przecinkami."""
+    text = str(value or "").strip()
+    if not text:
+        return text
+
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if not parts:
+        return text
+    return ", ".join(transform(part) for part in parts)
+
+
+def apply_declension_preferences(
+    location: str = "",
+    street: str = "",
+    county: str = "",
+    preferences: dict = None,
+):
+    """Zwraca wartości pól po uwzględnieniu ustawień odmiany dokumentu.
+
+    Przetwarzanie odbywa się tuż przed podmianą tagów DOCX. Dzięki temu te
+    same ustawienia działają dla wszystkich standardowych tagów, niezależnie
+    od sposobu generowania dokumentu (pojedynczo, seryjnie lub z własną mapą
+    tagów).
+    """
+    location_value = str(location or "").strip()
+    street_value = str(street or "").strip()
+    county_value = str(county or "").strip()
+
+    if not isinstance(preferences, dict):
+        return location_value, street_value, county_value
+
+    # Powiat wyznaczamy z pierwotnej miejscowości, a nie z jej już odmienionej
+    # formy (np. Gdańsk -> gdański, a nie Gdańsku).
+    source_location = location_value
+
+    if preferences.get("decl_location_locative", False):
+        from utils.polish_declension import decline_city
+
+        location_value = _transform_comma_separated(location_value, decline_city)
+
+    if preferences.get("decl_decline_streets", False):
+        from utils.polish_declension import decline_street
+
+        street_value = _transform_comma_separated(street_value, decline_street)
+
+    if preferences.get("decl_powiat_zamiana", False):
+        from utils.polish_declension import city_to_powiat
+
+        county_source = county_value or source_location
+        county_value = _transform_comma_separated(county_source, city_to_powiat)
+
+    return location_value, street_value, county_value
+
+
+# Akceptujemy oba warianty interpunkcji oraz starszy zapis bez polskich
+# znaków. Dzięki temu standardowe pola działają także w istniejących szablonach.
+STANDARD_TAG_ALIASES = {
+    'location': (
+        '<Miejscowość działki:>',
+        '<Miejscowość działki>',
+        '<Miejscowosc dzialki:>',
+        '<Miejscowosc dzialki>',
+    ),
+    'address_street': ('<Ulica>', '<Ulica:>'),
+    'street': ('<Ulica>', '<Ulica:>'),
+    'county': ('<Powiat:>', '<Powiat>'),
+}
+
+
+def _build_replacements(default_tags: dict, values: dict, tag_map: dict = None) -> dict:
+    """Tworzy podmiany dla standardowych i skonfigurowanych tagów.
+
+    Własna mapa tagów nie usuwa obsługi domyślnego znacznika. Pozwala to
+    bezpiecznie używać starszych szablonów, np. z <Miejscowość działki:>,
+    po zmianie nazwy tagu w ustawieniach.
+    """
+    configured_tags = dict(default_tags)
+    if isinstance(tag_map, dict):
+        for key, new_tag in tag_map.items():
+            if key not in configured_tags or not new_tag:
+                continue
+            configured_tags[key] = str(new_tag).strip()
+
+    replacements = {}
+    for key, value in values.items():
+        tags = [default_tags.get(key), configured_tags.get(key)]
+        tags.extend(STANDARD_TAG_ALIASES.get(key, ()))
+        for tag in tags:
+            if tag:
+                replacements[str(tag)] = value
+    return replacements
+
+
 def generate_declaration(
     template_path: str, output_path: str, project_number: str = '', place: str = '', date_str: str = '', 
     owner_name: str = '', nip: str = '', pesel: str = '', location: str = '', 
@@ -179,10 +273,14 @@ def generate_declaration(
     area_ha_budowa: str = '', area_ha_demontaz: str = '',
     precinct: str = '', precinct_caps: str = '', precinct_number: str = '', 
     kw_numbers: str = '', kw_numbers_budowa: str = '', kw_numbers_demontaz: str = '',
-    device_description: str = '', declaration_type: str = 'budowa', tag_map: dict = None, unlock_docs: bool = False
+    device_description: str = '', declaration_type: str = 'budowa', tag_map: dict = None,
+    unlock_docs: bool = False, declension_options: dict = None
 ) -> bool:
     try:
         doc = Document(template_path)
+        location, street, county = apply_declension_preferences(
+            location, street, county, declension_options
+        )
         if not precinct_caps: precinct_caps = precinct.upper()
         default_tags = {
             'owner_name': '<Imie Nazwisko>', 'nip': '<Nip>', 'pesel': '<Pesel>',
@@ -197,24 +295,35 @@ def generate_declaration(
             'address': '<Adres>', 'precinct': '<Obręb ewidencyjny: wielka litery>', 'precinct_number': '<Nr obrębu>',
         }
         
-        if tag_map:
-            for key, new_tag in tag_map.items():
-                if key in default_tags and new_tag: default_tags[key] = new_tag
-        replacements = {
-            default_tags['owner_name']: owner_name, default_tags['nip']: nip, default_tags['pesel']: pesel,
-            default_tags['voivodeship']: voivodeship, default_tags['county']: county, default_tags['municipality']: municipality,
-            default_tags['location']: location, default_tags['address_street']: street, 
-            default_tags['parcel_numbers_budowa']: parcel_numbers_budowa, default_tags['parcel_numbers_demontaz']: parcel_numbers_demontaz,
-            default_tags['area_ha']: area_ha, 
-            default_tags['area_ha_budowa']: area_ha_budowa, default_tags['area_ha_demontaz']: area_ha_demontaz,
-            default_tags['kw_numbers']: kw_numbers, 
-            default_tags['kw_numbers_budowa']: kw_numbers_budowa, default_tags['kw_numbers_demontaz']: kw_numbers_demontaz,
-            default_tags['device_description']: device_description,
-            default_tags['project_number']: project_number, default_tags['date']: date_str, default_tags['place']: place,
-            default_tags['address']: f"{street}, {location}" if street else location, 
-            default_tags['precinct']: precinct, 
-            default_tags['precinct_number']: precinct_number,
-        }
+        replacements = _build_replacements(
+            default_tags,
+            {
+                'owner_name': owner_name,
+                'nip': nip,
+                'pesel': pesel,
+                'voivodeship': voivodeship,
+                'county': county,
+                'municipality': municipality,
+                'location': location,
+                'address_street': street,
+                'parcel_numbers_budowa': parcel_numbers_budowa,
+                'parcel_numbers_demontaz': parcel_numbers_demontaz,
+                'area_ha': area_ha,
+                'area_ha_budowa': area_ha_budowa,
+                'area_ha_demontaz': area_ha_demontaz,
+                'kw_numbers': kw_numbers,
+                'kw_numbers_budowa': kw_numbers_budowa,
+                'kw_numbers_demontaz': kw_numbers_demontaz,
+                'device_description': device_description,
+                'project_number': project_number,
+                'date': date_str,
+                'place': place,
+                'address': f"{street}, {location}" if street else location,
+                'precinct': precinct,
+                'precinct_number': precinct_number,
+            },
+            tag_map,
+        )
         if declaration_type == 'demontaz':
             from docx.enum.text import WD_ALIGN_PARAGRAPH
             from docx.shared import Pt
@@ -243,10 +352,14 @@ def generate_cover_letter(
     street: str = '', subject: str = '', task_construction: str = '', task_demolition: str = '',
     parcel_numbers_construction: list = None, parcel_numbers_demolition: list = None,
     parcel_numbers: list = None, ownership_phrase: str = 'których są Państwo współwłaścicielami,', 
-    sender_name: str = '', sender_street: str = '', sender_city: str = '', tag_map: dict = None, unlock_docs: bool = False
+    sender_name: str = '', sender_street: str = '', sender_city: str = '', tag_map: dict = None,
+    unlock_docs: bool = False, declension_options: dict = None
 ) -> bool:
     try:
         doc = Document(template_path)
+        location, street, _ = apply_declension_preferences(
+            location, street, preferences=declension_options
+        )
         unique_parcels = list(dict.fromkeys(parcel_numbers or []))
         all_nums_str = ', '.join(unique_parcels)
         parcel_type = 'działek nr' if len(unique_parcels) > 1 else 'działki nr'
@@ -264,21 +377,36 @@ def generate_cover_letter(
             'ownership_phrase': '<wybór tekstu do kogo jest skierowany>'
         }
         
-        if tag_map:
-            for key, new_tag in tag_map.items():
-                if key in default_tags and new_tag: default_tags[key] = new_tag
-        replacements = {
-            default_tags['place']: place, default_tags['date']: date_str, default_tags['sender_name']: sender_name,
-            default_tags['sender_street']: sender_street, default_tags['sender_city']: sender_city, default_tags['addressee_name']: addressee_name,
-            default_tags['addressee_street']: addressee_street, default_tags['addressee_city']: addressee_city, default_tags['location']: location,
-            default_tags['street']: street, default_tags['subject']: subject,
-            default_tags['task_construction']: task_construction, default_tags['task_demolition']: task_demolition,
-            default_tags['parcel_numbers_construction']: ', '.join(parcel_numbers_construction or []),
-            default_tags['parcel_numbers_demolition']: ', '.join(parcel_numbers_demolition or []),
-            default_tags['parcel_type']: parcel_type, default_tags['parcel_numbers']: all_nums_str, default_tags['ownership_phrase']: ownership_phrase,
-        }
+        replacements = _build_replacements(
+            default_tags,
+            {
+                'place': place,
+                'date': date_str,
+                'sender_name': sender_name,
+                'sender_street': sender_street,
+                'sender_city': sender_city,
+                'addressee_name': addressee_name,
+                'addressee_street': addressee_street,
+                'addressee_city': addressee_city,
+                'location': location,
+                'street': street,
+                'subject': subject,
+                'task_construction': task_construction,
+                'task_demolition': task_demolition,
+                'parcel_numbers_construction': ', '.join(parcel_numbers_construction or []),
+                'parcel_numbers_demolition': ', '.join(parcel_numbers_demolition or []),
+                'parcel_type': parcel_type,
+                'parcel_numbers': all_nums_str,
+                'ownership_phrase': ownership_phrase,
+            },
+            tag_map,
+        )
         
         replace_text_precisely(doc.element.body, replacements)
+        for section in doc.sections:
+            replace_text_precisely(section.header._element, replacements)
+            replace_text_precisely(section.footer._element, replacements)
+
         if unlock_docs: unlock_content_controls(doc)
         doc.save(output_path)
         return True

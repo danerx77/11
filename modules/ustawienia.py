@@ -43,10 +43,10 @@ DECL_TAGS = [
     ("nip", "NIP", "<Nip>"),
     ("pesel", "PESEL", "<Pesel>"),
     ("voivodeship", "Województwo", "<Województwo:>"),
-    ("county", "Powiat", "<Powiat:>"),
+    ("county", "Powiat (zamiana, gdy opcja jest włączona)", "<Powiat:>"),
     ("municipality", "Jednostka ewidencyjna (gmina)", "<Jednostka ewidencyjna:>"),
-    ("location", "Miejscowość działki", "<Miejscowość działki:>"),
-    ("address_street", "Ulica", "<Ulica>"),
+    ("location", "Miejscowość działki (odmiana, gdy opcja jest włączona)", "<Miejscowość działki:>"),
+    ("address_street", "Ulica (odmiana, gdy opcja jest włączona)", "<Ulica>"),
     ("parcel_numbers_budowa", "Działki budowa", "<działki budowa:>"),
     ("parcel_numbers_demontaz", "Działki demontaż", "<działki demontaż:>"),
     ("area_ha", "Powierzchnia [ha]", "<Powierzchnia [ha]>"),
@@ -68,8 +68,8 @@ DECL_TAGS = [
 
 
 COVER_TAGS = [
-    ("location", "Miejscowość działki", "<Miejscowość działki>"),
-    ("street", "Ulica działki z wypisu", "<Ulica>"),
+    ("location", "Miejscowość działki (odmiana, gdy opcja jest włączona)", "<Miejscowość działki>"),
+    ("street", "Ulica działki z wypisu (odmiana, gdy opcja jest włączona)", "<Ulica>"),
     ("subject", "Temat", "<Temat>"),
     ("task_construction", "Zadanie budowa", "<Zadanie budowa>"),
     ("task_demolition", "Zadanie demontaż", "<Zadanie demontaż>"),
@@ -387,21 +387,48 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", self.chk_decl_precinct_upper)
 
         self.chk_decl_location_locative = QCheckBox(
-            "Odmieniaj miejscowości działki "
+            "Odmieniaj tagi <Miejscowość działki:> / <Miejscowość działki> "
             "(np. Gdynia → Gdyni, Warszawa → Warszawie)"
+        )
+        self.chk_decl_location_locative.setToolTip(
+            "Dotyczy standardowych tagów miejscowości w Oświadczeniach i Pismach."
         )
         decl_form.addRow("", self.chk_decl_location_locative)
 
         self.chk_decl_streets = QCheckBox(
-            "Odmieniaj ulice (np. ulica Miła → ul. Miłej)"
+            "Odmieniaj tag <Ulica> (np. ulica Miła → ul. Miłej)"
+        )
+        self.chk_decl_streets.setToolTip(
+            "Dotyczy standardowych tagów ulicy w Oświadczeniach i Pismach."
         )
         decl_form.addRow("", self.chk_decl_streets)
 
         self.chk_decl_powiat = QCheckBox(
-            "Zamieniaj miejscowości na właściwe nazwy powiatów "
+            "Zamieniaj tag <Powiat:> na właściwy powiat "
             "(np. Kościerzyna → kościerski, Wejherowo → wejherowski)"
         )
+        self.chk_decl_powiat.setToolTip(
+            "Dotyczy tagu <Powiat:> w Oświadczeniach woli."
+        )
         decl_form.addRow("", self.chk_decl_powiat)
+
+        # Zmiana działa w bieżącym uruchomieniu od razu; przycisk zapisu
+        # zachowuje ją także po ponownym uruchomieniu aplikacji.
+        self.chk_decl_location_locative.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_location_locative", enabled
+            )
+        )
+        self.chk_decl_streets.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_decline_streets", enabled
+            )
+        )
+        self.chk_decl_powiat.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_powiat_zamiana", enabled
+            )
+        )
 
         self.decl_budowa_edit = QLineEdit()
         decl_form.addRow(
@@ -1041,6 +1068,10 @@ class SettingsTabWidget(QWidget):
             table.setItem(row, 1, QTableWidgetItem(label))
             table.setItem(row, 2, QTableWidgetItem(default_tag))
             row += 1
+
+    def _set_runtime_declension_option(self, key: str, enabled: bool):
+        """Udostępnia zmianę opcji generatorom przed zapisaniem formularza."""
+        self.config[key] = bool(enabled)
 
     def _get_tags_from_table(self, table: QTableWidget) -> dict:
         result = {}

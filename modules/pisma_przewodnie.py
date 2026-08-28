@@ -991,24 +991,6 @@ class CoverLetterWidget(QWidget):
             cl_tmpl = str(latest) if latest else ""
         self.template_edit.setText(cl_tmpl)
 
-    def _location_for_decl(self, city: str) -> str:
-        if not self.config.get('decl_location_locative', False):
-            return str(city or '')
-        from utils.polish_declension import decline_city
-        parts = [p.strip() for p in str(city or '').split(',') if p.strip()]
-        if not parts:
-            return str(city or '')
-        return ', '.join(decline_city(p) for p in parts)
-
-    def _street_for_decl(self, street: str) -> str:
-        if not self.config.get('decl_decline_streets', False):
-            return str(street or '')
-        from utils.polish_declension import decline_street
-        parts = [p.strip() for p in str(street or '').split(',') if p.strip()]
-        if not parts:
-            return str(street or '')
-        return ', '.join(decline_street(p) for p in parts)
-
     def _get_params(self) -> dict:
         sender = self.config.get('sender', {})
         return {
@@ -1034,6 +1016,11 @@ class CoverLetterWidget(QWidget):
 
     def _preview(self):
         p = self._get_params()
+        from utils.docx_utils import apply_declension_preferences
+
+        location, street, _ = apply_declension_preferences(
+            p['location'], p['street'], preferences=self.config
+        )
         unique_parcels = list(dict.fromkeys(p['parcel_numbers']))
         all_nums_str = ', '.join(unique_parcels) or '—'
         parcel_type = 'działek nr' if len(unique_parcels) > 1 else 'działki nr'
@@ -1049,7 +1036,8 @@ class CoverLetterWidget(QWidget):
             f"=== PISMO PRZEWODNIE ===\n"
             f"{p['place']}, {p['date_str']}\n\n"
             f"Sz. P.\n{formatted_name}\n{p['addressee_street']}\n{p['addressee_city']}\n\n"
-            f"Zlokalizowanych w miejscowości {p['location']},\n"
+            f"Zlokalizowanych w miejscowości {location},\n"
+            f"Ulica działki: {street}\n"
             f"Teren {parcel_type} {all_nums_str}, {p['ownership_phrase']}."
         )
         self.preview_text.setText(preview)
@@ -1087,8 +1075,8 @@ class CoverLetterWidget(QWidget):
                 template_path=p['template_path'], output_path=out_path, date_str=p['date_str'], place=p['place'],
                 sender_name=p['sender_name'], sender_street=p['sender_street'], sender_city=p['sender_city'],
                 addressee_salutation='Sz. P.', addressee_name=p['addressee_name'], addressee_street=p['addressee_street'],
-                addressee_city=p['addressee_city'], location=self._location_for_decl(p['location']),
-                street=self._street_for_decl(p['street']),
+                addressee_city=p['addressee_city'], location=p['location'],
+                street=p['street'],
                 subject=p['subject'],
                 task_construction=p['task_construction'],
                 task_demolition=p['task_demolition'],
@@ -1096,7 +1084,8 @@ class CoverLetterWidget(QWidget):
                 parcel_numbers_demolition=p['parcel_numbers_demolition'],
                 parcel_numbers=p['parcel_numbers'],
                 ownership_phrase=p['ownership_phrase'], tag_map=self.config.get('cover_letter_tag_map'),
-                unlock_docs=self.config.get("unlock_generated_docs", False)
+                unlock_docs=self.config.get("unlock_generated_docs", False),
+                declension_options=self.config,
             )
             
             if ok: 
@@ -1225,8 +1214,8 @@ class CoverLetterWidget(QWidget):
                     template_path=p['template_path'], output_path=out_path, date_str=p['date_str'], place=p['place'],
                     sender_name=p['sender_name'], sender_street=p['sender_street'], sender_city=p['sender_city'],
                     addressee_salutation='Sz. P.', addressee_name=name_line, addressee_street=street_adr, addressee_city=city_adr,
-                    location=self._location_for_decl(o.get('city', '') or p['location']),
-                    street=self._street_for_decl(final_street_dz),
+                    location=o.get('city', '') or p['location'],
+                    street=final_street_dz,
                     subject=p['subject'],
                     task_construction=p['task_construction'],
                     task_demolition=p['task_demolition'],
@@ -1234,7 +1223,8 @@ class CoverLetterWidget(QWidget):
                     parcel_numbers_demolition=list(set(dem_list)),
                     parcel_numbers=o_nums,
                     ownership_phrase=phrase, tag_map=self.config.get('cover_letter_tag_map'),
-                    unlock_docs=self.config.get("unlock_generated_docs", False)
+                    unlock_docs=self.config.get("unlock_generated_docs", False),
+                    declension_options=self.config,
                 )
                 if ok: 
                     success += 1
