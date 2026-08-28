@@ -278,8 +278,14 @@ def generate_declaration(
 ) -> bool:
     try:
         doc = Document(template_path)
-        location, street, county = apply_declension_preferences(
-            location, street, county, declension_options
+        # Odmiana służy wyłącznie wartościom podstawianym pod konkretne
+        # tagi DOCX. Dane wejściowe pozostają niezmienione, a <Adres>
+        # zawsze zachowuje surową ulicę i miejscowość.
+        raw_location = str(location or "").strip()
+        raw_street = str(street or "").strip()
+        raw_county = str(county or "").strip()
+        tag_location, tag_street, tag_county = apply_declension_preferences(
+            raw_location, raw_street, raw_county, declension_options
         )
         if not precinct_caps: precinct_caps = precinct.upper()
         default_tags = {
@@ -302,10 +308,10 @@ def generate_declaration(
                 'nip': nip,
                 'pesel': pesel,
                 'voivodeship': voivodeship,
-                'county': county,
+                'county': tag_county,
                 'municipality': municipality,
-                'location': location,
-                'address_street': street,
+                'location': tag_location,
+                'address_street': tag_street,
                 'parcel_numbers_budowa': parcel_numbers_budowa,
                 'parcel_numbers_demontaz': parcel_numbers_demontaz,
                 'area_ha': area_ha,
@@ -318,7 +324,7 @@ def generate_declaration(
                 'project_number': project_number,
                 'date': date_str,
                 'place': place,
-                'address': f"{street}, {location}" if street else location,
+                'address': f"{raw_street}, {raw_location}" if raw_street else raw_location,
                 'precinct': precinct,
                 'precinct_number': precinct_number,
             },
@@ -357,8 +363,12 @@ def generate_cover_letter(
 ) -> bool:
     try:
         doc = Document(template_path)
-        location, street, _ = apply_declension_preferences(
-            location, street, preferences=declension_options
+        # Tylko tagi <Miejscowość działki> i <Ulica> otrzymują odmienione
+        # wartości; przekazane dane oraz inne widoki pozostają surowe.
+        raw_location = str(location or "").strip()
+        raw_street = str(street or "").strip()
+        tag_location, tag_street, _ = apply_declension_preferences(
+            raw_location, raw_street, preferences=declension_options
         )
         unique_parcels = list(dict.fromkeys(parcel_numbers or []))
         all_nums_str = ', '.join(unique_parcels)
@@ -388,8 +398,8 @@ def generate_cover_letter(
                 'addressee_name': addressee_name,
                 'addressee_street': addressee_street,
                 'addressee_city': addressee_city,
-                'location': location,
-                'street': street,
+                'location': tag_location,
+                'street': tag_street,
                 'subject': subject,
                 'task_construction': task_construction,
                 'task_demolition': task_demolition,

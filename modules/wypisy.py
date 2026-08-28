@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
 
+from utils.parcel_sorting import parcel_sort_key as parcel_number_sort_key
+
 def format_area_pl(val) -> str:
     if not val: return "0,00"
     s = f"{float(val):.4f}".rstrip('0')
@@ -236,7 +238,13 @@ class OwnersListWidget(QWidget):
         header_row.addWidget(QLabel('Sortowanie:'))
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(['Domyślne', 'Alfabetycznie', 'Od najniższego numeru działki', 'Od najwyższego numeru działki'])
-        self.sort_combo.currentIndexChanged.connect(lambda *_: self._refresh_table(self.search_edit.text()))
+        try:
+            saved_sort_index = int(self.config.get('owners_list_sort_index', 0))
+        except (TypeError, ValueError):
+            saved_sort_index = 0
+        if 0 <= saved_sort_index < self.sort_combo.count():
+            self.sort_combo.setCurrentIndex(saved_sort_index)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         header_row.addWidget(self.sort_combo)
         left_layout.addLayout(header_row)
 
@@ -453,6 +461,10 @@ class OwnersListWidget(QWidget):
             self._save_to_project_state()
             self.owners_changed.emit(self.owners)
 
+    def _on_sort_changed(self, index: int):
+        self.config['owners_list_sort_index'] = index
+        self._refresh_table(self.search_edit.text())
+
     def _refresh_table(self, filter_text: str = ''):
         self.table.blockSignals(True) 
         self.table.setRowCount(0)
@@ -463,14 +475,18 @@ class OwnersListWidget(QWidget):
             if sort_mode == 'Alfabetycznie':
                 indexed_owners.sort(key=lambda pair: (pair[1].get('last_name') or pair[1].get('full_name') or '').lower())
             elif sort_mode in ('Od najniższego numeru działki', 'Od najwyższego numeru działki'):
-                def parcel_sort_key(owner):
-                    nums = []
+                def owner_parcel_sort_key(owner):
+                    keys = []
                     for parcel in owner.get('parcels', owner.get('parcel_numbers', [])):
-                        n = parcel.get('number', parcel) if isinstance(parcel, dict) else parcel
-                        parts = [int(x) if x.isdigit() else x.lower() for x in re.split(r'([0-9]+)', str(n))]
-                        nums.append(parts)
-                    return min(nums) if nums else [999999]
-                indexed_owners.sort(key=lambda pair: parcel_sort_key(pair[1]), reverse=(sort_mode == 'Od najwyższego numeru działki'))
+                        number = parcel.get('number', parcel) if isinstance(parcel, dict) else parcel
+                        keys.append(parcel_number_sort_key(number))
+                    # Właściciele bez działek są wyświetlani za wpisami z numerem.
+                    return min(keys) if keys else ((3, ''),)
+
+                indexed_owners.sort(
+                    key=lambda pair: owner_parcel_sort_key(pair[1]),
+                    reverse=(sort_mode == 'Od najwyższego numeru działki'),
+                )
         for idx, o in indexed_owners:
             full_name = o.get('full_name', f"{o.get('last_name','')} {o.get('first_name','')}")
             if filter_text:

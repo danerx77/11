@@ -297,7 +297,16 @@ class EnvelopeGenWidget(QWidget):
 
         self.main_splitter.setStretchFactor(0, 3)
         self.main_splitter.setStretchFactor(1, 2)
-        self.main_splitter.setSizes([700, 500])
+        saved_sizes = self.config.get("envelope_splitter_sizes", [])
+        if (
+            isinstance(saved_sizes, list)
+            and len(saved_sizes) == 2
+            and all(isinstance(size, int) and size > 0 for size in saved_sizes)
+        ):
+            self.main_splitter.setSizes(saved_sizes)
+        else:
+            self.main_splitter.setSizes([700, 500])
+        self.main_splitter.splitterMoved.connect(self._save_splitter_sizes)
         self._auto_load_stamps_from_ia(silent=True)
 
     def _build_owners_box(self) -> QGroupBox:
@@ -328,17 +337,26 @@ class EnvelopeGenWidget(QWidget):
         self.chk_hide_generated = QCheckBox(
             "Ukryj adresatów, dla których wygenerowano obie koperty"
         )
-        self.chk_hide_generated.stateChanged.connect(self._refresh_owners_table)
+        self.chk_hide_generated.setChecked(
+            bool(self.config.get("envelope_hide_generated", False))
+        )
+        self.chk_hide_generated.toggled.connect(self._on_owner_filter_changed)
         filter_row.addWidget(self.chk_hide_generated)
         self.chk_show_only_generated = QCheckBox("Pokaż tylko wygenerowane")
-        self.chk_show_only_generated.stateChanged.connect(self._refresh_owners_table)
+        self.chk_show_only_generated.setChecked(
+            bool(self.config.get("envelope_show_only_generated", False))
+        )
+        self.chk_show_only_generated.toggled.connect(self._on_owner_filter_changed)
         filter_row.addWidget(self.chk_show_only_generated)
         filter_row.addStretch()
         filter_row.addWidget(QLabel("Sortowanie:"))
         self.view_sort_combo = QComboBox()
         self.view_sort_combo.addItems(["Domyślne", "Alfabetycznie"])
+        self.view_sort_combo.setCurrentIndex(
+            self._preference_index("envelope_view_sort")
+        )
         self.view_sort_combo.currentIndexChanged.connect(
-            self._refresh_owners_table
+            self._on_view_sort_changed
         )
         filter_row.addWidget(self.view_sort_combo)
         layout.addLayout(filter_row)
@@ -426,6 +444,12 @@ class EnvelopeGenWidget(QWidget):
         self.sender_name_edit = QLineEdit(sender.get("name", ""))
         self.sender_street_edit = QLineEdit(sender.get("street", ""))
         self.sender_city_edit = QLineEdit(sender.get("city", ""))
+        for edit in (
+            self.sender_name_edit,
+            self.sender_street_edit,
+            self.sender_city_edit,
+        ):
+            edit.editingFinished.connect(self._save_sender_preferences)
         form.addRow("Imię i nazwisko:", self.sender_name_edit)
         form.addRow("Ulica:", self.sender_street_edit)
         form.addRow("Kod i miejscowość:", self.sender_city_edit)
@@ -451,8 +475,18 @@ class EnvelopeGenWidget(QWidget):
     def _build_templates_box(self) -> QGroupBox:
         box = QGroupBox("Szablony kopert (.docx)")
         form = QFormLayout(box)
-        self.c5_tmpl_edit = QLineEdit(self.config.get("env_c5_template", ""))
-        self.c6_tmpl_edit = QLineEdit(self.config.get("env_c6_template", ""))
+        self.c5_tmpl_edit = QLineEdit(
+            self._template_preference("C5")
+        )
+        self.c6_tmpl_edit = QLineEdit(
+            self._template_preference("C6")
+        )
+        self.c5_tmpl_edit.textChanged.connect(
+            lambda value: self._save_template_preference("C5", value)
+        )
+        self.c6_tmpl_edit.textChanged.connect(
+            lambda value: self._save_template_preference("C6", value)
+        )
         form.addRow(
             "Szablon C5:",
             self._path_row(
@@ -478,8 +512,15 @@ class EnvelopeGenWidget(QWidget):
         layout = QVBoxLayout(box)
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("Folder zapisu:"))
-        self.out_dir_edit = QLineEdit()
+        self.out_dir_edit = QLineEdit(
+            self.config.get("envelope_output_dir", "")
+        )
         self.out_dir_edit.setReadOnly(True)
+        self.out_dir_edit.textChanged.connect(
+            lambda value: self.config.update(
+                {"envelope_output_dir": value.strip()}
+            )
+        )
         browse = QPushButton("Wybierz")
         browse.clicked.connect(self._browse_output_dir)
         clear = QPushButton("Usuń")
@@ -493,13 +534,42 @@ class EnvelopeGenWidget(QWidget):
         self.chk_single_files = QCheckBox(
             "Każda koperta w osobnym pliku"
         )
+        self.chk_single_files.setChecked(
+            bool(self.config.get("envelope_single_files", False))
+        )
+        self.chk_single_files.toggled.connect(
+            lambda checked: self.config.update(
+                {"envelope_single_files": bool(checked)}
+            )
+        )
         options.addWidget(self.chk_single_files)
         options.addStretch()
         options.addWidget(QLabel("Kolejność:"))
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Jak na liście", "Alfabetycznie"])
+        self.sort_combo.setCurrentIndex(
+            self._preference_index("envelope_generation_sort")
+        )
+        self.sort_combo.currentIndexChanged.connect(
+            self._on_generation_sort_changed
+        )
         options.addWidget(self.sort_combo)
         layout.addLayout(options)
+
+        single_type_row = QHBoxLayout()
+        self.btn_gen_c5 = QPushButton(
+            "⚡ Generuj tylko C5 dla zaznaczonych"
+        )
+        self.btn_gen_c5.setObjectName("btn_primary")
+        self.btn_gen_c5.clicked.connect(self._generate_c5_envelopes)
+        single_type_row.addWidget(self.btn_gen_c5)
+        self.btn_gen_c6 = QPushButton(
+            "⚡ Generuj tylko C6 dla zaznaczonych"
+        )
+        self.btn_gen_c6.setObjectName("btn_primary")
+        self.btn_gen_c6.clicked.connect(self._generate_c6_envelopes)
+        single_type_row.addWidget(self.btn_gen_c6)
+        layout.addLayout(single_type_row)
 
         self.btn_gen_batch = QPushButton(
             "⚡ Generuj C5 + C6 dla zaznaczonych adresatów"
@@ -536,6 +606,12 @@ class EnvelopeGenWidget(QWidget):
         self.tab_c6, self.list_c6 = self._stamp_list_page()
         self.stamps_tab.addTab(self.tab_c5, "Znaczki C5")
         self.stamps_tab.addTab(self.tab_c6, "Znaczki C6")
+        self.stamps_tab.setCurrentIndex(
+            self._preference_index("envelope_stamps_tab", default=0)
+        )
+        self.stamps_tab.currentChanged.connect(
+            lambda index: self.config.update({"envelope_stamps_tab": index})
+        )
         layout.addWidget(self.stamps_tab, 1)
 
         buttons = QHBoxLayout()
@@ -599,13 +675,90 @@ class EnvelopeGenWidget(QWidget):
         return page, stamp_list
 
     # ----------------------------------------------------------- lifecycle
+    def _preference_index(self, key: str, default=None) -> int:
+        if default is None:
+            default = 1 if self.config.get("sort_alpha_default", False) else 0
+        try:
+            index = int(self.config.get(key, default))
+        except (TypeError, ValueError):
+            index = default
+        return 1 if index else 0
+
+    def _on_owner_filter_changed(self, _checked=False):
+        self.config["envelope_hide_generated"] = self.chk_hide_generated.isChecked()
+        self.config["envelope_show_only_generated"] = (
+            self.chk_show_only_generated.isChecked()
+        )
+        self._refresh_owners_table()
+
+    def _on_view_sort_changed(self, index: int):
+        self.config["envelope_view_sort"] = index
+        self._refresh_owners_table()
+
+    def _on_generation_sort_changed(self, index: int):
+        self.config["envelope_generation_sort"] = index
+
+    def _save_splitter_sizes(self, *_args):
+        self.config["envelope_splitter_sizes"] = self.main_splitter.sizes()
+
+    def _template_preference(self, env_type: str) -> str:
+        return self.config.get(
+            f"envelope_{env_type.lower()}_template",
+            self.config.get(f"env_{env_type.lower()}_template", ""),
+        )
+
+    def _save_template_preference(self, env_type: str, path: str):
+        self.config[f"envelope_{env_type.lower()}_template"] = path.strip()
+
+    def _save_sender_preferences(self):
+        sender = dict(self.config.get("sender", {}))
+        sender.update(
+            {
+                "name": self.sender_name_edit.text().strip(),
+                "street": self.sender_street_edit.text().strip(),
+                "city": self.sender_city_edit.text().strip(),
+            }
+        )
+        self.config["sender"] = sender
+
     def showEvent(self, event):
         super().showEvent(event)
-        sort_index = 1 if self.config.get("sort_alpha_default", False) else 0
-        self.view_sort_combo.setCurrentIndex(sort_index)
-        self.sort_combo.setCurrentIndex(sort_index)
-        self.c5_tmpl_edit.setText(self.config.get("env_c5_template", ""))
-        self.c6_tmpl_edit.setText(self.config.get("env_c6_template", ""))
+        for combo, key in (
+            (self.view_sort_combo, "envelope_view_sort"),
+            (self.sort_combo, "envelope_generation_sort"),
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(self._preference_index(key))
+            combo.blockSignals(False)
+
+        for checkbox, key in (
+            (self.chk_hide_generated, "envelope_hide_generated"),
+            (self.chk_show_only_generated, "envelope_show_only_generated"),
+            (self.chk_single_files, "envelope_single_files"),
+        ):
+            checkbox.blockSignals(True)
+            checkbox.setChecked(bool(self.config.get(key, False)))
+            checkbox.blockSignals(False)
+
+        sender = self.config.get("sender", {})
+        for edit, key in (
+            (self.sender_name_edit, "name"),
+            (self.sender_street_edit, "street"),
+            (self.sender_city_edit, "city"),
+        ):
+            value = sender.get(key, "")
+            if not edit.hasFocus() and edit.text() != value:
+                edit.setText(value)
+
+        c5_template = self._template_preference("C5")
+        c6_template = self._template_preference("C6")
+        if self.c5_tmpl_edit.text() != c5_template:
+            self.c5_tmpl_edit.setText(c5_template)
+        if self.c6_tmpl_edit.text() != c6_template:
+            self.c6_tmpl_edit.setText(c6_template)
+        output_dir = self.config.get("envelope_output_dir", "")
+        if self.out_dir_edit.text() != output_dir:
+            self.out_dir_edit.setText(output_dir)
         self._sync_pdf_from_config("C5")
         self._sync_pdf_from_config("C6")
 
@@ -1035,6 +1188,7 @@ class EnvelopeGenWidget(QWidget):
             self.c6_pdf_edit.clear()
             self.stamps_c6.clear()
             self.list_c6.clear()
+        self.config[f"stamp_{env_type.lower()}_pdf"] = ""
         self._update_stamps_info()
 
     def _browse_stamp_pdf(self, env_type):
@@ -1286,12 +1440,29 @@ class EnvelopeGenWidget(QWidget):
             return False, "Brak kodu pocztowego"
         return True, "OK"
 
-    def _generation_inputs(self):
-        c5 = self.c5_tmpl_edit.text().strip()
-        c6 = self.c6_tmpl_edit.text().strip()
-        if not Path(c5).exists() or not Path(c6).exists():
-            QMessageBox.warning(self, "Błąd", "Brak szablonów C5 lub C6.")
+    def _generation_inputs(self, envelope_types=("C5", "C6")):
+        """Waliduje wyłącznie szablony potrzebne do wybranej akcji."""
+        selected_types = tuple(
+            env_type for env_type in ("C5", "C6") if env_type in envelope_types
+        )
+        templates = {
+            "C5": self.c5_tmpl_edit.text().strip(),
+            "C6": self.c6_tmpl_edit.text().strip(),
+        }
+        missing_templates = [
+            env_type
+            for env_type in selected_types
+            if not templates[env_type] or not Path(templates[env_type]).is_file()
+        ]
+        if missing_templates:
+            QMessageBox.warning(
+                self,
+                "Brak szablonu",
+                "Wskaż poprawny szablon: " + ", ".join(missing_templates) + ".",
+            )
             return None
+
+        self._save_sender_preferences()
         sender = (
             self.sender_name_edit.text().strip(),
             self.sender_street_edit.text().strip(),
@@ -1300,51 +1471,96 @@ class EnvelopeGenWidget(QWidget):
         if not all(sender):
             QMessageBox.warning(self, "Błąd", "Uzupełnij dane nadawcy.")
             return None
-        return c5, c6, sender
+        return templates, sender
+
+    def _generate_c5_envelopes(self):
+        self._generate_envelopes(("C5",))
+
+    def _generate_c6_envelopes(self):
+        self._generate_envelopes(("C6",))
 
     def _generate_batch_envelopes(self):
+        self._generate_envelopes(("C5", "C6"))
+
+    def _generate_envelopes(self, envelope_types):
+        """Generuje tylko wskazane rodzaje kopert i ich odpowiadające znaczki."""
+        selected_types = tuple(
+            env_type for env_type in ("C5", "C6") if env_type in envelope_types
+        )
+        if not selected_types:
+            return
+
         targets = self._selected_targets(validate=True)
         if not targets:
             QMessageBox.warning(self, "Brak", "Zaznacz poprawnych adresatów.")
             return
-        inputs = self._generation_inputs()
+        inputs = self._generation_inputs(selected_types)
         if not inputs:
             return
-        c5_template, c6_template, sender = inputs
-        possible = min(
-            sum(not s.get("used") for s in self.stamps_c5),
-            sum(not s.get("used") for s in self.stamps_c6),
-        )
+        templates, sender = inputs
+
+        available = {
+            "C5": sum(not stamp.get("used") for stamp in self.stamps_c5),
+            "C6": sum(not stamp.get("used") for stamp in self.stamps_c6),
+        }
+        possible = min(available[env_type] for env_type in selected_types)
+        requested_label = " + ".join(selected_types)
         if possible <= 0:
-            QMessageBox.critical(self, "Brak znaczków", "Brak wolnych kompletów C5+C6.")
+            missing = [
+                env_type for env_type in selected_types if available[env_type] <= 0
+            ]
+            QMessageBox.critical(
+                self,
+                "Brak znaczków",
+                "Brak wolnych znaczków: " + ", ".join(missing) + ".",
+            )
             return
         if possible < len(targets):
+            availability = ", ".join(
+                f"{env_type}: {available[env_type]}"
+                for env_type in selected_types
+            )
             answer = QMessageBox.question(
                 self,
                 "Brakuje znaczków",
-                f"Znaczków wystarczy dla {possible} z {len(targets)} osób. Kontynuować?",
+                f"Wolne znaczki ({availability}) wystarczą dla {possible} z "
+                f"{len(targets)} adresatów ({requested_label}). Kontynuować?",
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
             targets = targets[:possible]
-        self._perform_generation(targets, c5_template, c6_template, sender, reuse=False)
+        self._perform_generation(
+            targets, templates, sender, selected_types, reuse=False
+        )
 
     def _regenerate_envelopes(self):
+        selected_types = ("C5", "C6")
         targets = self._selected_targets(validate=False)
         if not targets:
             QMessageBox.warning(self, "Brak", "Zaznacz adresatów.")
             return
-        inputs = self._generation_inputs()
+        inputs = self._generation_inputs(selected_types)
         if not inputs:
             return
-        self._perform_generation(targets, *inputs, reuse=True)
+        templates, sender = inputs
+        self._perform_generation(
+            targets, templates, sender, selected_types, reuse=True
+        )
 
-    def _perform_generation(self, targets, c5_template, c6_template, sender, reuse=False):
+    def _perform_generation(
+        self, targets, templates, sender, envelope_types=("C5", "C6"), reuse=False
+    ):
+        selected_types = tuple(
+            env_type for env_type in ("C5", "C6") if env_type in envelope_types
+        )
+        if not selected_types:
+            return
+
         output = self._get_output_dir()
         single = self.chk_single_files.isChecked()
         temp = output if single else output / f"temp_{uuid.uuid4().hex[:8]}"
         temp.mkdir(parents=True, exist_ok=True)
-        c5_files, c6_files = [], []
+        files_by_type = {"C5": [], "C6": []}
         shipments = self._load_shipments()
         suffix = "_KOREKTA" if reuse else ""
         from utils.docx_utils import generate_envelope_c5, generate_envelope_c6
@@ -1354,32 +1570,82 @@ class EnvelopeGenWidget(QWidget):
             name = self._get_formatted_name(owner)
             street, city = self._split_address(address)
             short = self._safe_filename(self._get_short_name(owner) + suffix)
-            if reuse:
-                c5_record = next((x for x in shipments if x.get("addressee") == name and x.get("envelope_type") == "C5"), None)
-                c6_record = next((x for x in shipments if name in x.get("addressee", "") and x.get("envelope_type") == "C6"), None)
-                c5_stamp = next((x for x in self.stamps_c5 if c5_record and x.get("barcode") == c5_record.get("stamp_barcode")), None)
-                c6_stamp = next((x for x in self.stamps_c6 if c6_record and x.get("barcode") == c6_record.get("stamp_barcode")), None)
-            else:
-                c5_stamp = self._get_unused_stamp("C5")
-                c6_stamp = self._get_unused_stamp("C6")
+            c5_stamp = c6_stamp = None
 
-            if not c5_stamp or not c6_stamp:
+            if "C5" in selected_types:
+                if reuse:
+                    c5_record = next(
+                        (
+                            record
+                            for record in shipments
+                            if record.get("addressee") == name
+                            and record.get("envelope_type") == "C5"
+                        ),
+                        None,
+                    )
+                    c5_stamp = next(
+                        (
+                            stamp
+                            for stamp in self.stamps_c5
+                            if c5_record
+                            and stamp.get("barcode")
+                            == c5_record.get("stamp_barcode")
+                        ),
+                        None,
+                    )
+                else:
+                    c5_stamp = self._get_unused_stamp("C5")
+
+            if "C6" in selected_types:
+                if reuse:
+                    c6_record = next(
+                        (
+                            record
+                            for record in shipments
+                            if name in record.get("addressee", "")
+                            and record.get("envelope_type") == "C6"
+                        ),
+                        None,
+                    )
+                    c6_stamp = next(
+                        (
+                            stamp
+                            for stamp in self.stamps_c6
+                            if c6_record
+                            and stamp.get("barcode")
+                            == c6_record.get("stamp_barcode")
+                        ),
+                        None,
+                    )
+                else:
+                    c6_stamp = self._get_unused_stamp("C6")
+
+            required_stamps = {
+                "C5": c5_stamp,
+                "C6": c6_stamp,
+            }
+            if any(not required_stamps[env_type] for env_type in selected_types):
                 break
 
-            c5_path = temp / f"C5_{order}_{short}.docx"
-            c6_path = temp / f"C6_{order}_{short}.docx"
-            c5_ok = generate_envelope_c5(
-                c5_template, str(c5_path), *sender,
-                name, street, city, c5_stamp.get("thumbnail_bytes"),
-            )
-            c6_ok = generate_envelope_c6(
-                c6_template, str(c6_path), *sender,
-                stamp_image_bytes=c6_stamp.get("thumbnail_bytes"),
-            )
-            if c5_ok:
-                c5_files.append(str(c5_path))
-            if c6_ok:
-                c6_files.append(str(c6_path))
+            c5_ok = c6_ok = False
+            c5_path = c6_path = None
+            if "C5" in selected_types:
+                c5_path = temp / f"C5_{order}_{short}.docx"
+                c5_ok = generate_envelope_c5(
+                    templates["C5"], str(c5_path), *sender,
+                    name, street, city, c5_stamp.get("thumbnail_bytes"),
+                )
+                if c5_ok:
+                    files_by_type["C5"].append(str(c5_path))
+
+            if "C6" in selected_types:
+                c6_path = temp / f"C6_{order}_{short}.docx"
+                c6_ok = generate_envelope_c6(
+                    templates["C6"], str(c6_path), *sender,
+                    stamp_image_bytes=c6_stamp.get("thumbnail_bytes"),
+                )
+                if c6_ok:
+                    files_by_type["C6"].append(str(c6_path))
 
             if not reuse:
                 now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1389,7 +1655,8 @@ class EnvelopeGenWidget(QWidget):
                     self.shipment_generated.emit({
                         "date": now, "addressee": name,
                         "addressee_street": street, "addressee_city": city,
-                        "envelope_type": "C5", "stamp_barcode": c5_stamp.get("barcode", ""),
+                        "envelope_type": "C5",
+                        "stamp_barcode": c5_stamp.get("barcode", ""),
                         "path": str(c5_path),
                     })
                 if c6_ok:
@@ -1397,16 +1664,22 @@ class EnvelopeGenWidget(QWidget):
                     owner["env_c6_generated"] = True
                     self.shipment_generated.emit({
                         "date": now, "addressee": f"Zwrot od {name}",
-                        "addressee_street": sender[1], "addressee_city": sender[2],
-                        "envelope_type": "C6", "stamp_barcode": c6_stamp.get("barcode", ""),
+                        "addressee_street": sender[1],
+                        "addressee_city": sender[2],
+                        "envelope_type": "C6",
+                        "stamp_barcode": c6_stamp.get("barcode", ""),
                         "path": str(c6_path),
                     })
 
         if not single:
             from utils.docx_utils import merge_docx_files
+
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            for env_type, files in [("C5", c5_files), ("C6", c6_files)]:
-                destination = output / f"Zbiorcze_Koperty_{env_type}{suffix}_{stamp}.docx"
+            for env_type in selected_types:
+                files = files_by_type[env_type]
+                destination = output / (
+                    f"Zbiorcze_Koperty_{env_type}{suffix}_{stamp}.docx"
+                )
                 if len(files) == 1:
                     shutil.copy(files[0], destination)
                 elif len(files) > 1:
@@ -1419,11 +1692,11 @@ class EnvelopeGenWidget(QWidget):
         self._refresh_stamps_list("C6")
         self._update_stamps_info()
         self._refresh_owners_table()
-        QMessageBox.information(
-            self,
-            "Koniec",
-            f"Wygenerowano C5: {len(c5_files)}\nWygenerowano C6: {len(c6_files)}",
+        summary = "\n".join(
+            f"Wygenerowano {env_type}: {len(files_by_type[env_type])}"
+            for env_type in selected_types
         )
+        QMessageBox.information(self, "Koniec", summary)
 
     # -------------------------------------------------------------- public
     def set_owners(self, owners_from_registry: list):

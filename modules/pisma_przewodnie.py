@@ -1015,12 +1015,9 @@ class CoverLetterWidget(QWidget):
         }
 
     def _preview(self):
+        # Podgląd ma prezentować dane źródłowe. Odmiana dotyczy wyłącznie
+        # wartości podstawianych pod tagi w dokumencie DOCX.
         p = self._get_params()
-        from utils.docx_utils import apply_declension_preferences
-
-        location, street, _ = apply_declension_preferences(
-            p['location'], p['street'], preferences=self.config
-        )
         unique_parcels = list(dict.fromkeys(p['parcel_numbers']))
         all_nums_str = ', '.join(unique_parcels) or '—'
         parcel_type = 'działek nr' if len(unique_parcels) > 1 else 'działki nr'
@@ -1036,8 +1033,8 @@ class CoverLetterWidget(QWidget):
             f"=== PISMO PRZEWODNIE ===\n"
             f"{p['place']}, {p['date_str']}\n\n"
             f"Sz. P.\n{formatted_name}\n{p['addressee_street']}\n{p['addressee_city']}\n\n"
-            f"Zlokalizowanych w miejscowości {location},\n"
-            f"Ulica działki: {street}\n"
+            f"Zlokalizowanych w miejscowości {p['location']},\n"
+            f"Ulica działki: {p['street']}\n"
             f"Teren {parcel_type} {all_nums_str}, {p['ownership_phrase']}."
         )
         self.preview_text.setText(preview)

@@ -2,7 +2,6 @@
 parcel_list.py – Zakładka lista działek   Lista Działek
 """
 import json
-import re
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -13,6 +12,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
+
+from utils.parcel_sorting import parcel_sort_key
 
 CATEGORY_COLORS = {
     'Demontaż': QColor('#ff6b35'),
@@ -147,11 +148,18 @@ class ParcelListWidget(QWidget):
 
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(['Wszystkie', 'Demontaż', 'Budowa', 'Przyłącze'])
-        self.filter_combo.currentTextChanged.connect(self._apply_filter)
-        
+        saved_filter = self.config.get('parcel_list_filter', 'Wszystkie')
+        if saved_filter in [self.filter_combo.itemText(i) for i in range(self.filter_combo.count())]:
+            self.filter_combo.setCurrentText(saved_filter)
+
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(['Domyślne', 'Rosnąco', 'Malejąco'])
-        self.sort_combo.currentTextChanged.connect(self._apply_filter)
+        saved_sort = self.config.get('parcel_list_sort', 'Domyślne')
+        if saved_sort in [self.sort_combo.itemText(i) for i in range(self.sort_combo.count())]:
+            self.sort_combo.setCurrentText(saved_sort)
+
+        self.filter_combo.currentTextChanged.connect(self._remember_list_preferences)
+        self.sort_combo.currentTextChanged.connect(self._remember_list_preferences)
         
         header_row.addWidget(QLabel('Filtr:'))
         header_row.addWidget(self.filter_combo)
@@ -279,9 +287,10 @@ class ParcelListWidget(QWidget):
             display_list.append(p)
 
         if sort_mode != 'Domyślne':
-            def nat_sort(p):
-                return [int(t) if t.isdigit() else t.lower() for t in re.split('([0-9]+)', p['number'])]
-            display_list.sort(key=nat_sort, reverse=(sort_mode == 'Malejąco'))
+            display_list.sort(
+                key=lambda parcel: parcel_sort_key(parcel.get('number', '')),
+                reverse=(sort_mode == 'Malejąco'),
+            )
 
         shown = 0
         for p in display_list:
@@ -329,6 +338,12 @@ class ParcelListWidget(QWidget):
             combo.setStyleSheet(f"QComboBox {{ color: {color.name()}; font-weight: bold; }} QComboBox QAbstractItemView {{ selection-background-color: #34495e; }}")
             self._save_to_project_state()
             self.parcels_changed.emit(self.parcels)
+
+    def _remember_list_preferences(self, *_args):
+        """Przechowuje aktywny filtr i sposób sortowania między uruchomieniami."""
+        self.config['parcel_list_filter'] = self.filter_combo.currentText()
+        self.config['parcel_list_sort'] = self.sort_combo.currentText()
+        self._refresh_table()
 
     def _apply_filter(self):
         self._refresh_table()

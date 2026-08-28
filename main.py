@@ -78,6 +78,7 @@ if str(app_dir) not in sys.path:
 from modules.projekty import ProjectManagerWidget
 from modules.status import DashboardTabWidget
 from modules.dzialki import ParcelListWidget
+from modules.sortowanie_dzialek import ParcelSortingWidget
 from modules.wypisy import OwnersListWidget
 from modules.oswiadczenia_woli import DeclGeneratorWidget
 from modules.pisma_przewodnie import CoverLetterWidget
@@ -206,7 +207,7 @@ class ModuleTabWidget(QWidget):
     """
     Dwurzędowy zamiennik QTabWidget.
 
-    Przy 16 modułach i columns=8 powstają dokładnie dwa rzędy.
+    Przy 17 modułach i columns=9 powstają nadal tylko dwa rzędy.
     Zakładki można przeciągać pomiędzy wszystkimi pozycjami.
     """
 
@@ -504,6 +505,18 @@ class MainWindow(QMainWindow):
             "module_tab_order": [],
             "module_tab_order_classic": [],
             "tab_layout_mode": "modern",
+            "parcel_list_filter": "Wszystkie",
+            "parcel_list_sort": "Domyślne",
+            "owners_list_sort_index": 0,
+            "envelope_hide_generated": False,
+            "envelope_show_only_generated": False,
+            "envelope_single_files": False,
+            "envelope_output_dir": "",
+            "envelope_stamps_tab": 0,
+            "envelope_splitter_sizes": [],
+            "parcel_sorter_input": "",
+            "parcel_sorter_result": "",
+            "parcel_sorter_remove_duplicates": False,
         }
 
     def _get_default_examples(self) -> dict:
@@ -534,11 +547,12 @@ class MainWindow(QMainWindow):
             self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         else:
             self.tab_layout_mode = "modern"
-            self.tabs = ModuleTabWidget(columns=8)
+            self.tabs = ModuleTabWidget(columns=9)
 
         self.project_tab = ProjectManagerWidget(self.config)
         self.dashboard_tab = DashboardTabWidget(self.config)
         self.parcel_tab = ParcelListWidget(self.config)
+        self.parcel_sort_tab = ParcelSortingWidget(self.config)
         self.owners_tab = OwnersListWidget(self.config)
         self.legal_titles_tab = LegalTitlesWidget(self.config)
 
@@ -565,6 +579,7 @@ class MainWindow(QMainWindow):
             (self.project_tab, "📁 Projekty", "📁 Projekty"),
             (self.dashboard_tab, "📊 Status", "📊 Status"),
             (self.parcel_tab, "📋 Działki", "📋 Lista Działek"),
+            (self.parcel_sort_tab, "↕️ Sortuj działki", "↕️ Sortowanie Działek"),
             (self.owners_tab, "👥 Wypisy", "👥 Wypisy"),
             (self.legal_titles_tab, "⚖️ Tytuły prawne", "⚖️ Tytuły Prawne"),
             (self.decl_tab, "📄 Oświadczenia", "📄 Oświadczenia"),
@@ -750,6 +765,7 @@ class MainWindow(QMainWindow):
             self.krs_downloader_tab.set_owners(fresh_owners)
 
             fresh_parcels = self.parcel_tab.get_parcels()
+            self.parcel_sort_tab.set_parcels(fresh_parcels)
             self.decl_tab.set_parcels(fresh_parcels)
             self.cover_tab.set_parcels(fresh_parcels)
             self.legal_titles_tab.set_parcels(fresh_parcels)
@@ -781,6 +797,7 @@ class MainWindow(QMainWindow):
         if self._is_switching_project:
             return
 
+        self.parcel_sort_tab.set_parcels(parcels)
         self.decl_tab.set_parcels(parcels)
         self.cover_tab.set_parcels(parcels)
         self.legal_titles_tab.set_parcels(parcels)

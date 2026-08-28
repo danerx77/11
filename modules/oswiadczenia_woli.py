@@ -1019,20 +1019,17 @@ class DeclGeneratorWidget(QWidget):
         }
 
     def _preview(self):
+        # Podgląd prezentuje dokładnie dane źródłowe. Odmiana jest wykonywana
+        # wyłącznie w generatorze DOCX podczas zastępowania odpowiednich tagów.
         p = self._get_params()
-        from utils.docx_utils import apply_declension_preferences
-
-        location, street, county = apply_declension_preferences(
-            p['location'], p['street'], p['county'], self.config
-        )
         preview = (
             f"=== OŚWIADCZENIE WOLI – {p['declaration_type'].upper()} ===\n"
             f"Nr projektu: {p['project_number']}\n"
             f"Data/miejsce: {p['place']}, {p['date_str']}\n"
             f"Właściciel: {p['owner_name']}\n"
-            f"Ulica: {street}\n"
-            f"Miejscowość: {location}\n"
-            f"Powiat: {county}\n"
+            f"Ulica: {p['street']}\n"
+            f"Miejscowość: {p['location']}\n"
+            f"Powiat: {p['county']}\n"
             f"Obręb (Tag): {p['precinct']}\n"
             f"Działki (Budowa): {p['parcel_numbers_budowa']}\n"
             f"Działki (Demontaż): {p['parcel_numbers_demontaz']}\n"
