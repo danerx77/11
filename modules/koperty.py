@@ -440,7 +440,7 @@ class EnvelopeGenWidget(QWidget):
     def _build_sender_box(self) -> QGroupBox:
         box = QGroupBox("Dane Nadawcy (na C5 i powrót C6)")
         form = QFormLayout(box)
-        sender = self.config.get("sender", {})
+        sender = self._sender_preference()
         self.sender_name_edit = QLineEdit(sender.get("name", ""))
         self.sender_street_edit = QLineEdit(sender.get("street", ""))
         self.sender_city_edit = QLineEdit(sender.get("city", ""))
@@ -710,8 +710,16 @@ class EnvelopeGenWidget(QWidget):
     def _save_template_preference(self, env_type: str, path: str):
         self.config[f"envelope_{env_type.lower()}_template"] = path.strip()
 
+    def _sender_preference(self) -> dict:
+        saved_sender = self.config.get("envelope_sender")
+        if isinstance(saved_sender, dict):
+            return saved_sender
+        return self.config.get("sender", {})
+
     def _save_sender_preferences(self):
-        sender = dict(self.config.get("sender", {}))
+        # Dane wpisane w Kopertach są lokalnym, zapamiętanym ustawieniem tego
+        # modułu. Nie nadpisują formularza nadawcy dla innych dokumentów.
+        sender = dict(self._sender_preference())
         sender.update(
             {
                 "name": self.sender_name_edit.text().strip(),
@@ -719,7 +727,7 @@ class EnvelopeGenWidget(QWidget):
                 "city": self.sender_city_edit.text().strip(),
             }
         )
-        self.config["sender"] = sender
+        self.config["envelope_sender"] = sender
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -740,7 +748,7 @@ class EnvelopeGenWidget(QWidget):
             checkbox.setChecked(bool(self.config.get(key, False)))
             checkbox.blockSignals(False)
 
-        sender = self.config.get("sender", {})
+        sender = self._sender_preference()
         for edit, key in (
             (self.sender_name_edit, "name"),
             (self.sender_street_edit, "street"),
