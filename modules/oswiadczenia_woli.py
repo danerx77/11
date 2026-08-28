@@ -1124,31 +1124,16 @@ class DeclGeneratorWidget(QWidget):
 
         QMessageBox.information(self, "Sukces", "Wygenerowano ręczne oświadczenie.")
 
-    def _city_locative_pl(self, city: str) -> str:
-        city = str(city or '').strip()
-        if not city:
-            return city
-        # ręczne wyjątki i proste reguły – można później rozbudować w ustawieniach
-        exceptions = {
-            'Gdynia': 'Gdyni', 'Warszawa': 'Warszawie', 'Łódź': 'Łodzi', 'Lodz': 'Łodzi',
-            'Gdańsk': 'Gdańsku', 'Gdansk': 'Gdańsku', 'Kraków': 'Krakowie', 'Krakow': 'Krakowie',
-            'Poznań': 'Poznaniu', 'Poznan': 'Poznaniu', 'Wrocław': 'Wrocławiu', 'Wroclaw': 'Wrocławiu',
-            'Sopot': 'Sopocie', 'Rumia': 'Rumi', 'Reda': 'Redzie'
-        }
-        if city in exceptions:
-            return exceptions[city]
-        if city.endswith('ia'):
-            return city[:-2] + 'i'
-        if city.endswith('a'):
-            return city[:-1] + 'ie'
-        if city.endswith(('k', 'g', 'ch')):
-            return city + 'u'
-        if city.endswith('ń'):
-            return city[:-1] + 'niu'
-        return city
-
     def _location_for_decl(self, city: str) -> str:
-        return self._city_locative_pl(city) if self.config.get('decl_location_locative', False) else str(city or '')
+        """Odmienia miejscowość działki (miejscownik) — np. Gdańsk → Gdańsku, Opole → Opolu."""
+        if not self.config.get('decl_location_locative', False):
+            return str(city or '')
+        from utils.polish_declension import decline_city
+        # Odmiana każdej miejscowości z listy (rozdzielonej przecinkami)
+        parts = [p.strip() for p in str(city or '').split(',') if p.strip()]
+        if not parts:
+            return str(city or '')
+        return ', '.join(decline_city(p) for p in parts)
 
     def _street_for_decl(self, street: str) -> str:
         if not self.config.get('decl_decline_streets', False):

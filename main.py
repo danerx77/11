@@ -706,6 +706,12 @@ class MainWindow(QMainWindow):
             self.config["last_project_symbol"] = project.get("symbol", "")
             self.save_configuration()
 
+            # Zaktualizuj ścieżkę projektu w zakładkach ZANIM wyczyszczone
+            # zostaną dane. Zakładka Koperty zapisuje plik adresaci.json już
+            # podczas set_owners(), więc musi znać nową ścieżkę — inaczej
+            # zapisze go do STAREJ ścieżki i odtworzy stary folder projektu.
+            self.envelope_tab.set_project(project)
+
             # Czyszczenie danych przed załadowaniem nowego projektu.
             empty_list = []
             self.owners_tab.owners = []
@@ -725,7 +731,6 @@ class MainWindow(QMainWindow):
 
             self.decl_tab.set_project(project)
             self.cover_tab.set_project(project)
-            self.envelope_tab.set_project(project)
             self.druczek_tab.set_project(project)
             self.tracker_tab.set_project(project)
             self.print_tab.set_project(project)
