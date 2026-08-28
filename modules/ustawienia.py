@@ -387,10 +387,21 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", self.chk_decl_precinct_upper)
 
         self.chk_decl_location_locative = QCheckBox(
-            "Oświadczenia woli: odmieniaj gramatycznie miejscowość działki "
+            "Odmieniaj miejscowości działki "
             "(np. Gdynia → Gdyni, Warszawa → Warszawie)"
         )
         decl_form.addRow("", self.chk_decl_location_locative)
+
+        self.chk_decl_streets = QCheckBox(
+            "Odmieniaj ulice (np. ulica Miła → ul. Miłej)"
+        )
+        decl_form.addRow("", self.chk_decl_streets)
+
+        self.chk_decl_powiat = QCheckBox(
+            "Zamieniaj miejscowości na właściwe nazwy powiatów "
+            "(np. Kościerzyna → kościerski, Wejherowo → wejherowski)"
+        )
+        decl_form.addRow("", self.chk_decl_powiat)
 
         self.decl_budowa_edit = QLineEdit()
         decl_form.addRow(
@@ -947,6 +958,12 @@ class SettingsTabWidget(QWidget):
         self.chk_decl_location_locative.setChecked(
             self.config.get("decl_location_locative", False)
         )
+        self.chk_decl_streets.setChecked(
+            self.config.get("decl_decline_streets", False)
+        )
+        self.chk_decl_powiat.setChecked(
+            self.config.get("decl_powiat_zamiana", False)
+        )
 
         c5_crop = self.config.get(
             "stamp_profile_c5",
@@ -1157,6 +1174,12 @@ class SettingsTabWidget(QWidget):
         self.config["decl_location_locative"] = (
             self.chk_decl_location_locative.isChecked()
         )
+        self.config["decl_decline_streets"] = (
+            self.chk_decl_streets.isChecked()
+        )
+        self.config["decl_powiat_zamiana"] = (
+            self.chk_decl_powiat.isChecked()
+        )
 
         self.config["stamp_profile_c5"] = {
             "crop_left": self.c5_crop_l.value(),
@@ -1232,91 +1255,181 @@ class SettingsTabWidget(QWidget):
         )
 
     def _set_default_decl_templates(self):
+        from utils.templates import find_latest_file
+
         examples_path = Path(self.path_przyklady_edit.text().strip())
 
-        if examples_path.exists():
-            self.decl_budowa_edit.setText(
-                str(examples_path / "Oświadczenie woli budowa kabla 4.docx")
-            )
-            self.decl_demontaz_edit.setText(
-                str(examples_path / "Oświadczenie woli demontaż linii 4.docx")
-            )
-            self.cover_letter_edit.setText(
-                str(examples_path / "Pismo przewodnie 3.docx")
-            )
-            self.env_c5_edit.setText(
-                str(examples_path / "koperty C5 wysyłka 2.docx")
-            )
-            self.env_c6_edit.setText(
-                str(examples_path / "c6 nowy 1.docx")
-            )
-
-            QMessageBox.information(
-                self,
-                "Zaktualizowano",
-                "Automatycznie uzupełniono ścieżki do szablonów "
-                "z folderu Przykłady.",
-            )
-        else:
+        if not examples_path.exists():
             QMessageBox.warning(
                 self,
                 "Błąd",
                 "Folder ze ścieżki „Folder szablony dokumentów "
                 "(przykłady)” nie istnieje!",
             )
+            return
 
-    def _set_default_excel_templates(self):
-        legal_path = Path(self.path_tytuly_edit.text().strip())
+        # Nazwy bazowe bez numeru wersji – program sam dobiera najnowszą wersję.
+        specs = [
+            (
+                self.decl_budowa_edit,
+                ["Oświadczenie woli budowa kabla", "Oświadczenie woli budowa",
+                 "oswiadczenie woli budowa kabla", "oswiadczenie woli budowa"],
+                "Oświadczenie woli budowa kabla",
+            ),
+            (
+                self.decl_demontaz_edit,
+                ["Oświadczenie woli demontaż linii", "Oświadczenie woli demontaz linii",
+                 "Oświadczenie woli demontaż", "Oświadczenie woli demontaz"],
+                "Oświadczenie woli demontaż linii",
+            ),
+            (
+                self.cover_letter_edit,
+                ["Pismo przewodnie", "pismo przewodnie"],
+                "Pismo przewodnie",
+            ),
+            (
+                self.env_c5_edit,
+                ["koperty C5 wysyłka", "koperta C5 wysyłka",
+                 "koperty C5", "koperta C5"],
+                "koperty C5 wysyłka",
+            ),
+            (
+                self.env_c6_edit,
+                ["c6 nowy", "koperta C6 nowy", "koperty C6 nowy",
+                 "c6", "koperta C6", "koperty C6"],
+                "c6 nowy",
+            ),
+        ]
 
-        if legal_path.exists():
-            self.legal_tmpl_1_edit.setText(
-                str(legal_path / "szablon1.xlsx")
-            )
-            self.legal_tmpl_2_edit.setText(
-                str(legal_path / "szablon2.xlsx")
-            )
-            self.legal_tmpl_3_edit.setText(
-                str(legal_path / "szablon3.xlsx")
-            )
+        found = []
+        missing = []
+        for edit, bases, label in specs:
+            latest = find_latest_file(examples_path, bases, (".docx",))
+            if latest is not None:
+                edit.setText(str(latest))
+                found.append(label)
+            else:
+                missing.append(label)
 
+        if found:
             QMessageBox.information(
                 self,
                 "Zaktualizowano",
-                "Automatycznie uzupełniono ścieżki do szablonów Excel "
-                "z folderu Tytuły prawne.",
+                "Automatycznie wczytano najnowsze wersje szablonów "
+                f"z folderu Przykłady:\n\n• " + "\n• ".join(found),
             )
-        else:
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Nie znaleziono",
+                "Nie znaleziono żadnego pliku dla szablonów:\n\n• "
+                + "\n• ".join(missing)
+                + "\n\nSprawdź, czy w folderze Przykłady znajdują się "
+                "pliki .docx o podanych nazwach.",
+            )
+
+    def _set_default_excel_templates(self):
+        from utils.templates import find_file_newest
+
+        legal_path = Path(self.path_tytuly_edit.text().strip())
+
+        if not legal_path.exists():
             QMessageBox.warning(
                 self,
                 "Błąd",
                 "Folder ze ścieżki „Folder szablony "
                 "(tytuły prawne)” nie istnieje!",
             )
+            return
 
-    def _set_default_pdf_templates(self):
-        stamps_path = Path(self.path_znaczki_edit.text().strip())
+        specs = [
+            (self.legal_tmpl_1_edit, ["szablon1", "szablon 1"]),
+            (self.legal_tmpl_2_edit, ["szablon2", "szablon 2"]),
+            (self.legal_tmpl_3_edit, ["szablon3", "szablon 3"]),
+        ]
 
-        if stamps_path.exists():
-            self.druczek_tmpl_edit.setText(
-                str(stamps_path / "druczek.pdf")
+        found = []
+        missing = []
+        for edit, bases in specs:
+            latest = find_file_newest(
+                legal_path, bases, (".xlsx", ".xlsm")
             )
-            self.stamp_c5_edit.setText(
-                str(stamps_path / "znaczki_c5.pdf")
-            )
-            self.stamp_c6_edit.setText(
-                str(stamps_path / "znaczki_c6.pdf")
-            )
+            if latest is not None:
+                edit.setText(str(latest))
+                found.append(latest.name)
+            else:
+                missing.append(bases[0])
 
+        if found:
             QMessageBox.information(
                 self,
                 "Zaktualizowano",
-                "Automatycznie uzupełniono ścieżki do plików PDF "
-                "z folderu Znaczki.",
+                "Automatycznie wczytano szablony Excel z folderu "
+                "Tytuły prawne:\n\n• " + "\n• ".join(found),
             )
-        else:
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Nie znaleziono",
+                "Nie znaleziono plików dla szablonów Excel:\n\n• "
+                + "\n• ".join(missing)
+                + "\n\nSprawdź pliki w folderze Tytuły prawne.",
+            )
+
+    def _set_default_pdf_templates(self):
+        from utils.templates import find_latest_file, find_file_newest
+
+        stamps_path = Path(self.path_znaczki_edit.text().strip())
+
+        if not stamps_path.exists():
             QMessageBox.warning(
                 self,
                 "Błąd",
                 "Folder ze ścieżki „Folder z plikami znaczków” "
                 "nie istnieje!",
+            )
+            return
+
+        found = []
+        missing = []
+
+        druczek = find_file_newest(stamps_path, ["druczek"], (".pdf",))
+        if druczek is not None:
+            self.druczek_tmpl_edit.setText(str(druczek))
+            found.append(druczek.name)
+        else:
+            missing.append("druczek.pdf")
+
+        c5 = find_latest_file(
+            stamps_path, ["znaczki_c5", "znaczki c5", "znaczek_c5"], (".pdf",)
+        )
+        if c5 is not None:
+            self.stamp_c5_edit.setText(str(c5))
+            found.append(c5.name)
+        else:
+            missing.append("znaczki_c5.pdf")
+
+        c6 = find_latest_file(
+            stamps_path, ["znaczki_c6", "znaczki c6", "znaczek_c6"], (".pdf",)
+        )
+        if c6 is not None:
+            self.stamp_c6_edit.setText(str(c6))
+            found.append(c6.name)
+        else:
+            missing.append("znaczki_c6.pdf")
+
+        if found:
+            QMessageBox.information(
+                self,
+                "Zaktualizowano",
+                "Automatycznie wczytano pliki PDF z folderu Znaczki:\n\n• "
+                + "\n• ".join(found),
+            )
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Nie znaleziono",
+                "Nie znaleziono plików PDF:\n\n• "
+                + "\n• ".join(missing)
+                + "\n\nSprawdź pliki w folderze Znaczki.",
             )

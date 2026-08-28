@@ -3,11 +3,12 @@ polish_declension.py – Odmiana polskich nazw miejscowości.
 
 UWAGA: 
 - WOJEWÓDZTWA nie są odmieniane (zostają jak są)
-- POWIATY nie są odmieniane (zostają jak są)
-- ODMIENIANE są tylko MIEJSCOWOŚCI (miejscownik)
+- POWIATY: miejscowości są ZAMIENIANE na nazwy powiatów (city_to_powiat)
+- MIEJSCOWOŚCI: odmieniane przez miejscownik (decline_city)
+- ULICE: odmieniane przez miejscownik (decline_street)
 
 ZAMIANA miejscowości na powiat:
-- "Kościerzyna" → "kościerski" (gmina → powiat)
+- "Kościerzyna" → "kościerski"
 - "Wejherowo" → "wejherowski"
 - itp.
 """
@@ -352,36 +353,43 @@ def decline_street(street: str) -> str:
     
     rest = rest.split(",")[0].strip()
     rest = rest.split("(")[0].strip()
-    
+
+    # Nazwy już w dopełniaczu (np. "Słowackiego", "Poniatowskiego") zostaw bez zmian.
+    if rest.lower().endswith("ego"):
+        return original
+
     return prefix + _decline_female_name(rest)
 
 
 def _decline_female_name(name: str) -> str:
-    """Odmienia żeńskie nazwy własne."""
+    """Odmienia żeńskie nazwy własne (przymiotnikowe nazwy ulic)."""
     if not name:
         return name
-    
-    if name.lower().endswith("ia"):
+
+    low = name.lower()
+
+    if low.endswith("ia"):
         return name
-    
-    if name.lower().endswith("a") and not name.lower().endswith("ia"):
+
+    if low.endswith("a"):
+        # Przymiotniki żeńskie: -ska/-cka/-dzka -> -skiej/-ckiej/-dzkiej
+        if low.endswith("dzka"):
+            return name[:-4] + "dzkiej"
+        if low.endswith("cka"):
+            return name[:-3] + "ckiej"
+        if low.endswith("ska"):
+            return name[:-3] + "skiej"
+
         base = name[:-1]
-        
-        special_cases = {
-            "krakowska": "Krakowskiej",
-            "warszawska": "Warszawskiej",
-            "gdanska": "Gdańskiej",
-            "szeroka": "Szerokiej",
-            "dluga": "Długiej",
-            "nowa": "Nowej",
-            "stara": "Starej",
-        }
-        
-        if name.lower() in special_cases:
-            return special_cases[name.lower()]
-        
+        # -ga -> -giej (Długa -> Długiej), -ka -> -kiej (Szeroka -> Szerokiej)
+        if low.endswith("ga"):
+            return base + "iej"
+        if low.endswith("ka"):
+            return base + "iej"
+
+        # Pozostałe żeńskie: Nowa -> Nowej, Stara -> Starej
         return base + "ej"
-    
+
     return name
 
 

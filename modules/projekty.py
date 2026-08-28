@@ -378,49 +378,101 @@ class ProjectManagerWidget(QWidget):
         self._select_project(silent=True)
         QMessageBox.information(self, 'Projekt utworzony', f'Utworzono i ustawiono jako AKTYWNY:\n{project_path}')
 
-    def _force_remove_old_folder(self, old_path_str: str):
-        """Usuwa stary folder po zmianie nazwy projektu, także gdy Windows chwilowo trzyma uchwyty."""
+    def _remove_dir_retry(self, path: Path) -> bool:
+        """Usuwa katalog wraz z zawartością, z ponowieniami.
+
+        Windows potrafi chwilowo trzymać uchwyty (Explorer, antywirus),
+        dlatego próbujemy kilka razy i wymuszamy uprawnienia zapisu.
+        """
         import stat
         import time
 
-        def onerror(func, path, exc_info):
+        def onerror(func, p, exc_info):
             try:
-                os.chmod(path, stat.S_IWRITE)
-                func(path)
+                os.chmod(p, stat.S_IWRITE)
+                func(p)
             except Exception:
                 pass
 
-        try:
-            old_path = Path(old_path_str).resolve()
-            active = Path(self.config.get('last_project_path', '') or '').resolve()
-            if not old_path.exists() or not old_path.is_dir() or old_path == active:
-                return
+        if not path.exists():
+            return True
 
-            # kilka prób normalnego usunięcia
+        for _ in range(5):
+            try:
+                shutil.rmtree(path, onerror=onerror)
+                return not path.exists()
+            except FileNotFoundError:
+                return True
+            except Exception:
+                time.sleep(0.4)
+
+        # Ostatnia deska ratunku: zmień nazwę i usuń.
+        trash = path.with_name(path.name + '_DO_USUNIECIA')
+        try:
+            if trash.exists():
+                shutil.rmtree(trash, onerror=onerror)
+            path.rename(trash)
             for _ in range(5):
                 try:
-                    shutil.rmtree(old_path, onerror=onerror)
-                    return
+                    shutil.rmtree(trash, onerror=onerror)
+                    return not trash.exists()
                 except Exception:
                     time.sleep(0.4)
-
-            # jeśli dalej istnieje, zmień nazwę na techniczną i usuń ponownie
-            trash = old_path.with_name(old_path.name + '_DO_USUNIECIA')
-            try:
-                if trash.exists():
-                    shutil.rmtree(trash, onerror=onerror)
-                old_path.rename(trash)
-                for _ in range(5):
-                    try:
-                        shutil.rmtree(trash, onerror=onerror)
-                        return
-                    except Exception:
-                        time.sleep(0.4)
-            except Exception:
-                pass
         except Exception:
             pass
 
+        return not path.exists()
+
+
+    def _move_project_folder(self, old_path: Path, new_path: Path) -> Path:
+        """Zmienia nazwę folderu projektu (atomowe przeniesienie, bez kopiowania).
+
+        Dzięki temu stary folder po prostu znika – nie powstaje drugi folder.
+        """
+        import time
+
+        if not old_path.exists():
+            return new_path
+
+        old_norm = os.path.normcase(str(old_path))
+        new_norm = os.path.normcase(str(new_path))
+
+        if old_norm == new_norm:
+            # Zmiana tylko wielkości liter – przejdź przez folder tymczasowy.
+            tmp_path = old_path.parent / f".__tmp_rename_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+            old_path.rename(tmp_path)
+            try:
+                tmp_path.rename(new_path)
+            except Exception:
+                try:
+                    tmp_path.rename(old_path)
+                except Exception:
+                    pass
+                raise
+            return new_path
+
+        if new_path.exists():
+            try:
+                if os.path.samefile(old_path, new_path):
+                    return new_path
+            except OSError:
+                pass
+            raise FileExistsError(f'Folder docelowy już istnieje: {new_path}')
+
+        # Atomowe przeniesienie z ponowieniami (transient lock w Windows).
+        last_err = None
+        for _ in range(5):
+            try:
+                old_path.rename(new_path)
+                return new_path
+            except OSError as e:
+                last_err = e
+                time.sleep(0.3)
+
+        raise OSError(
+            'Nie udało się zmienić nazwy folderu. Sprawdź, czy folder nie jest '
+            f'otwarty w Eksploratorze Windows lub nie używa go inny program.\n{last_err}'
+        )
 
     def _rename_project(self):
         if not self.current_project: return
@@ -434,45 +486,29 @@ class ProjectManagerWidget(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted: return
         new_name, new_symbol, new_city, new_deadline = dlg.get_values()
 
-        old_path = Path(self.current_project['path']).resolve()
+        old_path = Path(self.current_project.get('path', '')).resolve()
         folder_symbol = new_symbol.replace('/', '.').replace('\\', '.')
         new_folder_name = " ".join(x for x in [new_city, folder_symbol, new_deadline] if x).strip()
         new_folder_name = re.sub(r'[\\/*?:"<>|]', '_', new_folder_name).strip()
-        new_path = (old_path.parent / new_folder_name).resolve() if new_folder_name else old_path
-        final_path = old_path
 
         try:
-            if old_path.exists() and str(old_path) != str(new_path):
-                # zmiana tylko wielkości liter: przez folder tymczasowy
-                if os.path.normcase(str(old_path)) == os.path.normcase(str(new_path)):
-                    tmp_path = old_path.parent / f".__tmp_rename_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
-                    old_path.rename(tmp_path)
-                    tmp_path.rename(new_path)
-                    final_path = new_path
-                else:
-                    if new_path.exists():
-                        QMessageBox.critical(
-                            self,
-                            'Folder już istnieje',
-                            f'Nie można zmienić nazwy folderu, bo folder docelowy już istnieje:\n{new_path}'
-                        )
-                        return
-                    old_path.rename(new_path)
-                    final_path = new_path
+            if new_folder_name and old_path.name != new_folder_name:
+                new_path = (old_path.parent / new_folder_name).resolve()
+                final_path = self._move_project_folder(old_path, new_path)
             else:
                 final_path = old_path
+        except FileExistsError as e:
+            QMessageBox.critical(self, 'Folder już istnieje', str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(self, 'Błąd', f'Nie można zmienić nazwy folderu projektu:\n{e}')
+            return
 
-            # Jeżeli coś zostawiło pusty/stary folder, usuń go.
-            if old_path != final_path and old_path.exists():
-                try:
-                    shutil.rmtree(old_path)
-                except Exception as remove_error:
-                    QMessageBox.warning(
-                        self,
-                        'Stary folder pozostał',
-                        f'Projekt działa już z nowego folderu:\n{final_path}\n\nNie udało się usunąć starego folderu:\n{old_path}\n\nPowód: {remove_error}'
-                    )
+        old_path_str = str(old_path)
+        final_path_str = str(final_path)
 
+        # Zaktualizuj metadane projektu w (nowym) folderze.
+        try:
             meta_file = final_path / 'project_meta.json'
             meta = {}
             if meta_file.exists():
@@ -486,11 +522,9 @@ class ProjectManagerWidget(QWidget):
             with open(meta_file, 'w', encoding='utf-8') as f:
                 json.dump(meta, f, ensure_ascii=False, indent=4)
         except Exception as e:
-            QMessageBox.critical(self, 'Błąd', f'Nie można zmienić nazwy folderu projektu:\n{e}')
+            QMessageBox.critical(self, 'Błąd', f'Folder zmieniono, ale nie udało się zapisać metadanych:\n{e}')
             return
 
-        old_path_str = str(old_path)
-        final_path_str = str(final_path)
         self.current_project.update({
             'name': new_name,
             'symbol': new_symbol,
@@ -518,8 +552,18 @@ class ProjectManagerWidget(QWidget):
         self.projects = cleaned
         self.config['projects'] = self.projects
 
-        # natychmiastowa próba usunięcia starego katalogu oraz zaplanowane ponowienia
-        self._force_remove_old_folder(old_path_str)
+        # Upewnij się, że stary folder zniknął (siatka bezpieczeństwa – po
+        # przeniesieniu nie powinien istnieć, ale sprzątamy ewentualne resztki).
+        if old_path_str != final_path_str:
+            removed = self._remove_dir_retry(old_path)
+            if not removed:
+                QMessageBox.warning(
+                    self,
+                    'Stary folder pozostał',
+                    f'Projekt używa już nowego folderu:\n{final_path}\n\n'
+                    f'Nie udało się automatycznie usunąć starego folderu:\n{old_path}\n\n'
+                    'Usuń go ręcznie, gdy żaden program nie będzie go używać.',
+                )
 
         self._refresh_tree()
         for i in range(self.tree.topLevelItemCount()):

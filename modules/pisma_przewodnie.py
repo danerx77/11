@@ -976,13 +976,38 @@ class CoverLetterWidget(QWidget):
         if path: self.template_edit.setText(path)
 
     def _set_default_template(self):
+        from utils.templates import find_latest_file
+
         if getattr(sys, 'frozen', False): przyk_path = str(Path(sys.executable).parent.resolve() / 'przykłady')
         else: przyk_path = str(Path(__file__).parent.parent.parent / 'przykłady')
             
         cl_tmpl = self.config.get('cover_letter_template', '')
         if not cl_tmpl or not Path(cl_tmpl).exists():
-            cl_tmpl = str(Path(przyk_path) / 'Pismo przewodnie 3.docx')
+            latest = find_latest_file(
+                przyk_path,
+                ["Pismo przewodnie", "pismo przewodnie"],
+                (".docx",),
+            )
+            cl_tmpl = str(latest) if latest else ""
         self.template_edit.setText(cl_tmpl)
+
+    def _location_for_decl(self, city: str) -> str:
+        if not self.config.get('decl_location_locative', False):
+            return str(city or '')
+        from utils.polish_declension import decline_city
+        parts = [p.strip() for p in str(city or '').split(',') if p.strip()]
+        if not parts:
+            return str(city or '')
+        return ', '.join(decline_city(p) for p in parts)
+
+    def _street_for_decl(self, street: str) -> str:
+        if not self.config.get('decl_decline_streets', False):
+            return str(street or '')
+        from utils.polish_declension import decline_street
+        parts = [p.strip() for p in str(street or '').split(',') if p.strip()]
+        if not parts:
+            return str(street or '')
+        return ', '.join(decline_street(p) for p in parts)
 
     def _get_params(self) -> dict:
         sender = self.config.get('sender', {})
@@ -1062,8 +1087,8 @@ class CoverLetterWidget(QWidget):
                 template_path=p['template_path'], output_path=out_path, date_str=p['date_str'], place=p['place'],
                 sender_name=p['sender_name'], sender_street=p['sender_street'], sender_city=p['sender_city'],
                 addressee_salutation='Sz. P.', addressee_name=p['addressee_name'], addressee_street=p['addressee_street'],
-                addressee_city=p['addressee_city'], location=p['location'], 
-                street=p['street'],
+                addressee_city=p['addressee_city'], location=self._location_for_decl(p['location']),
+                street=self._street_for_decl(p['street']),
                 subject=p['subject'],
                 task_construction=p['task_construction'],
                 task_demolition=p['task_demolition'],
@@ -1200,8 +1225,8 @@ class CoverLetterWidget(QWidget):
                     template_path=p['template_path'], output_path=out_path, date_str=p['date_str'], place=p['place'],
                     sender_name=p['sender_name'], sender_street=p['sender_street'], sender_city=p['sender_city'],
                     addressee_salutation='Sz. P.', addressee_name=name_line, addressee_street=street_adr, addressee_city=city_adr,
-                    location=o.get('city', '') or p['location'], 
-                    street=final_street_dz,
+                    location=self._location_for_decl(o.get('city', '') or p['location']),
+                    street=self._street_for_decl(final_street_dz),
                     subject=p['subject'],
                     task_construction=p['task_construction'],
                     task_demolition=p['task_demolition'],

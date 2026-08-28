@@ -953,18 +953,32 @@ class DeclGeneratorWidget(QWidget):
 
     def _set_default_template(self):
         import sys
+        from utils.templates import find_latest_file
+
         if getattr(sys, 'frozen', False):
             przyk_path = str(Path(sys.executable).parent.resolve() / 'przykłady')
         else:
             przyk_path = str(Path(__file__).parent.parent.parent / 'przykłady')
-            
+
         budowa_tmpl = self.config.get('decl_template_budowa', '')
         if not budowa_tmpl or not Path(budowa_tmpl).exists():
-            budowa_tmpl = str(Path(przyk_path) / 'Oświadczenie woli budowa kabla 4.docx')
-            
+            latest = find_latest_file(
+                przyk_path,
+                ["Oświadczenie woli budowa kabla", "Oświadczenie woli budowa",
+                 "oswiadczenie woli budowa kabla", "oswiadczenie woli budowa"],
+                (".docx",),
+            )
+            budowa_tmpl = str(latest) if latest else ""
+
         demontaz_tmpl = self.config.get('decl_template_demontaz', '')
         if not demontaz_tmpl or not Path(demontaz_tmpl).exists():
-            demontaz_tmpl = str(Path(przyk_path) / 'Oświadczenie woli demontaż linii 4.docx')
+            latest = find_latest_file(
+                przyk_path,
+                ["Oświadczenie woli demontaż linii", "Oświadczenie woli demontaz linii",
+                 "Oświadczenie woli demontaż", "Oświadczenie woli demontaz"],
+                (".docx",),
+            )
+            demontaz_tmpl = str(latest) if latest else ""
 
         self.template_budowa_edit.setText(budowa_tmpl)
         self.template_demontaz_edit.setText(demontaz_tmpl)
@@ -1077,9 +1091,9 @@ class DeclGeneratorWidget(QWidget):
                 pesel=self.pesel_edit.text(),
                 nip=self.nip_edit.text(),
                 location=self._location_for_decl(self.location_edit.text()),
-                street=self.street_edit.text(), 
+                street=self._street_for_decl(self.street_edit.text()),
                 voivodeship=self.voivodeship_edit.text(),
-                county=self.county_edit.text(),
+                county=self._county_for_powiat(self.county_edit.text(), self.location_edit.text()),
                 municipality=self.municipality_edit.text(),
                 parcel_numbers_budowa=self.parcels_budowa_edit.text(),
                 parcel_numbers_demontaz=self.parcels_demontaz_edit.text(),
@@ -1135,6 +1149,27 @@ class DeclGeneratorWidget(QWidget):
 
     def _location_for_decl(self, city: str) -> str:
         return self._city_locative_pl(city) if self.config.get('decl_location_locative', False) else str(city or '')
+
+    def _street_for_decl(self, street: str) -> str:
+        if not self.config.get('decl_decline_streets', False):
+            return str(street or '')
+        from utils.polish_declension import decline_street
+        # Odmiana każdej ulicy z listy (rozdzielonej przecinkami)
+        parts = [p.strip() for p in str(street or '').split(',') if p.strip()]
+        if not parts:
+            return str(street or '')
+        return ', '.join(decline_street(p) for p in parts)
+
+    def _county_for_powiat(self, county: str, location: str = '') -> str:
+        """Zamienia miejscowość/powiat na właściwą nazwę powiatu (ZAMIENIA, nie odmienia)."""
+        if not self.config.get('decl_powiat_zamiana', False):
+            return str(county or '')
+        from utils.polish_declension import city_to_powiat
+        source = str(county or '').strip() or str(location or '').strip()
+        parts = [p.strip() for p in source.split(',') if p.strip()]
+        if not parts:
+            return str(county or '')
+        return ', '.join(city_to_powiat(p) for p in parts)
 
     def _get_short_name(self, first_name: str, last_name: str) -> str:
         import re
@@ -1325,10 +1360,10 @@ class DeclGeneratorWidget(QWidget):
                     owner_name=display_name,
                     pesel=o.get('pesel') or '',
                     nip=o.get('nip') or '',
-                    location=o.get('city', '') or p['location'],
-                    street=street_field,
+                    location=self._location_for_decl(o.get('city', '') or p['location']),
+                    street=self._street_for_decl(street_field),
                     voivodeship=v_str,
-                    county=c_str,
+                    county=self._county_for_powiat(c_str, o.get('city', '') or p['location']),
                     municipality=m_str,
                     parcel_numbers_budowa=b_str,
                     parcel_numbers_demontaz=d_str,
