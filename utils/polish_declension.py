@@ -480,6 +480,14 @@ def decline_city(city: str) -> str:
             return declined_city.lower()
         return declined_city
     
+    # Produktywna odmiana nijakich nazw miejscowości na -owo:
+    # Żukowo -> Żukowie, Grabowo -> Grabowie, a także zapis wielkimi literami.
+    # Wcześniej takie nazwy nie znajdowały się w słowniku i wpadały w fallback
+    # zwracający oryginalną wartość.
+    if normalized.lower().endswith("owo"):
+        ending = "IE" if normalized.isupper() else "ie"
+        return normalized[:-1] + ending
+
     # Automatyczna odmiana dla żeńskich nazw na -a
     if normalized.lower().endswith("a") and not normalized.lower().endswith("ia"):
         base = normalized[:-1]
