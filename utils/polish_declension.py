@@ -3,14 +3,17 @@ polish_declension.py – Odmiana polskich nazw miejscowości.
 
 UWAGA: 
 - WOJEWÓDZTWA nie są odmieniane (zostają jak są)
-- POWIATY nie są odmieniane (zostają jak są)
-- ODMIENIANE są tylko MIEJSCOWOŚCI (miejscownik)
+- POWIATY mogą być odmieniane (decline_county) - sterowane w Ustawieniach
+- GMINY mogą być odmieniane (decline_municipality) - sterowane w Ustawieniach
+- ODMIENIANE są też MIEJSCOWOŚCI (miejscownik) i ULICE
 
 ZAMIANA miejscowości na powiat:
 - "Kościerzyna" → "kościerski" (gmina → powiat)
 - "Wejherowo" → "wejherowski"
 - itp.
 """
+
+import re
 
 # ============================================================================
 # SŁOWNIK: MIEJSCOWOŚĆ → NAZWA POWIATU
@@ -352,36 +355,43 @@ def decline_street(street: str) -> str:
     
     rest = rest.split(",")[0].strip()
     rest = rest.split("(")[0].strip()
-    
+
+    # Nazwy już w dopełniaczu (np. "Słowackiego", "Poniatowskiego") zostaw bez zmian.
+    if rest.lower().endswith("ego"):
+        return original
+
     return prefix + _decline_female_name(rest)
 
 
 def _decline_female_name(name: str) -> str:
-    """Odmienia żeńskie nazwy własne."""
+    """Odmienia żeńskie nazwy własne (przymiotnikowe nazwy ulic)."""
     if not name:
         return name
-    
-    if name.lower().endswith("ia"):
+
+    low = name.lower()
+
+    if low.endswith("ia"):
         return name
-    
-    if name.lower().endswith("a") and not name.lower().endswith("ia"):
+
+    if low.endswith("a"):
+        # Przymiotniki żeńskie: -ska/-cka/-dzka -> -skiej/-ckiej/-dzkiej
+        if low.endswith("dzka"):
+            return name[:-4] + "dzkiej"
+        if low.endswith("cka"):
+            return name[:-3] + "ckiej"
+        if low.endswith("ska"):
+            return name[:-3] + "skiej"
+
         base = name[:-1]
-        
-        special_cases = {
-            "krakowska": "Krakowskiej",
-            "warszawska": "Warszawskiej",
-            "gdanska": "Gdańskiej",
-            "szeroka": "Szerokiej",
-            "dluga": "Długiej",
-            "nowa": "Nowej",
-            "stara": "Starej",
-        }
-        
-        if name.lower() in special_cases:
-            return special_cases[name.lower()]
-        
+        # -ga -> -giej (Długa -> Długiej), -ka -> -kiej (Szeroka -> Szerokiej)
+        if low.endswith("ga"):
+            return base + "iej"
+        if low.endswith("ka"):
+            return base + "iej"
+
+        # Pozostałe żeńskie: Nowa -> Nowej, Stara -> Starej
         return base + "ej"
-    
+
     return name
 
 
@@ -472,6 +482,84 @@ def decline_city(city: str) -> str:
         return normalized + "ie"
     
     return normalized
+
+
+def decline_county(county: str) -> str:
+    """Odmienia nazwę powiatu (przymiotnik) przez miejscownik.
+
+    Przykłady:
+        "gdański"            -> "gdańskim"
+        "kartuski"           -> "kartuskim"
+        "powiat gdański"     -> "powiecie gdańskim"
+        "pow. starogardzki"  -> "powiecie starogardzkim"
+    """
+    if not county:
+        return county
+
+    s = county.strip()
+    m = re.match(r"^(powiat|pow\.)\s+(.+)$", s, re.IGNORECASE)
+    if m:
+        return "powiecie " + _decline_adjective(m.group(2).strip())
+
+    return _decline_adjective(s)
+
+
+def _decline_adjective(name: str) -> str:
+    """Odmienia przymiotnik (np. nazwę powiatu) przez miejscownik."""
+    if not name:
+        return name
+
+    low = name.lower()
+
+    # Rodzaj męski/nijaki: -ski/-cki/-dzki -> -skim/-ckim/-dzkim
+    if low.endswith("dzki"):
+        return name[:-4] + "dzkim"
+    if low.endswith("cki"):
+        return name[:-3] + "ckim"
+    if low.endswith("ski"):
+        return name[:-3] + "skim"
+
+    # Rodzaj żeński: -ska/-cka/-dzka -> -skiej/-ckiej/-dzkiej
+    if low.endswith("dzka"):
+        return name[:-4] + "dzkiej"
+    if low.endswith("cka"):
+        return name[:-3] + "ckiej"
+    if low.endswith("ska"):
+        return name[:-3] + "skiej"
+
+    return name
+
+
+def decline_municipality(municipality: str) -> str:
+    """Odmienia nazwę gminy (jednostki ewidencyjnej) przez miejscownik.
+
+    Przykłady:
+        "Gmina Wejherowo"        -> "Gminie Wejherowie"
+        "miasto Gdańsk"          -> "Mieście Gdańsku"
+        "miasto i gmina Kartuzy" -> "Mieście i Gminie Kartuzach"
+        "Kartuzy"                -> "Kartuzach"
+    """
+    if not municipality:
+        return municipality
+
+    s = municipality.strip()
+    m = re.match(
+        r"^(gmina|gm\.|miasto|m\.|miasto i gmina|m\. i gm\.)\s+(.+)$",
+        s,
+        re.IGNORECASE,
+    )
+    if m:
+        kind = m.group(1).lower()
+        name = m.group(2).strip()
+        declined = decline_city(name)
+        if kind in ("gmina", "gm."):
+            return "Gminie " + declined
+        if kind in ("miasto", "m."):
+            return "Mieście " + declined
+        if kind in ("miasto i gmina", "m. i gm."):
+            return "Mieście i Gminie " + declined
+
+    return decline_city(s)
 
 
 # ============================================================================

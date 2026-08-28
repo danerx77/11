@@ -953,18 +953,32 @@ class DeclGeneratorWidget(QWidget):
 
     def _set_default_template(self):
         import sys
+        from utils.templates import find_latest_file
+
         if getattr(sys, 'frozen', False):
             przyk_path = str(Path(sys.executable).parent.resolve() / 'przykłady')
         else:
             przyk_path = str(Path(__file__).parent.parent.parent / 'przykłady')
-            
+
         budowa_tmpl = self.config.get('decl_template_budowa', '')
         if not budowa_tmpl or not Path(budowa_tmpl).exists():
-            budowa_tmpl = str(Path(przyk_path) / 'Oświadczenie woli budowa kabla 4.docx')
-            
+            latest = find_latest_file(
+                przyk_path,
+                ["Oświadczenie woli budowa kabla", "Oświadczenie woli budowa",
+                 "oswiadczenie woli budowa kabla", "oswiadczenie woli budowa"],
+                (".docx",),
+            )
+            budowa_tmpl = str(latest) if latest else ""
+
         demontaz_tmpl = self.config.get('decl_template_demontaz', '')
         if not demontaz_tmpl or not Path(demontaz_tmpl).exists():
-            demontaz_tmpl = str(Path(przyk_path) / 'Oświadczenie woli demontaż linii 4.docx')
+            latest = find_latest_file(
+                przyk_path,
+                ["Oświadczenie woli demontaż linii", "Oświadczenie woli demontaz linii",
+                 "Oświadczenie woli demontaż", "Oświadczenie woli demontaz"],
+                (".docx",),
+            )
+            demontaz_tmpl = str(latest) if latest else ""
 
         self.template_budowa_edit.setText(budowa_tmpl)
         self.template_demontaz_edit.setText(demontaz_tmpl)
@@ -1077,10 +1091,10 @@ class DeclGeneratorWidget(QWidget):
                 pesel=self.pesel_edit.text(),
                 nip=self.nip_edit.text(),
                 location=self._location_for_decl(self.location_edit.text()),
-                street=self.street_edit.text(), 
+                street=self._street_for_decl(self.street_edit.text()),
                 voivodeship=self.voivodeship_edit.text(),
-                county=self.county_edit.text(),
-                municipality=self.municipality_edit.text(),
+                county=self._county_for_decl(self.county_edit.text()),
+                municipality=self._municipality_for_decl(self.municipality_edit.text()),
                 parcel_numbers_budowa=self.parcels_budowa_edit.text(),
                 parcel_numbers_demontaz=self.parcels_demontaz_edit.text(),
                 area_ha=current_p['area_ha'],
@@ -1135,6 +1149,34 @@ class DeclGeneratorWidget(QWidget):
 
     def _location_for_decl(self, city: str) -> str:
         return self._city_locative_pl(city) if self.config.get('decl_location_locative', False) else str(city or '')
+
+    def _street_for_decl(self, street: str) -> str:
+        if not self.config.get('decl_decline_streets', False):
+            return str(street or '')
+        from utils.polish_declension import decline_street
+        # Odmiana każdej ulicy z listy (rozdzielonej przecinkami)
+        parts = [p.strip() for p in str(street or '').split(',') if p.strip()]
+        if not parts:
+            return str(street or '')
+        return ', '.join(decline_street(p) for p in parts)
+
+    def _municipality_for_decl(self, municipality: str) -> str:
+        if not self.config.get('decl_decline_municipalities', False):
+            return str(municipality or '')
+        from utils.polish_declension import decline_municipality
+        parts = [p.strip() for p in str(municipality or '').split(',') if p.strip()]
+        if not parts:
+            return str(municipality or '')
+        return ', '.join(decline_municipality(p) for p in parts)
+
+    def _county_for_decl(self, county: str) -> str:
+        if not self.config.get('decl_decline_counties', False):
+            return str(county or '')
+        from utils.polish_declension import decline_county
+        parts = [p.strip() for p in str(county or '').split(',') if p.strip()]
+        if not parts:
+            return str(county or '')
+        return ', '.join(decline_county(p) for p in parts)
 
     def _get_short_name(self, first_name: str, last_name: str) -> str:
         import re
@@ -1325,11 +1367,11 @@ class DeclGeneratorWidget(QWidget):
                     owner_name=display_name,
                     pesel=o.get('pesel') or '',
                     nip=o.get('nip') or '',
-                    location=o.get('city', '') or p['location'],
-                    street=street_field,
+                    location=self._location_for_decl(o.get('city', '') or p['location']),
+                    street=self._street_for_decl(street_field),
                     voivodeship=v_str,
-                    county=c_str,
-                    municipality=m_str,
+                    county=self._county_for_decl(c_str),
+                    municipality=self._municipality_for_decl(m_str),
                     parcel_numbers_budowa=b_str,
                     parcel_numbers_demontaz=d_str,
                     area_ha=(f"łącznej {format_area_pl(area_bud)}" if len(b_nums)>1 else format_area_pl(area_bud)) if t == 'budowa' else (f"łącznej {format_area_pl(area_dem)}" if len(d_nums)>1 else format_area_pl(area_dem)),
