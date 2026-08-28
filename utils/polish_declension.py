@@ -1,0 +1,487 @@
+"""
+polish_declension.py – Odmiana polskich nazw miejscowości.
+
+UWAGA: 
+- WOJEWÓDZTWA nie są odmieniane (zostają jak są)
+- POWIATY nie są odmieniane (zostają jak są)
+- ODMIENIANE są tylko MIEJSCOWOŚCI (miejscownik)
+
+ZAMIANA miejscowości na powiat:
+- "Kościerzyna" → "kościerski" (gmina → powiat)
+- "Wejherowo" → "wejherowski"
+- itp.
+"""
+
+# ============================================================================
+# SŁOWNIK: MIEJSCOWOŚĆ → NAZWA POWIATU
+# ============================================================================
+
+CITY_TO_POWIAT = {
+    # MIEJSCOWOŚĆ: "Nazwa powiatu (małymi literami)",
+    
+    # Pomorze
+    "Kościerzyna": "kościerski",
+    "Koscierzyna": "kościerski",
+    "Wejherowo": "wejherowski",
+    "Wejherów": "wejherowski",
+    "Wejherow": "wejherowski",
+    "Kartuzy": "kartuski",
+    "Gdańsk": "gdański",
+    "Gdynia": "gdyński",
+    "Sopot": "sopocki",
+    "Tczew": "tczewski",
+    "Starogard Gdański": "starogardzki",
+    "Starogard Gdański": "starogardzki",
+    "Malbork": "malborski",
+    "Sztum": "sztumski",
+    "Kwidzyń": "kwidzyński",
+    "Kwidzyn": "kwidzyński",
+    "Słupsk": "słupski",
+    "Slupsk": "słupski",
+    "Lębork": "lęborski",
+    "Lebork": "lęborski",
+    "Człuchów": "człuchowski",
+    "Czluchow": "człuchowski",
+    "Chojnice": "chojnicki",
+    "Puck": "pucki",
+    "Bytów": "bytowski",
+    "Bytow": "bytowski",
+    "Lubań": "lubański",
+    "Luban": "lubański",
+    " Grybów": "gorlicki",
+    "Gorlice": "gorlicki",
+    "Bielsko-Biała": "bielski",
+    "Bielsko-Biala": "bielski",
+    "Żywiec": "żywiecki",
+    "Zywiec": "żywiecki",
+    "Cieszyn": "cieszyński",
+    "Cieszyn": "cieszyński",
+    "Jastrzębie-Zdrój": "jastrzębski",
+    "Jastrzebie-Zdroj": "jastrzębski",
+    "Pszczyna": "pszczyński",
+    "Mysłowice": "mysłowicki",
+    "Myslowice": "mysłowicki",
+    "Będzin": "będziński",
+    "Bedzin": "będziński",
+    "Zawiercie": "zawierciański",
+    "Mikołów": "mikołowski",
+    "Mikolow": "mikołowski",
+    "Ruda Śląska": "rudzki",
+    "Ruda Slaska": "rudzki",
+    "Siemianowice Śląskie": "siemianowicki",
+    "Siemianowice Slaskie": "siemianowicki",
+    "Piekary Śląskie": "piekarski",
+    "Piekary Slaskie": "piekarski",
+    "Tarnowskie Góry": "tarnogórski",
+    "Tarnowskie Gory": "tarnogórski",
+    "Świętochłowice": "świętochłowicki",
+    "Swietochlowice": "świętochłowicki",
+    "Pyskowice": "gliwicki",
+    
+    # Mazowsze
+    "Płock": "płocki",
+    "Plock": "płocki",
+    "Ostrołęka": "ostrołęcki",
+    "Ostroleka": "ostrołęcki",
+    "Ciechanów": "ciechanowski",
+    "Ciechanow": "ciechanowski",
+    "Przasnysz": "przasnyski",
+    "Maków Mazowiecki": "makowski",
+    "Wyszków": "wyszkowski",
+    "Wołomin": "wołomiński",
+    "Wolomin": "wołomiński",
+    "Legionowo": "legionowski",
+    "Piaseczno": "piaseczyński",
+    "Grójec": "grójecki",
+    "Grojec": "grójecki",
+    "Węgrów": "węgrowski",
+    "Wegrów": "węgrowski",
+    "Siedlce": "siedlecki",
+    "Minsk Mazowiecki": "miński",
+    "Mińsk Mazowiecki": "miński",
+    "Łosice": "łosicki",
+    "Sokołów Podlaski": "sokołowski",
+    "Węgrów": "węgrowski",
+    
+    # Wielkopolska
+    "Poznań": "poznański",
+    "Poznan": "poznański",
+    "Kalisz": "kaliski",
+    "Konin": "koniński",
+    "Leszno": "leszczyński",
+    "Piła": "pilski",
+    "Pila": "pilski",
+    "Ostrów Wielkopolski": "ostrowski",
+    "Ostrow Wielkopolski": "ostrowski",
+    "Gniezno": "gnieźnieński",
+    "Września": "wrzesiński",
+    "Wrzesnia": "wrzesiński",
+    "Śrem": "śremski",
+    "Srem": "śremski",
+    "Koło": "kolski",
+    "Kolo": "kolski",
+    "Turek": "turecki",
+    "Krotoszyn": "krotoszyński",
+    "Krotoszyn": "krotoszyński",
+    "Ostrzeszów": "ostrzeszowski",
+    "Ostrzeszow": "ostrzeszowski",
+    "Kępno": "kępiński",
+    "Kepno": "kępiński",
+    "Wągrowiec": "wągrowiecki",
+    "Wagrowiec": "wągrowiecki",
+    "Chodzież": "chodzieski",
+    "Chodziez": "chodzieski",
+    "Szamotuły": "szamotulski",
+    "Szamutuly": "szamotulski",
+    "Wronki": "szamotulski",
+    "Nowy Tomyśl": "nowotomyski",
+    "Nowy Tomysl": "nowotomyski",
+    "Grodzisk Wielkopolski": "grodziski",
+    "Grodzisk Wielkopolski": "grodziski",
+    "Kościan": "kościański",
+    "Koscian": "kościański",
+    "Środa Wielkopolska": "średzki",
+    "Sroda Wielkopolska": "średzki",
+    "Jarocin": "jarociński",
+    "Pleszew": "pleszewski",
+    
+    # Małopolska
+    "Kraków": "krakowski",
+    "Krakow": "krakowski",
+    "Tarnów": "tarnowski",
+    "Tarnow": "tarnowski",
+    "Nowy Sącz": "nowosądecki",
+    "Nowy Sącz": "nowosądecki",
+    "Oświęcim": "oświęcimski",
+    "Oswiecim": "oświęcimski",
+    "Chrzanów": "chrzanowski",
+    "Chrzanow": "chrzanowski",
+    "Olkusz": "olkuski",
+    "Myślenice": "myślenicki",
+    "Myslenice": "myślenicki",
+    "Wadowice": "wadowicki",
+    "Andrychów": "andrychowski",
+    "Andrychow": "andrychowski",
+    "Brzesko": "brzeski",
+    "Bochnia": "bocheński",
+    "Niepołomice": "wielicki",
+    "Niepolomice": "wielicki",
+    "Wieliczka": "wielicki",
+    "Limanowa": "limanowski",
+    "Nowy Targ": "nowotarski",
+    "Nowy Targ": "nowotarski",
+    "Podhale": "nowotarski",
+    "Zakopane": "tatrzański",
+    "Dąbrowa Tarnowska": "dąbrowski",
+    "Dabrowa Tarnowska": "dąbrowski",
+    "Müllerstadt": "dąbrowski",
+    
+    # Śląsk
+    "Katowice": "katowicki",
+    "Częstochowa": "częstochowski",
+    "Czestochowa": "częstochowski",
+    "Bytom": "bytomski",
+    "Chorzów": "chorzowski",
+    "Chorzow": "chorzowski",
+    "Dąbrowa Górnicza": "dąbrowski",
+    "Dabrowa Gornicza": "dąbrowski",
+    "Zabrze": "zabrski",
+    "Zory": "żorski",
+    "Zory": "żorski",
+    "Rybnik": "rybnicki",
+    "Mysłowice": "mysłowicki",
+    "Myslowice": "mysłowicki",
+    "Siemianowice Śląskie": "siemianowicki",
+    "Siemianowice Slaskie": "siemianowicki",
+    "Piekary Śląskie": "piekarski",
+    "Piekary Slaskie": "piekarski",
+    "Tarnowskie Góry": "tarnogórski",
+    "Tarnowskie Gory": "tarnogórski",
+    "Świętochłowice": "świętochłowicki",
+    "Swietochlowice": "świętochłowicki",
+    "Pyskowice": "gliwicki",
+    "Knurów": "gliwicki",
+    "Knurów": "gliwicki",
+    "Gliwice": "gliwicki",
+    "Ruda Śląska": "rudzki",
+    "Ruda Slaska": "rudzki",
+    "Jastrzębie-Zdrój": "jastrzębski",
+    "Jastrzebie-Zdroj": "jastrzębski",
+    "Żory": "żorski",
+    "Zory": "żorski",
+    "Będzin": "będziński",
+    "Bedzin": "będziński",
+    "Zawiercie": "zawierciański",
+    "Mikołów": "mikołowski",
+    "Mikolow": "mikołowski",
+    "Pszczyna": "pszczyński",
+    "Bielsko-Biała": "bielski",
+    "Bielsko-Biala": "bielski",
+    "Czechowice-Dziedzice": "bielski",
+    "Czechowice-Dziedzice": "bielski",
+    "Skoczów": "cieszyński",
+    "Ustroń": "cieszyński",
+    "Wisła": "cieszyński",
+    "WislA": "cieszyński",
+    "Żywiec": "żywiecki",
+    "Zywiec": "żywiecki",
+    "Cieszyn": "cieszyński",
+    "Cieszyn": "cieszyński",
+    
+    # Dolny Śląsk
+    "Wrocław": "wrocławski",
+    "Wroclaw": "wrocławski",
+    "Wałbrzych": "wałbrzyski",
+    "Walbrzych": "wałbrzyski",
+    "Legnica": "legnicki",
+    "Jelenia Góra": "jeleniogórski",
+    "Jelenia Gora": "jeleniogórski",
+    "Lubin": "lubiński",
+    "Polkowice": "polkowicki",
+    "Głogów": "głogowski",
+    "Glogow": "głogowski",
+    "Oleśnica": "oleśnicki",
+    "Olesnica": "oleśnicki",
+    "Trzebnica": "trzebnicki",
+    "Świdnica": "świdnicki",
+    "Swidnica": "świdnicki",
+    "Dzierżoniów": "dzierżoniowski",
+    "Dzierzoniów": "dzierżoniowski",
+    "Kłodzko": "kłodzki",
+    "Klodzko": "kłodzki",
+    "Bielawa": "dzierżoniowski",
+    "Nowa Ruda": "kłodzki",
+    "Kraków": "krakowski",
+}
+
+# ============================================================================
+# MIEJSCOWOŚCI - odmiana miejscownik (gdzie?)
+# ============================================================================
+
+CITY_DECLENSIONS = {
+    # Trójmiasto
+    "Gdańsk": "Gdańsku",
+    "Gdynia": "Gdyni",
+    "Sopot": "Sopocie",
+    
+    # Duże miasta
+    "Warszawa": "Warszawie",
+    "Kraków": "Krakowie",
+    "Krakow": "Krakowie",
+    "Wrocław": "Wrocławiu",
+    "Wroclaw": "Wrocławiu",
+    "Poznań": "Poznaniu",
+    "Poznan": "Poznaniu",
+    "Łódź": "Łodzi",
+    "Lodz": "Łodzi",
+    "Lublin": "Lublinie",
+    "Szczecin": "Szczecinie",
+    "Bydgoszcz": "Bydgoszczy",
+    "Toruń": "Toruniu",
+    "Torun": "Toruniu",
+    "Kielce": "Kielcach",
+    "Rzeszów": "Rzeszowie",
+    "Rzeszow": "Rzeszowie",
+    "Białystok": "Białymstoku",
+    "Bialystok": "Białymstoku",
+    "Olsztyn": "Olsztynie",
+    "Katowice": "Katowicach",
+    "Gorzów Wielkopolski": "Gorzowie Wielkopolskim",
+    "Gorzow Wielkopolski": "Gorzowie Wielkopolskim",
+    "Zielona Góra": "Zielonej Górze",
+    "Zielona Gora": "Zielonej Górze",
+    "Opole": "Opolu",
+    
+    # Pomorze
+    "Kościerzyna": "Kościerzynie",
+    "Koscierzyna": "Kościerzynie",
+    "Wejherowo": "Wejherowie",
+    "Wejherów": "Wejherowie",
+    "Wejherow": "Wejherowie",
+    "Kartuzy": "Kartuzach",
+    "Pruszcz Gdański": "Pruszczu Gdańskim",
+    "Pruszcz Gdanski": "Pruszczu Gdańskim",
+    "Starogard Gdański": "Starogardzie Gdańskim",
+    "Starogard Gdanski": "Starogardzie Gdańskim",
+    "Tczew": "Tczewie",
+    "Rumia": "Rumi",
+    "Sztum": "Sztumie",
+    "Malbork": "Malborku",
+    "Kwidzyń": "Kwidzyniu",
+    "Kwidzyn": "Kwidzyniu",
+    "Słupsk": "Słupsku",
+    "Slupsk": "Słupsku",
+    "Grudziądz": "Grudziądzu",
+    "Grudziadz": "Grudziądzu",
+    "Kołobrzeg": "Kołobrzegu",
+    "Kolobrzeg": "Kołobrzegu",
+    "Chojnice": "Chojnicach",
+    "Puck": "Pucku",
+    "Władysławowo": "Władysławowie",
+    "Wladyslawowo": "Władysławowie",
+}
+
+# ============================================================================
+# ODMIANA ULIC
+# ============================================================================
+
+def decline_street(street: str) -> str:
+    """Odmienia nazwę ulicy przez miejscownik."""
+    if not street:
+        return street
+    
+    original = street.strip()
+    
+    # Prefix ulica/ul./ul
+    prefix = ""
+    rest = original
+    
+    lower_orig = original.lower()
+    if lower_orig.startswith("ulica "):
+        prefix = "ulica "
+        rest = original[6:]
+    elif lower_orig.startswith("ul. "):
+        prefix = "ul. "
+        rest = original[4:]
+    elif lower_orig.startswith("ul "):
+        prefix = "ul "
+        rest = original[3:]
+    
+    if not rest:
+        return original
+    
+    rest = rest.split(",")[0].strip()
+    rest = rest.split("(")[0].strip()
+    
+    return prefix + _decline_female_name(rest)
+
+
+def _decline_female_name(name: str) -> str:
+    """Odmienia żeńskie nazwy własne."""
+    if not name:
+        return name
+    
+    if name.lower().endswith("ia"):
+        return name
+    
+    if name.lower().endswith("a") and not name.lower().endswith("ia"):
+        base = name[:-1]
+        
+        special_cases = {
+            "krakowska": "Krakowskiej",
+            "warszawska": "Warszawskiej",
+            "gdanska": "Gdańskiej",
+            "szeroka": "Szerokiej",
+            "dluga": "Długiej",
+            "nowa": "Nowej",
+            "stara": "Starej",
+        }
+        
+        if name.lower() in special_cases:
+            return special_cases[name.lower()]
+        
+        return base + "ej"
+    
+    return name
+
+
+# ============================================================================
+# FUNKCJE GŁÓWNE
+# ============================================================================
+
+def city_to_powiat(city: str) -> str:
+    """
+    Zamienia nazwę miejscowości na nazwę powiatu.
+    
+    Args:
+        city: Nazwa miejscowości, np. "Kościerzyna"
+    
+    Returns:
+        Nazwa powiatu małymi literami, np. "kościerski"
+        
+    Jeśli nie ma w słowniku, zwraca oryginalną wartość.
+    """
+    if not city:
+        return city
+    
+    normalized = city.strip()
+    
+    # Sprawdź bezpośrednio
+    if normalized in CITY_TO_POWIAT:
+        return CITY_TO_POWIAT[normalized]
+    
+    # Sprawdź z małymi literami
+    if normalized.lower() in CITY_TO_POWIAT:
+        return CITY_TO_POWIAT[normalized.lower()]
+    
+    # Jeśli już jest nazwą powiatu (kończy się na -ski/-cki/-dzki), zwróć jak jest
+    if normalized.lower().endswith(("ski", "cka", "dzka", "skie", "ckie", "dzkie")):
+        return normalized.lower()
+    
+    # Nie znaleziono - zwróć oryginalną wartość
+    return normalized
+
+
+def decline_city(city: str) -> str:
+    """
+    Odmienia nazwę miejscowości przez miejscownik.
+    
+    Args:
+        city: Nazwa miejscowości, np. "Gdańsk"
+    
+    Returns:
+        Odmieniona nazwa, np. "Gdańsku"
+    """
+    if not city:
+        return city
+    
+    normalized = city.strip()
+    
+    # Sprawdź czy to nie jest przypadkiem nazwa powiatu
+    if normalized.lower().endswith(("ski", "cka", "dzka", "skie", "ckie", "dzkie")):
+        return normalized
+    
+    # Słownik miejscowości
+    if normalized in CITY_DECLENSIONS:
+        return CITY_DECLENSIONS[normalized]
+    
+    if normalized.lower() in CITY_DECLENSIONS:
+        found = CITY_DECLENSIONS[normalized.lower()]
+        if normalized[0].isupper():
+            return found[0].upper() + found[1:]
+        return found
+    
+    # Automatyczna odmiana dla żeńskich nazw na -a
+    if normalized.lower().endswith("a") and not normalized.lower().endswith("ia"):
+        base = normalized[:-1]
+        
+        if base.lower().endswith(("sk", "ck", "zk", "dz")):
+            return base + "u"
+        
+        if base.lower().endswith(("ów", "ow")):
+            if base.lower().endswith("ów"):
+                return base + "ie"
+            return base + "a"
+        
+        if base.lower().endswith("ica"):
+            return base[:-2] + "y"
+        
+        return base + "ej"
+    
+    if normalized.lower().endswith(("in", "lin", "cin", "win", "ton")):
+        return normalized + "ie"
+    
+    return normalized
+
+
+# ============================================================================
+# TAGI DLA DOKUMENTÓW
+# ============================================================================
+
+def create_declension_tags(city: str, street: str) -> dict:
+    """Tworzy słownik z tagami dla szablonów dokumentów."""
+    return {
+        "<Miejscowosc dzialki odmiana>": decline_city(city) if city else city,
+        "<Ulica odmiana>": decline_street(street) if street else street,
+        "<Powiat zamiana>": city_to_powiat(city) if city else city,
+    }
