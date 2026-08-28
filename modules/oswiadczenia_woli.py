@@ -1093,8 +1093,8 @@ class DeclGeneratorWidget(QWidget):
                 location=self._location_for_decl(self.location_edit.text()),
                 street=self._street_for_decl(self.street_edit.text()),
                 voivodeship=self.voivodeship_edit.text(),
-                county=self._county_for_decl(self.county_edit.text()),
-                municipality=self._municipality_for_decl(self.municipality_edit.text()),
+                county=self._county_for_powiat(self.county_edit.text(), self.location_edit.text()),
+                municipality=self.municipality_edit.text(),
                 parcel_numbers_budowa=self.parcels_budowa_edit.text(),
                 parcel_numbers_demontaz=self.parcels_demontaz_edit.text(),
                 area_ha=current_p['area_ha'],
@@ -1160,23 +1160,16 @@ class DeclGeneratorWidget(QWidget):
             return str(street or '')
         return ', '.join(decline_street(p) for p in parts)
 
-    def _municipality_for_decl(self, municipality: str) -> str:
-        if not self.config.get('decl_decline_municipalities', False):
-            return str(municipality or '')
-        from utils.polish_declension import decline_municipality
-        parts = [p.strip() for p in str(municipality or '').split(',') if p.strip()]
-        if not parts:
-            return str(municipality or '')
-        return ', '.join(decline_municipality(p) for p in parts)
-
-    def _county_for_decl(self, county: str) -> str:
-        if not self.config.get('decl_decline_counties', False):
+    def _county_for_powiat(self, county: str, location: str = '') -> str:
+        """Zamienia miejscowość/powiat na właściwą nazwę powiatu (ZAMIENIA, nie odmienia)."""
+        if not self.config.get('decl_powiat_zamiana', False):
             return str(county or '')
-        from utils.polish_declension import decline_county
-        parts = [p.strip() for p in str(county or '').split(',') if p.strip()]
+        from utils.polish_declension import city_to_powiat
+        source = str(county or '').strip() or str(location or '').strip()
+        parts = [p.strip() for p in source.split(',') if p.strip()]
         if not parts:
             return str(county or '')
-        return ', '.join(decline_county(p) for p in parts)
+        return ', '.join(city_to_powiat(p) for p in parts)
 
     def _get_short_name(self, first_name: str, last_name: str) -> str:
         import re
@@ -1370,8 +1363,8 @@ class DeclGeneratorWidget(QWidget):
                     location=self._location_for_decl(o.get('city', '') or p['location']),
                     street=self._street_for_decl(street_field),
                     voivodeship=v_str,
-                    county=self._county_for_decl(c_str),
-                    municipality=self._municipality_for_decl(m_str),
+                    county=self._county_for_powiat(c_str, o.get('city', '') or p['location']),
+                    municipality=m_str,
                     parcel_numbers_budowa=b_str,
                     parcel_numbers_demontaz=d_str,
                     area_ha=(f"łącznej {format_area_pl(area_bud)}" if len(b_nums)>1 else format_area_pl(area_bud)) if t == 'budowa' else (f"łącznej {format_area_pl(area_dem)}" if len(d_nums)>1 else format_area_pl(area_dem)),

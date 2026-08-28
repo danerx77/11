@@ -392,29 +392,16 @@ class SettingsTabWidget(QWidget):
         )
         decl_form.addRow("", self.chk_decl_location_locative)
 
-        decl_note = QLabel(
-            "Osobne wyłączniki odmiany gramatycznej (miejscownik) dla "
-            "poszczególnych części adresu. Odmiana działa w Oświadczeniach "
-            "woli i Pismach przewodnich."
-        )
-        decl_note.setWordWrap(True)
-        decl_note.setStyleSheet("color: #888888; font-style: italic;")
-        decl_form.addRow("", decl_note)
-
         self.chk_decl_streets = QCheckBox(
-            "Odmieniaj ulice (np. ul. Długa → ul. Długiej, Szeroka → Szerokiej)"
+            "Odmieniaj ulice (np. ulica Miła → ul. Miłej)"
         )
         decl_form.addRow("", self.chk_decl_streets)
 
-        self.chk_decl_municipalities = QCheckBox(
-            "Odmieniaj gminy (np. Gmina Wejherowo → Gminie Wejherowie)"
+        self.chk_decl_powiat = QCheckBox(
+            "Zamieniaj miejscowości na właściwe nazwy powiatów "
+            "(np. Kościerzyna → kościerski, Wejherowo → wejherowski)"
         )
-        decl_form.addRow("", self.chk_decl_municipalities)
-
-        self.chk_decl_counties = QCheckBox(
-            "Odmieniaj powiaty (np. gdański → gdańskim, kartuski → kartuskim)"
-        )
-        decl_form.addRow("", self.chk_decl_counties)
+        decl_form.addRow("", self.chk_decl_powiat)
 
         self.decl_budowa_edit = QLineEdit()
         decl_form.addRow(
@@ -974,11 +961,8 @@ class SettingsTabWidget(QWidget):
         self.chk_decl_streets.setChecked(
             self.config.get("decl_decline_streets", False)
         )
-        self.chk_decl_municipalities.setChecked(
-            self.config.get("decl_decline_municipalities", False)
-        )
-        self.chk_decl_counties.setChecked(
-            self.config.get("decl_decline_counties", False)
+        self.chk_decl_powiat.setChecked(
+            self.config.get("decl_powiat_zamiana", False)
         )
 
         c5_crop = self.config.get(
@@ -1193,11 +1177,8 @@ class SettingsTabWidget(QWidget):
         self.config["decl_decline_streets"] = (
             self.chk_decl_streets.isChecked()
         )
-        self.config["decl_decline_municipalities"] = (
-            self.chk_decl_municipalities.isChecked()
-        )
-        self.config["decl_decline_counties"] = (
-            self.chk_decl_counties.isChecked()
+        self.config["decl_powiat_zamiana"] = (
+            self.chk_decl_powiat.isChecked()
         )
 
         self.config["stamp_profile_c5"] = {
