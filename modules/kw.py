@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from utils.kw_utils import ekw_access_denied_reason, should_use_native_pdf_export
+from utils.kw_utils import should_use_native_pdf_export
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont
@@ -596,14 +596,8 @@ class KWDownloadWorker(QThread):
                             )
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("Błąd przy pobieraniu KW %s", kw)
-                            error_text = str(exc)
-                            status = (
-                                "Odmowa dostępu"
-                                if "Access Denied / Error 15" in error_text
-                                else "Błąd PDF"
-                            )
-                            self.log_msg.emit(f"❌ {kw}: błąd: {error_text}")
-                            self.item_finished.emit(kw, False, status)
+                            self.log_msg.emit(f"❌ {kw}: błąd: {exc}")
+                            self.item_finished.emit(kw, False, "Błąd PDF")
 
                         if (
                             index < len(self.kw_queue) - 1
@@ -769,20 +763,10 @@ class KWDownloadWorker(QThread):
             self.log_msg.emit(f"⛔ {kw}: przerwano.")
             self.item_finished.emit(kw, False, "Przerwano")
             return
-        if result.startswith("BLOCKED:"):
-            error_text = result[8:].strip() or "Odmowa dostępu serwisu eKW"
-            self.log_msg.emit(f"⛔ {kw}: {error_text}")
-            self.item_finished.emit(kw, False, "Odmowa dostępu")
-            return
         if result.startswith("ERR:"):
             error_text = result[4:].strip() or "Błąd księgi"
-            blocked_reason = ekw_access_denied_reason(error_text)
-            if blocked_reason:
-                self.log_msg.emit(f"⛔ {kw}: {blocked_reason}")
-                self.item_finished.emit(kw, False, "Odmowa dostępu")
-            else:
-                self.log_msg.emit(f"❌ {kw}: {error_text}")
-                self.item_finished.emit(kw, False, "Błąd księgi")
+            self.log_msg.emit(f"❌ {kw}: {error_text}")
+            self.item_finished.emit(kw, False, "Błąd księgi")
             return
         if result == "NO_RESULT":
             self.log_msg.emit(f"❌ {kw}: nie znaleziono księgi.")
@@ -906,24 +890,6 @@ class KWDownloadWorker(QThread):
             logger.warning("Nie udało się zminimalizować okna przeglądarki: %s", exc)
             self.log_msg.emit(f"⚠️ Nie udało się zminimalizować przeglądarki: {exc}")
 
-    def _ekw_access_denied_reason(self, page: Any) -> str:
-        """Rozpoznaje stronę odmowy eKW bez prób obchodzenia zabezpieczenia."""
-        parts: list[str] = []
-        try:
-            parts.append(str(page.title() or ""))
-        except Exception:
-            pass
-        try:
-            parts.append(str(page.url or ""))
-        except Exception:
-            pass
-        try:
-            body = page.locator("body").inner_text(timeout=1500)
-            parts.append(str(body or "")[:4000])
-        except Exception:
-            pass
-        return ekw_access_denied_reason("\n".join(parts))
-
     def _wait_for_kw_form(self, page: Any, timeout_error_class: type[Exception]) -> None:
         start = time.time()
         while time.time() - start < 180:
@@ -948,13 +914,6 @@ class KWDownloadWorker(QThread):
                         "przeglądarkę i dokończ ewentualny komunikat ręcznie."
                     )
                 continue
-
-        # Dopiero po upływie czasu sprawdzamy, czy strona rzeczywiście
-        # zwróciła komunikat Access Denied / Error 15. Nie sondujemy strony
-        # w pętli i nie pokazujemy tego komunikatu przy każdym starcie.
-        blocked_reason = self._ekw_access_denied_reason(page)
-        if blocked_reason:
-            raise RuntimeError(blocked_reason)
 
         current_url = ""
         current_title = ""
@@ -1019,9 +978,6 @@ class KWDownloadWorker(QThread):
             if isinstance(result, str) and result.startswith("ERR:"):
                 return result
 
-        blocked_reason = self._ekw_access_denied_reason(page)
-        if blocked_reason:
-            return f"BLOCKED:{blocked_reason}"
         return "NO_RESULT"
 
     def _save_current_section_as_pdf(

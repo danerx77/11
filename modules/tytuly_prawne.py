@@ -266,24 +266,26 @@ class LegalTitlesWidget(QWidget):
         # W każdym kroku pokazujemy mały, czytelny fragment tabeli. Dzięki
         # temu ustawienie nie jest wyłącznie techniczną nazwą — od razu widać,
         # jaki będzie efekt w zestawieniu.
-        def table_fragment(headers, rows):
+        def table_fragment(headers, rows, *, show_grid=True, alternating=False):
+            """Tworzy mały fragment tabeli używany przez interaktywne podglądy."""
+            border = "1" if show_grid else "0"
             header_cells = "".join(
                 "<th bgcolor='#dcecff' style='padding:5px; color:#1d4f80;'>"
                 f"{header}</th>"
                 for header in headers
             )
             body_rows = "".join(
-                "<tr>"
+                ("<tr bgcolor='#eef6fd'>" if alternating and index % 2 else "<tr>")
                 + "".join(
                     "<td style='padding:5px; color:#263b53;'>"
                     f"{value}</td>"
                     for value in row
                 )
                 + "</tr>"
-                for row in rows
+                for index, row in enumerate(rows)
             )
             return (
-                "<table border='1' cellspacing='0' cellpadding='0' width='100%' "
+                f"<table border='{border}' cellspacing='0' cellpadding='0' width='100%' "
                 "style='border-color:#a9c4de;'>"
                 f"<tr>{header_cells}</tr>{body_rows}</table>"
             )
@@ -304,15 +306,30 @@ class LegalTitlesWidget(QWidget):
             holder_layout.addWidget(help_label(explanation))
             return holder
 
+        def update_example_panel(
+            preview, description, headers, rows, note, *, show_grid=True, alternating=False
+        ):
+            """Odświeża mały, żywy podgląd po zmianie ustawienia."""
+            preview["summary"].setText(description)
+            preview["fragment"].setText(
+                table_fragment(
+                    headers,
+                    rows,
+                    show_grid=show_grid,
+                    alternating=alternating,
+                )
+            )
+            preview["note"].setText(f"<b>Co zmienia bieżący wybór:</b> {note}")
+
         def example_panel(title, description, headers, rows, note):
             panel = QGroupBox(title)
             panel.setMinimumWidth(330)
             panel_layout = QVBoxLayout(panel)
-            summary = QLabel(description)
+            summary = QLabel()
             summary.setWordWrap(True)
             summary.setStyleSheet("color:#45647c; font-size:12px; font-weight:600;")
             panel_layout.addWidget(summary)
-            fragment = QLabel(table_fragment(headers, rows))
+            fragment = QLabel()
             fragment.setTextFormat(Qt.TextFormat.RichText)
             fragment.setWordWrap(True)
             fragment.setStyleSheet(
@@ -320,13 +337,19 @@ class LegalTitlesWidget(QWidget):
                 "padding:7px;"
             )
             panel_layout.addWidget(fragment)
-            note_label = QLabel(f"<b>Co zmienia opcja:</b> {note}")
+            note_label = QLabel()
             note_label.setTextFormat(Qt.TextFormat.RichText)
             note_label.setWordWrap(True)
             note_label.setStyleSheet("color:#607d8b; font-size:11px;")
             panel_layout.addWidget(note_label)
             panel_layout.addStretch()
-            return panel
+            preview = {
+                "summary": summary,
+                "fragment": fragment,
+                "note": note_label,
+            }
+            update_example_panel(preview, description, headers, rows, note)
+            return panel, preview
 
         # ───────────────────────── 1. Tryb grupowania
         tab_group = QWidget()
@@ -444,6 +467,15 @@ class LegalTitlesWidget(QWidget):
         def update_group_preview(index: int):
             index = max(0, min(index, len(mode_specs) - 1))
             mode_title, description, example = mode_specs[index]
+            try:
+                pair_on_separate_lines = combo_pair.currentIndex() == 1
+            except NameError:
+                # Pierwsze zbudowanie kart następuje przed utworzeniem comboboxa.
+                pair_on_separate_lines = True
+            if not pair_on_separate_lines:
+                example = example.replace(
+                    "Anna Kowalska<br>Jan Nowak", "Anna Kowalska i Jan Nowak"
+                )
             preview_title.setText(mode_title)
             preview_description.setText(description)
             preview_example.setText(
@@ -507,6 +539,35 @@ class LegalTitlesWidget(QWidget):
                 "Takie pozycje nie pojawią się w automatycznie zbudowanych tabelach.",
             ),
         )
+
+        def update_group_settings_preview(*_args):
+            pair_layout = (
+                "w osobnych liniach"
+                if combo_pair.currentIndex() == 1
+                else "w jednej wspólnej nazwie"
+            )
+            mode_title = mode_specs[max(0, mode_button_group.checkedId())][0]
+            preview_note.setText(
+                "<b>Aktualny wybór:</b> "
+                f"{mode_title}; pary: {pair_layout}; działki: "
+                f"{'rosnąco' if chk_sort.isChecked() else 'w kolejności danych'}; "
+                f"pozycje zmarłe/niepełne: "
+                f"{'pomijane' if chk_exclude_dead.isChecked() else 'uwzględniane'}.")
+
+        def refresh_group_pair_preview(*_args):
+            update_group_preview(max(0, mode_button_group.checkedId()))
+            update_group_settings_preview()
+
+        combo_pair.currentIndexChanged.connect(refresh_group_pair_preview)
+        chk_sort.toggled.connect(update_group_settings_preview)
+        chk_exclude_dead.toggled.connect(update_group_settings_preview)
+        for index in range(len(mode_specs)):
+            button = mode_button_group.button(index)
+            if button is not None:
+                button.toggled.connect(
+                    lambda checked: update_group_settings_preview() if checked else None
+                )
+        refresh_group_pair_preview()
         group_layout.addWidget(base_box)
         tabs.addTab(tab_group, "① Grupowanie")
 
@@ -590,22 +651,68 @@ class LegalTitlesWidget(QWidget):
             ),
         )
 
-        rows_content.addWidget(box_rows, 3)
-        rows_content.addWidget(
-            example_panel(
-                "Przykład — wiersze i scalenia",
-                "Dwa wpisy jednego właściciela mogą być czytane jako osobne "
-                "wiersze albo jeden wspólny blok.",
-                ("Lp.", "Działka", "Właściciel", "Nr KW"),
-                (
-                    ("1", "12/1", "Anna Kowalska", "GD1G/00012345/6"),
-                    ("", "12/2", "", ""),
-                ),
-                "Scalanie pozostawia pusty wizualnie drugi Lp./właściciela/KW; "
-                "po wyłączeniu każdy wiersz zawiera komplet powtórzonych danych.",
-            ),
-            2,
+        rows_preview_box, rows_preview = example_panel(
+            "Podgląd — wiersze i scalenia",
+            "Zmień dowolny przełącznik po lewej, aby zobaczyć wynik.",
+            ("Lp.", "Działka", "Właściciel", "Nr KW"),
+            (),
+            "",
         )
+
+        def update_rows_preview(*_args):
+            split_couple = chk_split_couples.isChecked()
+            span_owner = chk_span_lp_owner.isChecked()
+            merge_kw = chk_merge_kw.isChecked()
+            if split_couple:
+                rows = (
+                    ("1", "12/1", "Anna Kowalska", "GD1G/00012345/6"),
+                    (
+                        "" if span_owner else "2",
+                        "12/1",
+                        "" if span_owner else "Jan Nowak",
+                        "" if merge_kw else "GD1G/00012345/6",
+                    ),
+                )
+                description = "Para jest pokazana jako dwa wiersze — po jednym dla każdej osoby."
+            else:
+                rows = (("1", "12/1", "Anna Kowalska i Jan Nowak", "GD1G/00012345/6"),)
+                description = "Para pozostaje wspólnie w jednej komórce i jednym wierszu."
+
+            owner_block = (
+                "w osobnych wierszach"
+                if chk_option4_separate.isChecked()
+                else "w jednej komórce"
+            )
+            parcel_owner_block = (
+                "w jednej scalonej komórce"
+                if chk_option5_owner_one_cell.isChecked()
+                else "w osobnych komórkach"
+            )
+            note = (
+                f"Opcja 4: współwłaściciele pakietu są {owner_block}. "
+                f"Opcja 5: właściciele działki są {parcel_owner_block}. "
+                f"Ręczne edycje: {'chronione' if chk_keep_manual.isChecked() else 'mogą zostać nadpisane przy przebudowie'}."
+            )
+            update_example_panel(
+                rows_preview,
+                description,
+                ("Lp.", "Działka", "Właściciel", "Nr KW"),
+                rows,
+                note,
+            )
+
+        for control in (
+            chk_split_couples,
+            chk_option4_separate,
+            chk_option5_owner_one_cell,
+            chk_span_lp_owner,
+            chk_merge_kw,
+            chk_keep_manual,
+        ):
+            control.toggled.connect(update_rows_preview)
+        update_rows_preview()
+        rows_content.addWidget(box_rows, 3)
+        rows_content.addWidget(rows_preview_box, 2)
         rows_layout.addLayout(rows_content, 1)
         tabs.addTab(tab_rows, "② Wiersze i scalenia")
 
@@ -707,21 +814,93 @@ class LegalTitlesWidget(QWidget):
             help_label("W jednej komórce dane są zwarte; osobne wiersze ułatwiają przypisanie odrębnych statusów osobom."),
         )
 
-        t12_content.addWidget(box_t12, 3)
-        t12_content.addWidget(
-            example_panel(
-                "Przykład — Tabela 1 / Tabela 2",
-                "Przykład pokazuje dodatkowe kolumny i dwa warianty zapisu wielu działek.",
-                ("Lp.", "Działki", "Właściciel", "Nr KW", "Wysłano"),
-                (
-                    ("1", "12/1<br>12/2", "Anna Kowalska", "GD1G/00012345/6", "2026-08-29"),
-                    ("2", "15/1", "Jan Nowak", "-", ""),
-                ),
-                "Wybrany format decyduje tylko o układzie komórek i wierszy; "
-                "numer działki, właściciel i KW pozostają tymi samymi danymi.",
-            ),
-            2,
+        t12_preview_box, t12_preview = example_panel(
+            "Podgląd — Tabela 1 / Tabela 2",
+            "Zmień ustawienia po lewej, aby porównać układ komórek.",
+            ("Tabela", "Kategoria", "Działki", "Właściciele", "Nr KW"),
+            (),
+            "",
         )
+
+        def update_t12_preview(*_args):
+            parcel_mode = combo_multi_parcels.currentIndex()
+            owner_mode = combo_multi_owners.currentIndex()
+            parcel_value = (
+                "12/1<br>12/2"
+                if parcel_mode == 0
+                else "12/1, 12/2"
+            )
+            owner_value = (
+                "Anna Kowalska<br>Jan Nowak"
+                if owner_mode == 0
+                else "Anna Kowalska, Jan Nowak"
+            )
+            missing_kw = ("", "-", "brak")[max(0, min(combo_empty_kw.currentIndex(), 2))]
+            first_table = "Tabela 1" if chk_przylacza_separate.isChecked() else "Tabela 1 / 2"
+            second_table = "Tabela 2" if chk_przylacza_separate.isChecked() else "Tabela 1 / 2"
+
+            headers = ["Tabela", "Kategoria", "Działki", "Właściciele", "Nr KW"]
+            if chk_extra_1a.isChecked():
+                headers.append("Wysłano T1")
+            if chk_extra_1b.isChecked():
+                headers.append("Wysłano T2")
+
+            def make_row(table, category, parcels, owners, kw):
+                row = [table, category, parcels, owners, kw]
+                if chk_extra_1a.isChecked():
+                    row.append("2026-08-29" if table == "Tabela 1" else "")
+                if chk_extra_1b.isChecked():
+                    row.append("2026-08-29" if table == "Tabela 2" else "")
+                return tuple(row)
+
+            if parcel_mode == 2:
+                rows = [
+                    make_row(first_table, "Przyłącze", "12/1", owner_value, "GD1G/00012345/6"),
+                    make_row(first_table, "Przyłącze", "12/2", owner_value, "GD1G/00012345/6"),
+                ]
+            elif owner_mode == 2:
+                rows = [
+                    make_row(first_table, "Przyłącze", parcel_value, "Anna Kowalska", "GD1G/00012345/6"),
+                    make_row(first_table, "Przyłącze", "", "Jan Nowak", "GD1G/00012345/6"),
+                ]
+            else:
+                rows = [
+                    make_row(first_table, "Przyłącze", parcel_value, owner_value, "GD1G/00012345/6"),
+                ]
+            rows.append(
+                make_row(second_table, "Budowa", "15/1", "Jan Nowak", missing_kw)
+            )
+
+            parcel_layout = (
+                "osobne wiersze"
+                if parcel_mode == 2
+                else "nowe linie" if parcel_mode == 0 else "lista po przecinku"
+            )
+            owner_layout = (
+                "osobne wiersze"
+                if owner_mode == 2
+                else "nowe linie" if owner_mode == 0 else "lista po przecinku"
+            )
+            note = (
+                f"Działki: {parcel_layout}; współwłaściciele: {owner_layout}; "
+                f"brak KW: {'pusta komórka' if not missing_kw else missing_kw!r}. "
+                f"Przyłącza: {'Tabela 1' if chk_przylacza_separate.isChecked() else 'wspólny układ Tabel 1/2'}."
+            )
+            update_example_panel(
+                t12_preview,
+                "Podgląd odzwierciedla aktualnie zaznaczone kolumny, podział kategorii i format wielokrotnych danych.",
+                tuple(headers),
+                tuple(rows),
+                note,
+            )
+
+        for control in (chk_extra_1a, chk_extra_1b, chk_przylacza_separate):
+            control.toggled.connect(update_t12_preview)
+        for control in (combo_empty_kw, combo_multi_parcels, combo_multi_owners):
+            control.currentIndexChanged.connect(update_t12_preview)
+        update_t12_preview()
+        t12_content.addWidget(box_t12, 3)
+        t12_content.addWidget(t12_preview_box, 2)
         t12_layout.addLayout(t12_content, 1)
         tabs.addTab(tab_t12, "③ Tabele 1 i 2")
 
@@ -772,21 +951,46 @@ class LegalTitlesWidget(QWidget):
             ),
         )
 
-        t3_content.addWidget(box_t3, 3)
-        t3_content.addWidget(
-            example_panel(
-                "Przykład — Tabela 3",
-                "W trybie szczegółowym każda relacja właściciela i działki jest osobnym wpisem.",
-                ("Lp.", "Właściciel", "Działka", "Ulica", "Nr KW"),
-                (
-                    ("1", "Anna Kowalska", "12/1", "-", "GD1G/00012345/6"),
-                    ("2", "Jan Nowak", "12/1", "-", "GD1G/00012345/6"),
-                ),
-                "Znak „-” w ulicy jest efektem pierwszej opcji; wyłączenie jej "
-                "pozostawi pełną nazwę miejscowości/ulicy.",
-            ),
-            2,
+        t3_preview_box, t3_preview = example_panel(
+            "Podgląd — Tabela 3",
+            "Zmień ustawienia po lewej, aby zobaczyć liczbę i treść wierszy.",
+            ("Lp.", "Właściciel", "Działka", "Ulica", "Nr KW"),
+            (),
+            "",
         )
+
+        def update_t3_preview(*_args):
+            street_value = "-" if chk_dash.isChecked() else "Gdańsk"
+            if chk_t3_every_owner_parcel.isChecked():
+                rows = [
+                    ("1", "Anna Kowalska", "12/1", street_value, "GD1G/00012345/6"),
+                    ("2", "Jan Nowak", "12/1", street_value, "GD1G/00012345/6"),
+                ]
+                description = "Każdy współwłaściciel otrzymuje własny, szczegółowy wiersz."
+            else:
+                rows = [
+                    ("1", "Anna Kowalska<br>Jan Nowak", "12/1", street_value, "GD1G/00012345/6"),
+                ]
+                description = "Współwłaściciele mogą zostać zebrani w jednym wierszu zgodnie z trybem grupowania."
+            if not chk_t3_skip_no_kw.isChecked():
+                rows.append((str(len(rows) + 1), "Piotr Zieliński", "15/1", "ul. Polna", "brak"))
+            note = (
+                f"Ulica powtarzająca nazwę miasta: {'„-”' if chk_dash.isChecked() else 'pokazana w całości'}. "
+                f"Pozycje bez KW: {'pomijane' if chk_t3_skip_no_kw.isChecked() else 'pokazywane jako „brak”'}."
+            )
+            update_example_panel(
+                t3_preview,
+                description,
+                ("Lp.", "Właściciel", "Działka", "Ulica", "Nr KW"),
+                tuple(rows),
+                note,
+            )
+
+        for control in (chk_dash, chk_t3_every_owner_parcel, chk_t3_skip_no_kw):
+            control.toggled.connect(update_t3_preview)
+        update_t3_preview()
+        t3_content.addWidget(box_t3, 3)
+        t3_content.addWidget(t3_preview_box, 2)
         t3_layout.addLayout(t3_content, 1)
         tabs.addTab(tab_t3, "④ Tabela 3")
 
@@ -872,21 +1076,76 @@ class LegalTitlesWidget(QWidget):
             ),
         )
 
-        t5_content.addWidget(box_t5, 3)
-        t5_content.addWidget(
-            example_panel(
-                "Przykład — Tabela 5",
-                "Puste pola w drugim wierszu pokazują wizualnie dane scalone z wierszem powyżej.",
-                ("Działka", "Ulica", "Oddział", "Tytuł", "Urządzenie", "KW"),
-                (
-                    ("12/1", "ul. Leśna", "Gdańsk", "Służebność", "Linia SN", "GD1G/00012345/6"),
-                    ("12/2", "ul. Leśna", "", "", "", ""),
-                ),
-                "Każdy przełącznik scalenia dotyczy tylko swojej kolumny; działki "
-                "pozostają oddzielnymi rekordami zestawienia.",
-            ),
-            2,
+        t5_preview_box, t5_preview = example_panel(
+            "Podgląd — Tabela 5",
+            "Zmień ustawienia po lewej, aby zobaczyć od razu efekt scalenia kolumn.",
+            ("Działka", "Ulica", "Oddział", "Tytuł", "Urządzenie", "KW"),
+            (),
+            "",
         )
+
+        def update_t5_preview(*_args):
+            source_index = max(0, min(combo_street_source.currentIndex(), 2))
+            street_values = ("ul. Leśna", "ul. Leśna 12", "ul. Działkowa")
+            headers = ["Działka"]
+            if chk_t5_street.isChecked():
+                headers.append("Ulica")
+            headers.extend(("Oddział", "Tytuł", "Urządzenie", "KW"))
+
+            def make_row(parcel, second_row=False):
+                row = [parcel]
+                if chk_t5_street.isChecked():
+                    row.append(street_values[source_index])
+                row.extend(
+                    (
+                        "" if second_row and chk_group_odd.isChecked() else "Gdańsk",
+                        "" if second_row and chk_group_tytul.isChecked() else "Służebność",
+                        "" if second_row and chk_group_urz.isChecked() else "Linia SN",
+                        "" if second_row and chk_t5_merge_kw.isChecked() else "GD1G/00012345/6",
+                    )
+                )
+                return tuple(row)
+
+            rows = (make_row("12/1"), make_row("12/2", second_row=True))
+            street_note = (
+                f"ulica: {street_values[source_index]}"
+                if chk_t5_street.isChecked()
+                else "kolumna ulicy ukryta"
+            )
+            grouped_columns = [
+                name
+                for name, control in (
+                    ("Oddział", chk_group_odd),
+                    ("Tytuł", chk_group_tytul),
+                    ("Urządzenie", chk_group_urz),
+                    ("KW", chk_t5_merge_kw),
+                )
+                if control.isChecked()
+            ]
+            note = (
+                f"{street_note}. Scalone kolumny: "
+                f"{', '.join(grouped_columns) if grouped_columns else 'brak — dane są powtarzane w każdym wierszu'}."
+            )
+            update_example_panel(
+                t5_preview,
+                "Puste komórki drugiego wiersza oznaczają wartość scaloną z pierwszym rekordem.",
+                tuple(headers),
+                rows,
+                note,
+            )
+
+        for control in (
+            chk_t5_street,
+            chk_group_odd,
+            chk_group_tytul,
+            chk_group_urz,
+            chk_t5_merge_kw,
+        ):
+            control.toggled.connect(update_t5_preview)
+        combo_street_source.currentIndexChanged.connect(update_t5_preview)
+        update_t5_preview()
+        t5_content.addWidget(box_t5, 3)
+        t5_content.addWidget(t5_preview_box, 2)
         t5_layout.addLayout(t5_content, 1)
         tabs.addTab(tab_t5, "⑤ Tabela 5")
 
@@ -960,21 +1219,54 @@ class LegalTitlesWidget(QWidget):
             ),
         )
 
-        view_content.addWidget(box_view, 3)
-        view_content.addWidget(
-            example_panel(
-                "Przykład — wygląd wierszy",
-                "W tym fragmencie długi tekst mieści się w komórce dzięki zawijaniu i wyższej wysokości wiersza.",
-                ("Lp.", "Właściciel", "Adres / uwaga"),
+        view_preview_box, view_preview = example_panel(
+            "Podgląd — wygląd wierszy",
+            "Zmień ustawienia po lewej, aby porównać czytelność tego samego fragmentu.",
+            ("Lp.", "Właściciel", "Adres / uwaga"),
+            (),
+            "",
+        )
+
+        def update_view_preview(*_args):
+            wrapping = chk_wrap.isChecked()
+            auto_height = chk_resize.isChecked()
+            long_text = (
+                "ul. Bardzo Długa 123<br>80-001 Gdańsk"
+                if wrapping
+                else "ul. Bardzo Długa 123, 80-001 Gdańsk"
+            )
+            if not auto_height and wrapping:
+                long_text = "ul. Bardzo Długa 123<br><i>(wysokość wiersza stała)</i>"
+            last_header = (
+                "Adres / uwaga — szeroka kolumna"
+                if chk_stretch.isChecked()
+                else "Adres / uwaga"
+            )
+            note = (
+                f"Zawijanie: {'włączone' if wrapping else 'wyłączone'}; "
+                f"automatyczna wysokość: {'włączona' if auto_height else 'wyłączona'}; "
+                f"naprzemienne tło: {'włączone' if chk_alt.isChecked() else 'wyłączone'}; "
+                f"siatka: {'widoczna' if chk_grid.isChecked() else 'ukryta'}; "
+                f"ostatnia kolumna: {'rozciągnięta' if chk_stretch.isChecked() else 'standardowa'}."
+            )
+            update_example_panel(
+                view_preview,
+                "Ten sam przykład zmienia wygląd natychmiast po zaznaczeniu opcji.",
+                ("Lp.", "Właściciel", last_header),
                 (
-                    ("1", "Anna Kowalska", "ul. Bardzo Długa 123<br>80-001 Gdańsk"),
+                    ("1", "Anna Kowalska", long_text),
                     ("2", "Jan Nowak", "Oczekuje na odpowiedź"),
                 ),
-                "Naprzemienne tło i siatka pomagają odróżnić rekordy; rozciąganie "
-                "ostatniej kolumny daje więcej miejsca na adres i uwagi.",
-            ),
-            2,
-        )
+                note,
+                show_grid=chk_grid.isChecked(),
+                alternating=chk_alt.isChecked(),
+            )
+
+        for control in (chk_wrap, chk_resize, chk_alt, chk_grid, chk_stretch):
+            control.toggled.connect(update_view_preview)
+        update_view_preview()
+        view_content.addWidget(box_view, 3)
+        view_content.addWidget(view_preview_box, 2)
         view_layout.addLayout(view_content, 1)
         tabs.addTab(tab_view, "⑥ Wygląd")
 
