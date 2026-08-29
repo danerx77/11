@@ -6,6 +6,11 @@ import os
 import shutil
 import sys
 from pathlib import Path
+
+from utils.global_settings import (
+    load_global_druczek_profile,
+    save_global_druczek_profile,
+)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QMessageBox, QFileDialog, QHeaderView, QAbstractItemView,
@@ -51,7 +56,11 @@ class DruczekSettingsDialog(QDialog):
         layout = QVBoxLayout(left_panel)
         layout.setContentsMargins(0, 0, 10, 0)
         
-        info = QLabel("<b>Tryb Zaawansowany:</b> Ustal szerokość i wysokość każdego pola, aby tekst się zmieścił.")
+        info = QLabel(
+            "<b>Tryb Zaawansowany:</b> Ustal szerokość i wysokość każdego "
+            "pola, aby tekst się zmieścił.<br>Po kliknięciu OK pozycje i "
+            "czcionki są zapisywane globalnie w <b>dane/druczek_profile.json</b>."
+        )
         info.setStyleSheet("color: #2b5797; padding-bottom: 5px; font-size: 13px;")
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -176,6 +185,12 @@ class DruczekTabWidget(QWidget):
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self.config = config
+        # Profil pozycji i czcionek jest wspólny dla wszystkich projektów.
+        # Odczyt pliku obsługuje także profile zapisane przez wcześniejsze
+        # wersje programu.
+        saved_profile = load_global_druczek_profile()
+        if saved_profile:
+            self.config['druczek_profile'] = saved_profile
         self.active_project_path = None
         self.shipments_c5 = []
         self._build_ui()
@@ -455,15 +470,14 @@ class DruczekTabWidget(QWidget):
             return QMessageBox.warning(self, "Błąd", "Wczytaj wpierw PDF z folderu lub dysku, by użyć edytora.")
             
         dialog = DruczekSettingsDialog(self, self.config, str(tmpl))
-        if dialog.exec() == QDialog.DialogCode.Accepted: 
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.config['druczek_profile'] = dialog.get_profile()
-            try:
-                data_dir = Path(sys.executable).parent.resolve() / 'dane' if getattr(sys, 'frozen', False) else Path(__file__).parent.parent.resolve() / 'dane'
-                data_dir.mkdir(parents=True, exist_ok=True)
-                with open(data_dir / 'druczek_profile.json', 'w', encoding='utf-8') as f:
-                    json.dump(self.config['druczek_profile'], f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+            if not save_global_druczek_profile(self.config['druczek_profile']):
+                QMessageBox.warning(
+                    self,
+                    "Nie zapisano profilu",
+                    "Nie udało się zapisać ustawień w dane/druczek_profile.json.",
+                )
             self._refresh_template_path()
 
     def _load_c5_shipments(self):

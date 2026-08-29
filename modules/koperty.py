@@ -6,6 +6,12 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+from utils.global_settings import (
+    get_global_data_dir,
+    load_global_stamp_settings,
+    save_global_stamp_settings,
+)
 from PySide6.QtCore import QByteArray, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
@@ -104,7 +110,9 @@ class StampVisualSettingsDialog(QDialog):
             }
             info = QLabel(
                 "TRYB C5: ROZCIĄGANIE "
-                "(odniesienie: dół kodu kreskowego)"
+                "(odniesienie: dół kodu kreskowego)<br>"
+                "Po kliknięciu OK profil jest zapisywany globalnie w "
+                "dane/stamp_profiles.json."
             )
             ranges = [(0, 300), (0, 300), (-50, 300), (-50, 300)]
         else:
@@ -114,7 +122,11 @@ class StampVisualSettingsDialog(QDialog):
                 "crop_up": 0,
                 "crop_down": 0,
             }
-            info = QLabel("TRYB C6: DOCINANIE KRAWĘDZI OBRAZKA")
+            info = QLabel(
+                "TRYB C6: DOCINANIE KRAWĘDZI OBRAZKA<br>"
+                "Po kliknięciu OK profil jest zapisywany globalnie w "
+                "dane/stamp_profiles.json."
+            )
             ranges = [(-100, 100)] * 4
 
         info.setStyleSheet("font-weight: bold; color: #a4b0be;")
@@ -228,6 +240,7 @@ class EnvelopeGenWidget(QWidget):
         self._progress_c6 = None
         self.setAcceptDrops(True)
         self._ensure_global_data_dir()
+        self._load_global_stamp_profiles()
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -702,9 +715,11 @@ class EnvelopeGenWidget(QWidget):
         self.config["envelope_splitter_sizes"] = self.main_splitter.sizes()
 
     def _template_preference(self, env_type: str) -> str:
-        return self.config.get(
-            f"envelope_{env_type.lower()}_template",
-            self.config.get(f"env_{env_type.lower()}_template", ""),
+        module_value = str(
+            self.config.get(f"envelope_{env_type.lower()}_template", "") or ""
+        ).strip()
+        return module_value or self.config.get(
+            f"env_{env_type.lower()}_template", ""
         )
 
     def _save_template_preference(self, env_type: str, path: str):
@@ -1175,14 +1190,21 @@ class EnvelopeGenWidget(QWidget):
 
     # -------------------------------------------------------------- stamps
     def _get_global_data_dir(self) -> Path:
-        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
-        return base.resolve() / "dane"
+        return get_global_data_dir()
 
     def _ensure_global_data_dir(self):
         try:
             self._get_global_data_dir().mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except OSError:
             pass
+
+    def _load_global_stamp_profiles(self):
+        saved_profiles = load_global_stamp_settings(self._get_global_data_dir())
+        if saved_profiles:
+            self.config.update(saved_profiles)
+
+    def _save_global_stamp_profiles(self) -> bool:
+        return save_global_stamp_settings(self.config, self._get_global_data_dir())
 
     def _get_stamps_global_file(self) -> Path:
         return self._get_global_data_dir() / "stamps.json"
@@ -1200,9 +1222,25 @@ class EnvelopeGenWidget(QWidget):
         self._update_stamps_info()
 
     def _browse_stamp_pdf(self, env_type):
-        path, _ = QFileDialog.getOpenFileName(self, f"Wybierz PDF {env_type}", "", "PDF (*.pdf)")
+        from utils.templates import (
+            STAMP_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        edit = self.c5_pdf_edit if env_type == "C5" else self.c6_pdf_edit
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_znaczki",
+            folder_names=STAMP_FOLDER_NAMES,
+            current_path=edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Wybierz PDF {env_type}",
+            str(start_dir),
+            "PDF (*.pdf)",
+        )
         if path:
-            edit = self.c5_pdf_edit if env_type == "C5" else self.c6_pdf_edit
             edit.setText(path)
             self.config[f"stamp_{env_type.lower()}_pdf"] = path
             self._load_stamps(path, env_type)
@@ -1362,42 +1400,83 @@ class EnvelopeGenWidget(QWidget):
             QMessageBox.warning(self, "Brak pliku", f"Wczytaj PDF {env_type}.")
             return
         dialog = StampVisualSettingsDialog(self, pdf, env_type, self.config)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if accepted:
+            # Dialog zapisuje profil do współdzielonej konfiguracji. Zapisz go
+            # od razu także do dane/stamp_profiles.json, niezależnie od projektu.
+            if not self._save_global_stamp_profiles():
+                QMessageBox.warning(
+                    self,
+                    "Nie zapisano profilu",
+                    "Nie udało się zapisać ustawień cięcia w dane/stamp_profiles.json.",
+                )
             self._load_stamps(pdf, env_type)
 
     def _auto_load_stamps_from_ia(self, silent=False):
+        from utils.templates import (
+            STAMP_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
         for env_type, edit in [("C5", self.c5_pdf_edit), ("C6", self.c6_pdf_edit)]:
             if edit.text() and Path(edit.text()).exists():
                 stamps = self.stamps_c5 if env_type == "C5" else self.stamps_c6
                 if not stamps:
                     self._load_stamps(edit.text(), env_type)
 
-        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
-        for directory in [base / "znaczki", base.parent / "znaczki"]:
-            if not directory.exists():
+        directory = resolve_template_start_directory(
+            self.config,
+            config_key="path_znaczki",
+            folder_names=STAMP_FOLDER_NAMES,
+        )
+        if not directory.is_dir():
+            return
+
+        pdfs = [
+            path for path in directory.iterdir()
+            if path.is_file() and path.suffix.lower() == ".pdf"
+        ]
+        for env_type, edit, words in [
+            ("C5", self.c5_pdf_edit, ("c5", "neoznacze")),
+            ("C6", self.c6_pdf_edit, ("c6",)),
+        ]:
+            if edit.text():
                 continue
-            pdfs = list(directory.glob("*.pdf"))
-            for env_type, edit, words in [
-                ("C5", self.c5_pdf_edit, ("c5", "neoznacze")),
-                ("C6", self.c6_pdf_edit, ("c6",)),
-            ]:
-                if edit.text():
-                    continue
-                found = next((p for p in pdfs if any(word in p.name.lower() for word in words)), None)
-                if found:
-                    edit.setText(str(found))
-                    self.config[f"stamp_{env_type.lower()}_pdf"] = str(found)
-                    self._load_stamps(str(found), env_type)
+            found = next(
+                (path for path in pdfs if any(word in path.name.lower() for word in words)),
+                None,
+            )
+            if found:
+                edit.setText(str(found))
+                self.config[f"stamp_{env_type.lower()}_pdf"] = str(found)
+                self._load_stamps(str(found), env_type)
 
     # ------------------------------------------------------------ generate
     def _browse_template(self, env_type: str):
-        path, _ = QFileDialog.getOpenFileName(self, f"Szablon {env_type}", "", "Word (*.docx)")
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        edit = self.c5_tmpl_edit if env_type == "C5" else self.c6_tmpl_edit
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_przyklady",
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Szablon {env_type}",
+            str(start_dir),
+            "Word (*.docx)",
+        )
         if path:
-            (self.c5_tmpl_edit if env_type == "C5" else self.c6_tmpl_edit).setText(path)
+            edit.setText(path)
 
     def _set_default_templates(self):
-        self.c5_tmpl_edit.setText(self.config.get("env_c5_template", ""))
-        self.c6_tmpl_edit.setText(self.config.get("env_c6_template", ""))
+        self.c5_tmpl_edit.setText(self._template_preference("C5"))
+        self.c6_tmpl_edit.setText(self._template_preference("C6"))
 
     def _browse_output_dir(self):
         folder = QFileDialog.getExistingDirectory(self, "Wybierz folder zapisu")

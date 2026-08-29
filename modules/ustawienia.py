@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
+from utils.global_settings import save_global_stamp_settings
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -510,7 +512,8 @@ class SettingsTabWidget(QWidget):
 
         # USTAWIENIA WYCINANIA ZNACZKÓW
         crop_box = QGroupBox(
-            "Ustawienia wycinania znaczków C5 i C6 (Globalne)"
+            "Ustawienia wycinania znaczków C5 i C6 "
+            "(globalne: dane/stamp_profiles.json)"
         )
         crop_layout = QHBoxLayout(crop_box)
 
@@ -1248,6 +1251,9 @@ class SettingsTabWidget(QWidget):
             "crop_up": self.c6_crop_t.value(),
             "crop_down": self.c6_crop_b.value(),
         }
+        # Profile wycinania są dodatkowo zapisywane natychmiast w dane,
+        # niezależnie od danych konkretnego projektu.
+        save_global_stamp_settings(self.config)
 
         self.config["declaration_tag_map"] = self._get_tags_from_table(
             self.tags_table

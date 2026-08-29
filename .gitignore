@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# Lokalne, globalne dane aplikacji (profile znaczków i druczków).
+dane/

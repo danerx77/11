@@ -22,6 +22,7 @@ _VERSION_SUFFIX = re.compile(r"[\s._-]*[vV]?[\s._-]*(\d{1,4})\b")
 # liter nie ma znaczenia, ale w pozostałych systemach chcemy rozpoznać także
 # folder zapisany przez użytkownika wielką literą lub bez polskich znaków.
 EXAMPLES_FOLDER_NAMES = ("przykłady", "Przykłady", "przyklady", "Przyklady")
+STAMP_FOLDER_NAMES = ("znaczki", "Znaczki")
 LEGAL_TITLES_FOLDER_NAMES = (
     "tytuły prawne",
     "Tytuły prawne",

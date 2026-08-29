@@ -7,6 +7,7 @@ import unittest
 from utils.templates import (
     EXAMPLES_FOLDER_NAMES,
     LEGAL_TITLES_TEMPLATE_SPECS,
+    STAMP_FOLDER_NAMES,
     find_file_newest,
     resolve_template_start_directory,
 )
@@ -31,6 +32,19 @@ class TemplateStartDirectoryTests(unittest.TestCase):
             )
 
             self.assertEqual(result, examples)
+
+    def test_configured_stamps_directory_is_used_for_stamp_pdf_picker(self):
+        with TemporaryDirectory() as temp_dir:
+            stamps = Path(temp_dir) / "znaczki"
+            stamps.mkdir()
+
+            result = resolve_template_start_directory(
+                {"path_znaczki": str(stamps)},
+                config_key="path_znaczki",
+                folder_names=STAMP_FOLDER_NAMES,
+            )
+
+            self.assertEqual(result, stamps)
 
     def test_unsaved_preferred_directory_has_priority_in_settings(self):
         with TemporaryDirectory() as temp_dir:

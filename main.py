@@ -93,6 +93,10 @@ from modules.wydziel_pdf import ExtractPdfWidget
 from modules.statystyki_dzialek import ParcelOwnersStatsWidget
 from modules.kw import KWDownloaderWidget
 from modules.krs import KrsDownloaderWidget
+from utils.global_settings import (
+    load_global_druczek_profile,
+    load_global_stamp_settings,
+)
 
 
 class NoComboWheelFilter(QObject):
@@ -456,6 +460,12 @@ class MainWindow(QMainWindow):
         else:
             self.config = self._get_default_config()
 
+        # Profile wspólnych narzędzi są celowo niezależne od projektu i są
+        # zapisywane od razu w katalogu dane. Wczytaj je przed utworzeniem
+        # zakładek, aby Ustawienia, Koperty i Druczki używały tych samych
+        # wartości od pierwszego wyświetlenia.
+        self._load_global_tool_profiles()
+
         if self.examples_path.exists():
             try:
                 with open(self.examples_path, "r", encoding="utf-8") as file:
@@ -464,6 +474,15 @@ class MainWindow(QMainWindow):
                 self.examples = self._get_default_examples()
         else:
             self.examples = self._get_default_examples()
+
+    def _load_global_tool_profiles(self):
+        stamp_settings = load_global_stamp_settings(self.data_dir)
+        if stamp_settings:
+            self.config.update(stamp_settings)
+
+        druczek_profile = load_global_druczek_profile(self.data_dir)
+        if druczek_profile:
+            self.config["druczek_profile"] = druczek_profile
 
     def save_configuration(self):
         try:
