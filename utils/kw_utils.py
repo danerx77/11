@@ -18,9 +18,9 @@ ACCESS_DENIED_MARKERS = (
 def ekw_access_denied_reason(value: Any) -> str:
     """Zwraca czytelny opis blokady strony eKW albo pusty tekst.
 
-    Nie próbuje obchodzić zabezpieczenia serwisu. Dzięki temu moduł kończy
-    zadanie z właściwym komunikatem zamiast długo czekać na nieistniejący
-    formularz, gdy strona zwróci np. ``Access Denied / Error 15``.
+    Nie próbuje obchodzić zabezpieczenia serwisu. Moduł wykorzystuje tę
+    funkcję wyłącznie do opisania strony po nieudanym oczekiwaniu na formularz
+    lub wynik, gdy serwis zwróci np. ``Access Denied / Error 15``.
     """
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     normalized = text.casefold()

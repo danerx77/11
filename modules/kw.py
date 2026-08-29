@@ -546,7 +546,7 @@ class KWDownloadWorker(QThread):
             self.finished_queue.emit()
             return
 
-        self.log_msg.emit("🌐 Otwieram widoczną przeglądarkę Playwright, tak jak w module KRS...")
+        self.log_msg.emit("🌐 Otwieram widoczną przeglądarkę dla pobierania KW...")
 
         try:
             if self.profile_dir.exists():
@@ -749,8 +749,8 @@ class KWDownloadWorker(QThread):
         self.row_status.emit(kw, "W trakcie")
         self.log_msg.emit(f"🔎 Otwieram KW: {kw}")
         self.log_msg.emit(
-            "ℹ️ Wykryta odmowa eKW (Access Denied / Error 15) zostanie zgłoszona "
-            "dla tej księgi bez prób obchodzenia zabezpieczenia."
+            "ℹ️ Otwieram formularz eKW w widocznej przeglądarce. "
+            "W razie komunikatu możesz dokończyć go ręcznie w tym oknie."
         )
 
         page.goto(KW_SEARCH_URL, wait_until="domcontentloaded", timeout=90000)
@@ -776,8 +776,13 @@ class KWDownloadWorker(QThread):
             return
         if result.startswith("ERR:"):
             error_text = result[4:].strip() or "Błąd księgi"
-            self.log_msg.emit(f"❌ {kw}: {error_text}")
-            self.item_finished.emit(kw, False, "Błąd księgi")
+            blocked_reason = ekw_access_denied_reason(error_text)
+            if blocked_reason:
+                self.log_msg.emit(f"⛔ {kw}: {blocked_reason}")
+                self.item_finished.emit(kw, False, "Odmowa dostępu")
+            else:
+                self.log_msg.emit(f"❌ {kw}: {error_text}")
+                self.item_finished.emit(kw, False, "Błąd księgi")
             return
         if result == "NO_RESULT":
             self.log_msg.emit(f"❌ {kw}: nie znaleziono księgi.")
@@ -797,12 +802,6 @@ class KWDownloadWorker(QThread):
 
         if not self.sections:
             self.item_finished.emit(kw, False, "Brak działów")
-            return
-
-        blocked_reason = self._ekw_access_denied_reason(page)
-        if blocked_reason:
-            self.log_msg.emit(f"⛔ {kw}: {blocked_reason}")
-            self.item_finished.emit(kw, False, "Odmowa dostępu")
             return
 
         first_selector = f'input[value="{self.sections[0]}"]'
@@ -830,11 +829,6 @@ class KWDownloadWorker(QThread):
                 page.wait_for_selector(selector, timeout=10000)
                 page.click(selector, timeout=10000)
                 page.wait_for_timeout(int(speed.get("after_section_wait_ms", 2200)))
-                blocked_reason = self._ekw_access_denied_reason(page)
-                if blocked_reason:
-                    self.log_msg.emit(f"⛔ {kw}: {blocked_reason}")
-                    self.item_finished.emit(kw, False, "Odmowa dostępu")
-                    return
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Nie udało się otworzyć działu %s dla %s: %s", section, kw, exc)
                 self.log_msg.emit(f"⚠️ {kw}: nie udało się kliknąć działu {section}")
@@ -935,10 +929,6 @@ class KWDownloadWorker(QThread):
         while time.time() - start < 180:
             if self._stop_requested:
                 raise RuntimeError("Pobieranie przerwane przez użytkownika.")
-            blocked_reason = self._ekw_access_denied_reason(page)
-            if blocked_reason:
-                self.log_msg.emit(f"⛔ {blocked_reason}")
-                raise RuntimeError(blocked_reason)
             try:
                 if page.locator("#kodWydzialuInput").count() > 0:
                     page.wait_for_selector("#kodWydzialuInput", timeout=2000)
@@ -954,10 +944,17 @@ class KWDownloadWorker(QThread):
             except timeout_error_class:
                 if int(time.time() - start) in (10, 30, 60, 120):
                     self.log_msg.emit(
-                        "⏳ Nadal czekam na formularz KW. Sprawdź widoczną przeglądarkę — "
-                        "jeśli pojawił się komunikat lub blokada, potwierdź ręcznie."
+                        "⏳ Nadal czekam na formularz KW. Sprawdź widoczną "
+                        "przeglądarkę i dokończ ewentualny komunikat ręcznie."
                     )
                 continue
+
+        # Dopiero po upływie czasu sprawdzamy, czy strona rzeczywiście
+        # zwróciła komunikat Access Denied / Error 15. Nie sondujemy strony
+        # w pętli i nie pokazujemy tego komunikatu przy każdym starcie.
+        blocked_reason = self._ekw_access_denied_reason(page)
+        if blocked_reason:
+            raise RuntimeError(blocked_reason)
 
         current_url = ""
         current_title = ""
@@ -1007,9 +1004,6 @@ class KWDownloadWorker(QThread):
             if self._stop_requested:
                 return None
             page.wait_for_timeout(1000)
-            blocked_reason = self._ekw_access_denied_reason(page)
-            if blocked_reason:
-                return f"BLOCKED:{blocked_reason}"
             result = page.evaluate(
                 """() => {
                     if (location.href.indexOf('pokazWydruk') >= 0) return 'SECTIONS';
@@ -1024,6 +1018,10 @@ class KWDownloadWorker(QThread):
                 return "OK"
             if isinstance(result, str) and result.startswith("ERR:"):
                 return result
+
+        blocked_reason = self._ekw_access_denied_reason(page)
+        if blocked_reason:
+            return f"BLOCKED:{blocked_reason}"
         return "NO_RESULT"
 
     def _save_current_section_as_pdf(
@@ -1977,10 +1975,11 @@ class KWDownloaderWidget(QWidget):
         btn_deselect_all.clicked.connect(lambda: self._set_all_checked(False))
         header.addWidget(btn_deselect_all)
 
-        btn_open_eukw = QPushButton("🌐 Otwórz stronę EUKW")
+        btn_open_eukw = QPushButton("🌐 Otwórz eKW ręcznie")
         btn_open_eukw.setToolTip(
-            "Otwiera stronę „EUKW - Prezentacja Księgi Wieczystej” "
-            "w domyślnej przeglądarce."
+            "Otwiera stronę eKW w zwykłej domyślnej przeglądarce, bez "
+            "sterowania jej przez program. Numery KW i wydruki obsługujesz "
+            "wtedy ręcznie na stronie serwisu."
         )
         btn_open_eukw.clicked.connect(self._open_eukw_website)
         header.addWidget(btn_open_eukw)
@@ -2221,7 +2220,9 @@ class KWDownloaderWidget(QWidget):
             "?komunikaty=true&kontakt=true&okienkoSerwisowe=false"
         )
         QDesktopServices.openUrl(QUrl(url))
-        self.log_to_console("🌐 Otwieram stronę EUKW – Prezentacja Księgi Wieczystej.")
+        self.log_to_console(
+            "🌐 Otwieram eKW ręcznie w domyślnej przeglądarce (bez automatyzacji)."
+        )
 
     # ---------- Handlery ----------
 
