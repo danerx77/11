@@ -972,17 +972,42 @@ class CoverLetterWidget(QWidget):
         self.ownership_edit.setText(phrase)
 
     def _browse_template(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Wybierz szablon', '', 'Word (*.docx)')
-        if path: self.template_edit.setText(path)
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key='path_przyklady',
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=self.template_edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Wybierz szablon',
+            str(start_dir),
+            'Word (*.docx)',
+        )
+        if path:
+            self.template_edit.setText(path)
 
     def _set_default_template(self):
-        from utils.templates import find_latest_file
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            find_latest_file,
+            resolve_template_start_directory,
+        )
 
-        if getattr(sys, 'frozen', False): przyk_path = str(Path(sys.executable).parent.resolve() / 'przykłady')
-        else: przyk_path = str(Path(__file__).parent.parent.parent / 'przykłady')
-            
-        cl_tmpl = self.config.get('cover_letter_template', '')
-        if not cl_tmpl or not Path(cl_tmpl).exists():
+        przyk_path = resolve_template_start_directory(
+            self.config,
+            config_key='path_przyklady',
+            folder_names=EXAMPLES_FOLDER_NAMES,
+        )
+
+        # Nie nadpisuj działającego wyboru dokonanego w tym module.
+        cl_tmpl = self.template_edit.text().strip() or self.config.get('cover_letter_template', '')
+        if not cl_tmpl or not Path(cl_tmpl).is_file():
             latest = find_latest_file(
                 przyk_path,
                 ["Pismo przewodnie", "pismo przewodnie"],
@@ -1059,10 +1084,17 @@ class CoverLetterWidget(QWidget):
                     reply = QMessageBox.question(self, "Uwaga", f"Właściciel został pominięty przez filtr (Powód: {reason}).\nCzy chcesz WYMUSIĆ wygenerowanie pisma dla tej osoby?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     if reply == QMessageBox.StandardButton.No: return
         p = self._get_params()
-        if not Path(p['template_path']).exists():
+        if not p['template_path'] or not Path(p['template_path']).is_file():
             self._set_default_template()
-            p['template_path'] = self.template_edit.text().strip()
-            
+            p = self._get_params()
+        if not p['template_path'] or not Path(p['template_path']).is_file():
+            QMessageBox.warning(
+                self,
+                'Brak szablonu',
+                'Wybierz poprawny plik szablonu Word dla pisma przewodniego.',
+            )
+            return
+
         out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz pismo', 'Pismo przewodnie.docx', 'Word (*.docx)')
         if not out_path: return
         
@@ -1090,7 +1122,7 @@ class CoverLetterWidget(QWidget):
                     try:
                         data = self.table_owners.item(sel[0].row(), 2).data(Qt.ItemDataRole.UserRole)
                         idx, specific_addr = data
-                        self._set_cover_done(self.owners[idx], _, True)
+                        self._set_cover_done(self.owners[idx], specific_addr, True)
                         self.owners_changed.emit(self.owners)
                         self._refresh_owners_table()
                     except: pass
@@ -1113,37 +1145,70 @@ class CoverLetterWidget(QWidget):
         self._generate_batch(targets)
 
     def _generate_all(self):
-        if not self.owners: return QMessageBox.warning(self, 'Brak właścicieli', 'Wczytaj właścicieli na zakładce Wypisy.')
-        
-        targets = []
-        hide_generated = self.chk_hide_generated.isChecked()
+        if not self.owners:
+            return QMessageBox.warning(
+                self,
+                'Brak właścicieli',
+                'Wczytaj właścicieli na zakładce Wypisy.',
+            )
+
+        from utils.generation_targets import select_address_targets
+
         filter_text = self.search_owners_edit.text().strip().lower()
-        for o in self.owners:
-            is_generated = self._cover_done(o, specific_addr)
-            if hide_generated and is_generated: continue
-            
-            addresses = [o.get('address', '')]
-            if o.get('address_2'): addresses.append(o.get('address_2'))
-            for addr in addresses:
-                
-                if filter_text:
-                    fmt = self.config.get('couple_format_cover', 0)
-                    display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
-                    parcels_str = ' '.join([str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])])
-                    search_target = f"{display_name} {addr} {parcels_str}".lower()
-                    if filter_text not in search_target: continue
-                targets.append((o, addr))
+
+        def matches_filter(owner, specific_addr):
+            fmt = self.config.get('couple_format_cover', 0)
+            display_name = (
+                owner.get('name_plural', owner.get('full_name', ''))
+                if fmt == 0
+                else owner.get('name_separate', owner.get('full_name', ''))
+            )
+            parcels_str = ' '.join(
+                str(parcel.get('number', parcel))
+                if isinstance(parcel, dict)
+                else str(parcel)
+                for parcel in owner.get('parcels', [])
+            )
+            search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
+            return filter_text in search_target
+
+        targets = select_address_targets(
+            self.owners,
+            hide_done=self.chk_hide_generated.isChecked(),
+            is_done=self._cover_done,
+            matches_filter=matches_filter if filter_text else None,
+        )
+        if not targets:
+            return QMessageBox.information(
+                self,
+                'Brak pism do wygenerowania',
+                'Żaden adres nie spełnia obecnego filtra albo wszystkie pisma są już wygenerowane.',
+            )
         self._generate_batch(targets)
 
     def _generate_batch(self, targets):
-        out_dir = QFileDialog.getExistingDirectory(self, 'Folder wyjściowy')
-        if not out_dir: return
-        
+        if not targets:
+            return QMessageBox.warning(
+                self,
+                'Brak',
+                'Nie wybrano żadnego adresu do wygenerowania.',
+            )
+
         p = self._get_params()
-        if not Path(p['template_path']).exists():
+        if not p['template_path'] or not Path(p['template_path']).is_file():
             self._set_default_template()
-            p['template_path'] = self.template_edit.text().strip()
-            
+            p = self._get_params()
+        if not p['template_path'] or not Path(p['template_path']).is_file():
+            return QMessageBox.warning(
+                self,
+                'Brak szablonu',
+                'Wybierz poprawny plik szablonu Word dla pism przewodnich.',
+            )
+
+        out_dir = QFileDialog.getExistingDirectory(self, 'Folder wyjściowy')
+        if not out_dir:
+            return
+
         from utils.docx_utils import generate_cover_letter
         from utils.gender_utils import detect_gender
         success, errors = 0, []

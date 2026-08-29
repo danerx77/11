@@ -794,7 +794,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl1.clicked.connect(lambda: self._browse_tmpl(self.tmpl_1_edit, 'legal_tmpl_1'))
         row1.addWidget(self.tmpl_1_edit)
         row1.addWidget(btn_tmpl1)
-        paths_layout.addRow('Szablon 1 (Działki):', row1)
+        paths_layout.addRow('Szablon 1 — Wykaz działek podmiotów pozostałych:', row1)
 
         row2 = QHBoxLayout()
         self.tmpl_2_edit = QLineEdit()
@@ -803,7 +803,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl2.clicked.connect(lambda: self._browse_tmpl(self.tmpl_2_edit, 'legal_tmpl_2'))
         row2.addWidget(self.tmpl_2_edit)
         row2.addWidget(btn_tmpl2)
-        paths_layout.addRow('Szablon 2 (Wykaz właścicieli):', row2)
+        paths_layout.addRow('Szablon 2 — Wykaz właścicieli nieruchomości szczegółowy:', row2)
 
         row3 = QHBoxLayout()
         self.tmpl_3_edit = QLineEdit()
@@ -812,7 +812,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl3.clicked.connect(lambda: self._browse_tmpl(self.tmpl_3_edit, 'legal_tmpl_3'))
         row3.addWidget(self.tmpl_3_edit)
         row3.addWidget(btn_tmpl3)
-        paths_layout.addRow('Szablon 3 (Tabela końcowa):', row3)
+        paths_layout.addRow('Szablon 3 — Nowa tabela końcowa:', row3)
 
         export_layout.addLayout(paths_layout)
 
@@ -960,9 +960,23 @@ class LegalTitlesWidget(QWidget):
         self.table_3.viewport().update()
 
     def _browse_tmpl(self, line_edit, config_key):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file(): start_dir = str(Path(start_dir).parent)
-        path, _ = QFileDialog.getOpenFileName(self, 'Wybierz szablon Excel', start_dir, 'Excel (*.xlsx *.xlsm)')
+        from utils.templates import (
+            LEGAL_TITLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key='path_tytuly',
+            folder_names=LEGAL_TITLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Wybierz szablon Excel',
+            str(start_dir),
+            'Excel (*.xlsx *.xlsm)',
+        )
         if path:
             line_edit.setText(path)
             self.config[config_key] = path

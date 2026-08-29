@@ -139,28 +139,52 @@ class SettingsTabWidget(QWidget):
         return widget
 
     def _browse_docx_template(self, line_edit: QLineEdit):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file():
-            start_dir = str(Path(start_dir).parent)
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
 
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_przyklady",
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+            preferred_folder=(
+                self.path_przyklady_edit.text()
+                if hasattr(self, "path_przyklady_edit")
+                else ""
+            ),
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz szablon Word",
-            start_dir,
+            str(start_dir),
             "Word (*.docx)",
         )
         if path:
             line_edit.setText(path)
 
     def _browse_excel_template(self, line_edit: QLineEdit):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file():
-            start_dir = str(Path(start_dir).parent)
+        from utils.templates import (
+            LEGAL_TITLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
 
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_tytuly",
+            folder_names=LEGAL_TITLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+            preferred_folder=(
+                self.path_tytuly_edit.text()
+                if hasattr(self, "path_tytuly_edit")
+                else ""
+            ),
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz szablon Excel",
-            start_dir,
+            str(start_dir),
             "Excel (*.xlsx *.xlsm)",
         )
         if path:
@@ -539,7 +563,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_1_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 1 (Działki):",
+            "Szablon 1 — Wykaz działek podmiotów pozostałych:",
             self._make_browse_row(
                 self.legal_tmpl_1_edit,
                 self._browse_excel_template,
@@ -548,7 +572,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_2_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 2 (Wykaz właścicieli):",
+            "Szablon 2 — Wykaz właścicieli nieruchomości szczegółowy:",
             self._make_browse_row(
                 self.legal_tmpl_2_edit,
                 self._browse_excel_template,
@@ -557,7 +581,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_3_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 3 (Końcowy):",
+            "Szablon 3 — Nowa tabela końcowa:",
             self._make_browse_row(
                 self.legal_tmpl_3_edit,
                 self._browse_excel_template,
@@ -1288,9 +1312,10 @@ class SettingsTabWidget(QWidget):
     def _set_default_decl_templates(self):
         from utils.templates import find_latest_file
 
-        examples_path = Path(self.path_przyklady_edit.text().strip())
+        examples_path_text = self.path_przyklady_edit.text().strip()
+        examples_path = Path(examples_path_text) if examples_path_text else None
 
-        if not examples_path.exists():
+        if examples_path is None or not examples_path.is_dir():
             QMessageBox.warning(
                 self,
                 "Błąd",
@@ -1360,11 +1385,12 @@ class SettingsTabWidget(QWidget):
             )
 
     def _set_default_excel_templates(self):
-        from utils.templates import find_file_newest
+        from utils.templates import LEGAL_TITLES_TEMPLATE_SPECS, find_file_newest
 
-        legal_path = Path(self.path_tytuly_edit.text().strip())
+        legal_path_text = self.path_tytuly_edit.text().strip()
+        legal_path = Path(legal_path_text) if legal_path_text else None
 
-        if not legal_path.exists():
+        if legal_path is None or not legal_path.is_dir():
             QMessageBox.warning(
                 self,
                 "Błąd",
@@ -1373,23 +1399,26 @@ class SettingsTabWidget(QWidget):
             )
             return
 
+        # Nazwy odpowiadają nazwom wzorów dostarczonych z programem.
+        # Stała zachowuje też krótkie nazwy szablon1–3, aby nie zerwać
+        # obsługi wcześniejszych katalogów użytkowników.
         specs = [
-            (self.legal_tmpl_1_edit, ["szablon1", "szablon 1"]),
-            (self.legal_tmpl_2_edit, ["szablon2", "szablon 2"]),
-            (self.legal_tmpl_3_edit, ["szablon3", "szablon 3"]),
+            (self.legal_tmpl_1_edit, *LEGAL_TITLES_TEMPLATE_SPECS[0]),
+            (self.legal_tmpl_2_edit, *LEGAL_TITLES_TEMPLATE_SPECS[1]),
+            (self.legal_tmpl_3_edit, *LEGAL_TITLES_TEMPLATE_SPECS[2]),
         ]
 
         found = []
         missing = []
-        for edit, bases in specs:
+        for edit, label, bases in specs:
             latest = find_file_newest(
                 legal_path, bases, (".xlsx", ".xlsm")
             )
             if latest is not None:
                 edit.setText(str(latest))
-                found.append(latest.name)
+                found.append(f"{label}: {latest.name}")
             else:
-                missing.append(bases[0])
+                missing.append(label)
 
         if found:
             QMessageBox.information(
