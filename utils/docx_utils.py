@@ -210,10 +210,8 @@ def apply_declension_preferences(
     if preferences.get("decl_location_locative", False):
         from utils.polish_declension import decline_city
 
-        city_overrides = preferences.get("decl_city_overrides", {})
         location_value = _transform_comma_separated(
-            location_value,
-            lambda city: decline_city(city, city_overrides),
+            location_value, decline_city
         )
 
     if preferences.get("decl_decline_streets", False):

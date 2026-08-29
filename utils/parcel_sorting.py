@@ -65,6 +65,21 @@ def parse_parcel_list(text: object) -> list[str]:
     ]
 
 
+def format_parcel_list(values: Iterable[object]) -> str:
+    """Zapisuje numery działek w jednym wierszu, rozdzielając je przecinkiem.
+
+    Ten format jest używany zarówno w widoku sortera, jak i w zapamiętanych
+    ustawieniach. ``parse_parcel_list`` nadal rozumie także starszy zapis w
+    wielu wierszach, więc wcześniej zapisane listy pozostają kompatybilne.
+    """
+
+    return ", ".join(
+        normalized
+        for value in values
+        if (normalized := normalize_parcel_number(value))
+    )
+
+
 def sort_parcel_numbers(
     values: Iterable[object], *, unique: bool = False, reverse: bool = False
 ) -> list[str]:

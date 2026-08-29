@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -396,22 +395,8 @@ class SettingsTabWidget(QWidget):
         )
         decl_form.addRow("", self.chk_decl_location_locative)
 
-        self.decl_city_overrides_edit = QPlainTextEdit()
-        self.decl_city_overrides_edit.setPlaceholderText(
-            "Jedna pozycja w wierszu, np. Nowa Wieś = Nowej Wsi"
-        )
-        self.decl_city_overrides_edit.setToolTip(
-            "Własne formy miejscownika dla nieregularnych lub wielowyrazowych "
-            "miejscowości. Dotyczą tylko odmienianych tagów DOCX."
-        )
-        self.decl_city_overrides_edit.setFixedHeight(76)
-        decl_form.addRow(
-            "Wyjątki odmiany miejscowości:",
-            self.decl_city_overrides_edit,
-        )
-
         self.chk_decl_streets = QCheckBox(
-            "Odmieniaj tag <Ulica> (np. ulica Miła → ul. Miłej)"
+            "Odmieniaj tag <Ulica> (np. ulica Miła → ulica Miłej)"
         )
         self.chk_decl_streets.setToolTip(
             "Dotyczy standardowych tagów ulicy w Oświadczeniach i Pismach."
@@ -433,9 +418,6 @@ class SettingsTabWidget(QWidget):
             lambda enabled: self._set_runtime_declension_option(
                 "decl_location_locative", enabled
             )
-        )
-        self.decl_city_overrides_edit.textChanged.connect(
-            self._set_runtime_city_declension_overrides
         )
         self.chk_decl_streets.toggled.connect(
             lambda enabled: self._set_runtime_declension_option(
@@ -1003,13 +985,6 @@ class SettingsTabWidget(QWidget):
         self.chk_decl_location_locative.setChecked(
             self.config.get("decl_location_locative", False)
         )
-        from utils.polish_declension import format_city_declension_overrides
-
-        self.decl_city_overrides_edit.setPlainText(
-            format_city_declension_overrides(
-                self.config.get("decl_city_overrides", {})
-            )
-        )
         self.chk_decl_streets.setChecked(
             self.config.get("decl_decline_streets", False)
         )
@@ -1097,14 +1072,6 @@ class SettingsTabWidget(QWidget):
     def _set_runtime_declension_option(self, key: str, enabled: bool):
         """Udostępnia zmianę opcji generatorom przed zapisaniem formularza."""
         self.config[key] = bool(enabled)
-
-    def _set_runtime_city_declension_overrides(self):
-        """Udostępnia własne formy generatorom przed zapisaniem formularza."""
-        from utils.polish_declension import parse_city_declension_overrides
-
-        self.config["decl_city_overrides"] = parse_city_declension_overrides(
-            self.decl_city_overrides_edit.toPlainText()
-        )
 
     def _get_tags_from_table(self, table: QTableWidget) -> dict:
         result = {}
@@ -1238,7 +1205,6 @@ class SettingsTabWidget(QWidget):
         self.config["decl_location_locative"] = (
             self.chk_decl_location_locative.isChecked()
         )
-        self._set_runtime_city_declension_overrides()
         self.config["decl_decline_streets"] = (
             self.chk_decl_streets.isChecked()
         )

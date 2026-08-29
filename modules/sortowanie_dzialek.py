@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
-    QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from utils.parcel_sorting import parse_parcel_list, sort_parcel_numbers
+from utils.parcel_sorting import (
+    format_parcel_list,
+    parse_parcel_list,
+    sort_parcel_numbers,
+)
 
 
 class ParcelSortingWidget(QWidget):
@@ -35,6 +35,7 @@ class ParcelSortingWidget(QWidget):
         super().__init__(parent)
         self.config = config
         self._project_parcels: list = []
+        self._result_values: list[str] = []
         self._build_ui()
         self._restore_state()
 
@@ -53,24 +54,21 @@ class ParcelSortingWidget(QWidget):
         layout.addLayout(header)
 
         hint = QLabel(
-            "Wpisz lub wklej numery rozdzielone nowymi wierszami, tabulatorami, "
-            "przecinkami albo średnikami. Numery są sortowane naturalnie, np. "
-            "1, 1/2, 1/10, 2, 10."
+            "Wpisz lub wklej numery w jednej linii, rozdzielając je przecinkami. "
+            "Możesz także wkleić starszą listę z nowymi wierszami, tabulatorami "
+            "lub średnikami — zostanie zapisana jako zwykła lista z przecinkami. "
+            "Numery są sortowane naturalnie, np. 1, 1/2, 1/10, 2, 10."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(hint)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        layout.addWidget(splitter, 1)
-
         input_box = QGroupBox("Lista do posortowania")
         input_layout = QVBoxLayout(input_box)
-        self.input_edit = QPlainTextEdit()
-        self.input_edit.setPlaceholderText("np.\n12/10\n2\n12/3\n1")
-        self.input_edit.setMinimumWidth(300)
-        input_layout.addWidget(self.input_edit, 1)
+        self.input_edit = QLineEdit()
+        self.input_edit.setPlaceholderText("np. 12/10, 2, 12/3, 1")
+        self.input_edit.setMinimumHeight(32)
+        input_layout.addWidget(self.input_edit)
 
         input_buttons = QHBoxLayout()
         self.btn_paste = QPushButton("📋 Wklej ze schowka")
@@ -87,34 +85,26 @@ class ParcelSortingWidget(QWidget):
         self.btn_clear.clicked.connect(self._clear)
         input_buttons.addWidget(self.btn_clear)
         input_layout.addLayout(input_buttons)
-        splitter.addWidget(input_box)
+        layout.addWidget(input_box)
+
+        self.btn_sort = QPushButton("↕️ Sortuj rosnąco")
+        self.btn_sort.setObjectName("btn_primary")
+        self.btn_sort.setMinimumHeight(38)
+        self.btn_sort.clicked.connect(self._sort_ascending)
+        layout.addWidget(self.btn_sort)
 
         result_box = QGroupBox("Posortowana lista — od najmniejszego numeru")
         result_layout = QVBoxLayout(result_box)
-        self.result_edit = QPlainTextEdit()
+        self.result_edit = QLineEdit()
         self.result_edit.setReadOnly(True)
-        self.result_edit.setPlaceholderText("Wynik sortowania pojawi się tutaj.")
-        self.result_edit.setMinimumWidth(300)
-        result_layout.addWidget(self.result_edit, 1)
-
-        self.results_table = QTableWidget(0, 2)
-        self.results_table.setObjectName("parcel_sorter_results")
-        self.results_table.setHorizontalHeaderLabels(["Lp.", "Numer działki"])
-        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.results_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
+        self.result_edit.setPlaceholderText(
+            "Wynik sortowania pojawi się tutaj w jednej linii."
         )
-        self.results_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
+        self.result_edit.setMinimumHeight(32)
+        self.result_edit.setToolTip(
+            "Lista jest gotowa do skopiowania w formacie: 1/1, 1/2, 1/10."
         )
-        self.results_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.results_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
-        self.results_table.setMaximumHeight(210)
-        result_layout.addWidget(self.results_table)
+        result_layout.addWidget(self.result_edit)
 
         result_buttons = QHBoxLayout()
         self.btn_copy = QPushButton("📋 Kopiuj wynik")
@@ -125,31 +115,48 @@ class ParcelSortingWidget(QWidget):
         self.lbl_count.setStyleSheet("color: #888;")
         result_buttons.addWidget(self.lbl_count)
         result_layout.addLayout(result_buttons)
-        splitter.addWidget(result_box)
-
-        splitter.setSizes([520, 520])
-
-        self.btn_sort = QPushButton("↕️ Sortuj rosnąco")
-        self.btn_sort.setObjectName("btn_primary")
-        self.btn_sort.setMinimumHeight(38)
-        self.btn_sort.clicked.connect(self._sort_ascending)
-        layout.addWidget(self.btn_sort)
+        layout.addWidget(result_box)
+        layout.addStretch()
 
         self.input_edit.textChanged.connect(self._on_input_changed)
+        self.input_edit.returnPressed.connect(self._sort_ascending)
+        self.input_edit.installEventFilter(self)
         self.chk_remove_duplicates.toggled.connect(self._on_unique_toggled)
+
+    def eventFilter(self, watched, event):
+        """Normalizuje także listę wklejoną skrótem Ctrl+V/Cmd+V.
+
+        QLineEdit jest celowo polem jednoliniowym, dlatego przechwytujemy
+        wklejenie wielowierszowe zanim Qt ograniczy je do jednego wiersza.
+        """
+        if (
+            watched is self.input_edit
+            and event.type() == QEvent.Type.KeyPress
+            and event.matches(QKeySequence.StandardKey.Paste)
+        ):
+            self._paste_from_clipboard()
+            return True
+        return super().eventFilter(watched, event)
 
     def _restore_state(self):
         self.input_edit.blockSignals(True)
         self.chk_remove_duplicates.blockSignals(True)
-        self.input_edit.setPlainText(str(self.config.get(self.INPUT_KEY, "")))
+        saved_input = format_parcel_list(
+            parse_parcel_list(self.config.get(self.INPUT_KEY, ""))
+        )
+        self.input_edit.setText(saved_input)
         self.chk_remove_duplicates.setChecked(
             bool(self.config.get(self.UNIQUE_KEY, False))
         )
         self.input_edit.blockSignals(False)
         self.chk_remove_duplicates.blockSignals(False)
 
+        # Starsze konfiguracje mogły zawierać numery po jednym wierszu. Przy
+        # odczycie normalizujemy oba pola, aby kolejne zapisanie zachowało
+        # wyłącznie poziomy format z przecinkami.
+        self.config[self.INPUT_KEY] = saved_input
         previous_result = parse_parcel_list(self.config.get(self.RESULT_KEY, ""))
-        self._set_result_values(previous_result, persist=False)
+        self._set_result_values(previous_result, persist=True)
         self.btn_load_project.setEnabled(False)
 
     def set_parcels(self, parcels: list):
@@ -160,17 +167,30 @@ class ParcelSortingWidget(QWidget):
             self.btn_load_project.setEnabled(bool(self._project_parcels))
 
     def _on_input_changed(self):
-        self.config[self.INPUT_KEY] = self.input_edit.toPlainText()
+        self.config[self.INPUT_KEY] = self.input_edit.text()
         # Po zmianie listy poprzedni wynik nie powinien wyglądać jak aktualny.
-        if self.result_edit.toPlainText():
+        if self.result_edit.text():
             self._set_result_values([], persist=True)
 
     def _on_unique_toggled(self, checked: bool):
         self.config[self.UNIQUE_KEY] = bool(checked)
 
     def _paste_from_clipboard(self):
+        clipboard_text = QApplication.clipboard().text()
+        values = parse_parcel_list(clipboard_text)
+        if not values:
+            return
+
+        pasted_text = format_parcel_list(values)
+        current_text = self.input_edit.text()
+        if (
+            current_text.strip()
+            and not self.input_edit.hasSelectedText()
+            and not current_text.rstrip().endswith((",", ";", "\t", "\n"))
+        ):
+            pasted_text = ", " + pasted_text
+        self.input_edit.insert(pasted_text)
         self.input_edit.setFocus()
-        self.input_edit.paste()
 
     def _load_project_parcels(self):
         if not self._project_parcels:
@@ -181,7 +201,7 @@ class ParcelSortingWidget(QWidget):
             )
             return
 
-        if self.input_edit.toPlainText().strip():
+        if self.input_edit.text().strip():
             answer = QMessageBox.question(
                 self,
                 "Zastąpić listę?",
@@ -195,14 +215,14 @@ class ParcelSortingWidget(QWidget):
             value = parcel.get("number", "") if isinstance(parcel, dict) else parcel
             if str("" if value is None else value).strip():
                 values.append(str(value))
-        self.input_edit.setPlainText("\n".join(values))
+        self.input_edit.setText(format_parcel_list(values))
 
     def _clear(self):
         self.input_edit.clear()
         self._set_result_values([], persist=True)
 
     def _sort_ascending(self):
-        values = parse_parcel_list(self.input_edit.toPlainText())
+        values = parse_parcel_list(self.input_edit.text())
         if not values:
             self._set_result_values([], persist=True)
             QMessageBox.information(
@@ -212,28 +232,27 @@ class ParcelSortingWidget(QWidget):
             )
             return
 
+        # Zapis wejścia również normalizujemy do poziomego formatu, bez
+        # zmieniania kolejności podanej przez użytkownika przed sortowaniem.
+        formatted_input = format_parcel_list(values)
+        if self.input_edit.text() != formatted_input:
+            self.input_edit.setText(formatted_input)
+
         result = sort_parcel_numbers(
             values, unique=self.chk_remove_duplicates.isChecked()
         )
         self._set_result_values(result, persist=True)
 
     def _set_result_values(self, values: list[str], *, persist: bool):
-        text = "\n".join(values)
-        self.result_edit.setPlainText(text)
-        self.results_table.setRowCount(0)
-        for row, value in enumerate(values):
-            self.results_table.insertRow(row)
-            index_item = QTableWidgetItem(str(row + 1))
-            index_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.results_table.setItem(row, 0, index_item)
-            self.results_table.setItem(row, 1, QTableWidgetItem(value))
-
-        self.lbl_count.setText(f"Działek: {len(values)}")
+        self._result_values = list(values)
+        text = format_parcel_list(self._result_values)
+        self.result_edit.setText(text)
+        self.lbl_count.setText(f"Działek: {len(self._result_values)}")
         if persist:
             self.config[self.RESULT_KEY] = text
 
     def _copy_result(self):
-        result = self.result_edit.toPlainText()
+        result = self.result_edit.text()
         if not result:
             QMessageBox.information(
                 self,
@@ -244,5 +263,5 @@ class ParcelSortingWidget(QWidget):
 
         QApplication.clipboard().setText(result)
         self.lbl_count.setText(
-            f"Działek: {self.results_table.rowCount()} — skopiowano do schowka"
+            f"Działek: {len(self._result_values)} — skopiowano do schowka"
         )

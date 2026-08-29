@@ -13,6 +13,7 @@ ZAMIANA miejscowości na powiat:
 - itp.
 """
 
+import re
 import unicodedata
 
 
@@ -352,6 +353,21 @@ CITY_DECLENSIONS = {
     "Dabrowa Gornicza": "Dąbrowie Górniczej",
     "Dąbrowa Tarnowska": "Dąbrowie Tarnowskiej",
     "Dabrowa Tarnowska": "Dąbrowie Tarnowskiej",
+    "Czarna Białostocka": "Czarnej Białostockiej",
+    "Czarna Bialostocka": "Czarnej Białostockiej",
+    "Dobre Miasto": "Dobrym Mieście",
+    "Kędzierzyn-Koźle": "Kędzierzynie-Koźlu",
+    "Kedzierzyn-Kozle": "Kędzierzynie-Koźlu",
+    "Krosno Odrzańskie": "Krośnie Odrzańskim",
+    "Krosno Odrzanskie": "Krośnie Odrzańskim",
+    "Nowa Sól": "Nowej Soli",
+    "Nowa Sol": "Nowej Soli",
+    "Stalowa Wola": "Stalowej Woli",
+    "Słupca": "Słupcy",
+    "Slupca": "Słupcy",
+    "Świnoujście": "Świnoujściu",
+    "Swinoujscie": "Świnoujściu",
+    "Wysokie Mazowieckie": "Wysokiem Mazowieckiem",
     "Gniezno": "Gnieźnie",
     "Jastrzębie-Zdrój": "Jastrzębiu-Zdroju",
     "Jastrzebie-Zdroj": "Jastrzębiu-Zdroju",
@@ -392,50 +408,6 @@ CITY_DECLENSIONS = {
 CITY_DECLENSIONS_LOOKUP = {
     _lookup_key(city): declined for city, declined in CITY_DECLENSIONS.items()
 }
-
-
-def parse_city_declension_overrides(value) -> dict:
-    """Odczytuje własne formy miejscownika z konfiguracji lub pola ustawień.
-
-    Obsługiwany jest słownik konfiguracji oraz prosty zapis po jednej pozycji
-    w wierszu, np. ``Nowa Wieś = Nowej Wsi``. Można też użyć separatora
-    ``→`` albo ``=>``. Puste i niepełne wiersze są pomijane.
-    """
-    if isinstance(value, dict):
-        items = value.items()
-    elif isinstance(value, str):
-        items = []
-        for raw_line in value.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            for separator in ("=>", "→", "="):
-                if separator in line:
-                    city, declined = line.split(separator, 1)
-                    items.append((city, declined))
-                    break
-    else:
-        return {}
-
-    result = {}
-    for city, declined in items:
-        city_text = str(city or "").strip()
-        declined_text = str(declined or "").strip()
-        if city_text and declined_text:
-            result[city_text] = declined_text
-    return result
-
-
-def format_city_declension_overrides(value) -> str:
-    """Zwraca własne formy w czytelnym, edytowalnym zapisie tekstowym."""
-    overrides = parse_city_declension_overrides(value)
-    return "\n".join(
-        f"{city} = {declined}"
-        for city, declined in sorted(
-            overrides.items(), key=lambda item: _lookup_key(item[0])
-        )
-    )
 
 
 def _match_city_case(source: str, declined: str) -> str:
@@ -607,8 +579,8 @@ _CITY_ADJECTIVE_FORMS = {
 }
 
 # Jednoznaczne końcówki przymiotnikowe. Formy na -e są niejednoznaczne
-# (np. liczba mnoga lub rodzaj nijaki), dlatego dla nich pozostają słownik
-# nazw pełnych oraz własne wyjątki użytkownika.
+# (np. liczba mnoga lub rodzaj nijaki), dlatego rozpoznaje je wbudowany
+# słownik pełnych nazw.
 _CITY_ADJECTIVE_ENDINGS = (
     ("dzkie", "dzkich"),
     ("ckie", "ckich"),
@@ -695,8 +667,9 @@ def _decline_regular_city(city: str) -> str:
     """Odmienia człony nieznanej nazwy prostej, złożonej lub z łącznikiem.
 
     Przymiotnikowe człony, takie jak ``Mazowiecki`` i ``Śląska``, mają osobne
-    reguły. Pozostałe wyrazy przechodzą przez reguły rzeczownikowe. Nietypowe
-    wielowyrazowe nazwy nadal można doprecyzować trwałym wyjątkiem w ustawieniach.
+    reguły. Pozostałe wyrazy przechodzą przez reguły rzeczownikowe. Formy
+    nieregularne i najczęstsze nazwy złożone są rozpoznawane przez wbudowany
+    słownik, bez wymagania ręcznych wyjątków w ustawieniach.
     """
     parts = []
     index = 0
@@ -720,71 +693,365 @@ def _decline_regular_city(city: str) -> str:
 # ODMIANA ULIC
 # ============================================================================
 
+# Odczytujemy wyłącznie rzeczywisty prefiks ulicy. Skrót oraz sposób zapisu
+# (np. ``UL.``, ``ul.``, ``ulica``) pozostają dokładnie takie, jak w danych.
+_STREET_PREFIX_RE = re.compile(r"^(?P<prefix>(?:ulica|ul\.|ul)\s+)", re.IGNORECASE)
+
+# Najczęstsze określenia typu ulicy. Są odmienne także w nazwach wielowyrazowych
+# (np. ``Plac Wolności`` -> ``Placu Wolności``), ale nie są mylone ze skrótem
+# ``ul.`` – ten jest częścią zapisu źródłowego i nie wymaga zmiany.
+_STREET_TYPE_LOCATIVE_FORMS = {
+    "aleja": "Alei",
+    "bulwar": "Bulwarze",
+    "droga": "Drodze",
+    "most": "Moście",
+    "osiedle": "Osiedlu",
+    "park": "Parku",
+    "plac": "Placu",
+    "rondo": "Rondzie",
+    "rynek": "Rynku",
+    "skwer": "Skwerze",
+}
+
+# Rzeczownikowe nazwy spotykane w nazwach ulic. Przymiotniki są obsługiwane
+# regułami końcówek poniżej; dla tych słów miejscownik nie powstaje przez samo
+# dopisanie ``-ej``.
+_STREET_WORD_LOCATIVE_FORMS = {
+    **_STREET_TYPE_LOCATIVE_FORMS,
+    "brama": "Bramie",
+    "gora": "Górze",
+    "huta": "Hucie",
+    "laka": "Łące",
+    "polana": "Polanie",
+    "rzeka": "Rzece",
+    "srednia": "Średniej",
+    "wies": "Wsi",
+    "wola": "Woli",
+    "wyspa": "Wyspie",
+}
+
+# Formy używane już w nazwach ulic pochodzących od osób, świąt albo instytucji.
+# Nie są to wyjątki wpisywane przez użytkownika: zestaw służy jedynie temu, by
+# silnik nie zamieniał poprawnego ``Jana`` w błędne ``Janej``. Klucz jest
+# znormalizowany przez _lookup_key, dlatego działa też dla danych bez polskich
+# znaków.
+_STREET_PERSON_PHRASE_WORDS = {
+    # Tytuły przed nazwiskiem i ich częste skróty.
+    "bl",
+    "bp",
+    "dr",
+    "gen",
+    "generala",
+    "im",
+    "imienia",
+    "kapitana",
+    "kpt",
+    "ks",
+    "ksiedza",
+    "marszalka",
+    "mjr",
+    "plk",
+    "por",
+    "prof",
+    "sw",
+    "swietego",
+    # Najczęstsze formy imion występujące w oficjalnych nazwach ulic.
+    "adama",
+    "aleksandra",
+    "andrzeja",
+    "antoniego",
+    "augusta",
+    "bartosza",
+    "boleslawa",
+    "bronislawa",
+    "cypriana",
+    "czeslawa",
+    "franciszka",
+    "fryderyka",
+    "henryka",
+    "jadrzeja",
+    "jadwigi",
+    "jana",
+    "janusza",
+    "jozefa",
+    "juliana",
+    "juliusza",
+    "karola",
+    "kazimierza",
+    "konrada",
+    "krola",
+    "krolowej",
+    "krzysztofa",
+    "lecha",
+    "leona",
+    "ludwika",
+    "marcina",
+    "marii",
+    "maria",
+    "michala",
+    "mikolaja",
+    "papieza",
+    "pawla",
+    "piotra",
+    "przemyslawa",
+    "romualda",
+    "stanislawa",
+    "tadeusza",
+    "tomasza",
+    "wladyslawa",
+    "wojciecha",
+    "zygmunta",
+}
+
+# Dopełniacz nazwisk ma regularnie odmienne końcówki, ale w tagu <Ulica> bardzo
+# często jest już poprawną częścią oficjalnej nazwy (np. Mickiewicza,
+# Sienkiewicza, Piłsudskiego). Pozostawiamy ją nietkniętą.
+_STREET_PERSON_PHRASE_SUFFIXES = (
+    "dzkiego",
+    "ckiego",
+    "skiego",
+    "owicza",
+    "ewicza",
+    "icza",
+    "iego",
+    "ego",
+)
+
+# Samodzielne formy, które nie kończą się charakterystycznym nazwiskiem, ale
+# są już właściwą częścią nazwy. Dzięki temu działa także pojedyncze
+# ``Mickiewicza`` czy ``3 Maja`` przekazane bez prefiksu ``ul.``.
+_STREET_UNCHANGED_WORDS = {
+    # Częste jednowyrazowe nazwiska w dopełniaczu.
+    "andersa",
+    "bema",
+    "chopina",
+    "dlugosza",
+    "gagarina",
+    "grottgera",
+    "herberta",
+    "kasprzaka",
+    "kopernika",
+    "korczaka",
+    "kosciuszki",
+    "mickiewicza",
+    "moniuszki",
+    "narutowicza",
+    "norwida",
+    "nowaka",
+    "pilsudskiego",
+    "prusa",
+    "rataja",
+    "reymonta",
+    "sienkiewicza",
+    "slowackiego",
+    "traugutta",
+    "tuwima",
+    "witosa",
+    "wyspianskiego",
+    "zeromskiego",
+    # Gotowe nazwy instytucji, wydarzeń i świąt.
+    "armii",
+    "bohaterow",
+    "czerwca",
+    "dabrowskiego",
+    "grudnia",
+    "konstytucji",
+    "kwietnia",
+    "ksiecia",
+    "lipca",
+    "listopada",
+    "lutego",
+    "maja",
+    "marca",
+    "niepodleglosci",
+    "pazdziernika",
+    "powstancow",
+    "sierpnia",
+    "sklodowskiej",
+    "solidarnosci",
+    "stycznia",
+    "wrzesnia",
+    "wyzwolenia",
+    "zwyciestwa",
+}
+
+# Nie wszystkie formy na -a są przymiotnikami. Te zakończenia są typowe dla
+# dopełniacza rzeczowników abstrakcyjnych albo nazwisk i nie mogą przejść przez
+# regułę żeńskiego przymiotnika.
+_STREET_UNCHANGED_SUFFIXES = (
+    "owicza",
+    "ewicza",
+    "icza",
+    "dza",
+    "ecia",
+    "stwa",
+)
+
+
+def _street_words(value: str) -> list[tuple[int, int, str]]:
+    """Zwraca pozycje alfabetycznych wyrazów, zachowując interpunkcję tekstu."""
+    words = []
+    index = 0
+    while index < len(value):
+        if not value[index].isalpha():
+            index += 1
+            continue
+        end = index
+        while end < len(value) and value[end].isalpha():
+            end += 1
+        words.append((index, end, value[index:end]))
+        index = end
+    return words
+
+
+def _is_roman_numeral(word: str) -> bool:
+    """Rozpoznaje numerację typu ``II`` w nazwach takich jak ``Jana Pawła II``."""
+    return bool(re.fullmatch(r"[IVXLCDM]+", word.upper()))
+
+
+def _is_person_phrase_word(word: str) -> bool:
+    key = _lookup_key(word)
+    return key in _STREET_PERSON_PHRASE_WORDS or key.endswith(
+        _STREET_PERSON_PHRASE_SUFFIXES
+    )
+
+
+def _decline_street_word(word: str) -> str:
+    """Odmienia pojedynczy, jednoznacznie rozpoznany człon nazwy ulicy.
+
+    Reguły celowo dotyczą tylko form, które są bezpiecznie rozpoznawalne jako
+    mianownik żeńskiego przymiotnika. Pozostałe słowa zostają bez zmian, co
+    chroni istniejące dopełniacze osób i formy już odmienione.
+    """
+    key = _lookup_key(word)
+    if (
+        key in _STREET_UNCHANGED_WORDS
+        or key.endswith(_STREET_UNCHANGED_SUFFIXES)
+        or _is_person_phrase_word(word)
+    ):
+        return word
+
+    exact_form = _STREET_WORD_LOCATIVE_FORMS.get(key)
+    if exact_form is not None:
+        return _match_city_case(word, exact_form)
+
+    # Formy na -ia bardzo często są już dopełniaczem (np. Wyzwolenia), a ich
+    # automatyczna zmiana byłaby mniej bezpieczna niż pozostawienie źródła.
+    if not key.endswith("a") or key.endswith("ia"):
+        return word
+
+    # Przymiotniki żeńskie: Gdańska -> Gdańskiej, Szeroka -> Szerokiej,
+    # Długa -> Długiej, Spokojna -> Spokojnej.
+    if key.endswith("dzka"):
+        return _replace_city_ending(word, "dzka", "dzkiej")
+    if key.endswith("cka"):
+        return _replace_city_ending(word, "cka", "ckiej")
+    if key.endswith("ska"):
+        return _replace_city_ending(word, "ska", "skiej")
+    if key.endswith(("ka", "ga")):
+        return _replace_city_ending(word, "a", "iej")
+    return _replace_city_ending(word, "a", "ej")
+
+
+def _decline_street_name(name: str) -> str:
+    """Odmienia wielowyrazową nazwę, nie naruszając osób, dat ani skrótów."""
+    words = _street_words(name)
+    if not words:
+        return name
+
+    # Daty i nazwy świąt (np. 3 Maja, 11 Listopada) są gotowymi nazwami i nie
+    # zawierają przymiotnika ulicy do automatycznej zmiany.
+    first_word = words[0][2]
+    if name.lstrip()[0].isdigit() or _is_roman_numeral(first_word):
+        return name
+
+    has_person_phrase = any(_is_person_phrase_word(word) for _, _, word in words)
+    has_hyphenated_name = "-" in name
+    parts = []
+    cursor = 0
+    for start, end, word in words:
+        parts.append(name[cursor:start])
+        key = _lookup_key(word)
+        # W nazwie pochodzącej od osoby zmieniamy tylko jednoznaczny typ ulicy
+        # (np. Aleja Jana Pawła II -> Alei Jana Pawła II). Nazwisk i imion nie
+        # próbujemy zgadywać. Złożenia z łącznikiem traktujemy słowo po słowie,
+        # aby Słowacka-Krasickiego mogła dać Słowackiej-Krasickiego.
+        if has_person_phrase and not has_hyphenated_name:
+            replacement = _STREET_TYPE_LOCATIVE_FORMS.get(key)
+            if replacement is None:
+                replacement = word
+            else:
+                replacement = _match_city_case(word, replacement)
+        else:
+            replacement = _decline_street_word(word)
+        parts.append(replacement)
+        cursor = end
+    parts.append(name[cursor:])
+    return "".join(parts)
+
+
+def _split_street_tail(name: str) -> tuple[str, str]:
+    """Oddziela numer budynku lub dopisek w nawiasie od nazwy ulicy."""
+    tail = ""
+    core = name
+
+    qualifier = re.search(r"\s*(\([^()]*\))\s*$", core)
+    if qualifier:
+        tail = qualifier.group(0)
+        core = core[:qualifier.start()]
+
+    number = re.search(
+        r"\s+(\d+[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]*(?:\s*/\s*\d+[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]*)?)$",
+        core,
+    )
+    if number:
+        tail = number.group(0) + tail
+        core = core[:number.start()]
+    return core, tail
+
+
+def _decline_single_street_value(value: str) -> str:
+    """Odmienia pierwszy, uliczny człon wartości bez usuwania żadnego tekstu."""
+    leading_length = len(value) - len(value.lstrip())
+    trailing_length = len(value) - len(value.rstrip())
+    leading = value[:leading_length]
+    trailing = value[len(value) - trailing_length:] if trailing_length else ""
+    core_end = len(value) - trailing_length if trailing_length else len(value)
+    core = value[leading_length:core_end]
+    if not core:
+        return value
+
+    prefix_match = _STREET_PREFIX_RE.match(core)
+    prefix = prefix_match.group("prefix") if prefix_match else ""
+    name = core[prefix_match.end():] if prefix_match else core
+    if not name.strip():
+        return value
+
+    name_core, tail = _split_street_tail(name)
+    if not name_core.strip():
+        return value
+    return leading + prefix + _decline_street_name(name_core) + tail + trailing
+
+
 def decline_street(street: str) -> str:
-    """Odmienia nazwę ulicy przez miejscownik."""
+    """Odmienia wartość tagu ``<Ulica>`` przez miejscownik.
+
+    Obsługuje nazwy jedno- i wielowyrazowe, zapis z ``ul.``/``ulica``, numery
+    budynków oraz już odmienione nazwy osób i dat. Tekst po przecinku (np.
+    miejscowość dopisana do adresu) pozostaje nienaruszony; listy ulic są
+    rozdzielane przez generator DOCX przed wywołaniem tej funkcji.
+    """
     if not street:
         return street
-    
-    original = street.strip()
-    
-    # Prefix ulica/ul./ul
-    prefix = ""
-    rest = original
-    
-    lower_orig = original.lower()
-    if lower_orig.startswith("ulica "):
-        prefix = "ulica "
-        rest = original[6:]
-    elif lower_orig.startswith("ul. "):
-        prefix = "ul. "
-        rest = original[4:]
-    elif lower_orig.startswith("ul "):
-        prefix = "ul "
-        rest = original[3:]
-    
-    if not rest:
-        return original
-    
-    rest = rest.split(",")[0].strip()
-    rest = rest.split("(")[0].strip()
 
-    # Nazwy już w dopełniaczu (np. "Słowackiego", "Poniatowskiego") zostaw bez zmian.
-    if rest.lower().endswith("ego"):
-        return original
-
-    return prefix + _decline_female_name(rest)
-
-
-def _decline_female_name(name: str) -> str:
-    """Odmienia żeńskie nazwy własne (przymiotnikowe nazwy ulic)."""
-    if not name:
-        return name
-
-    low = name.lower()
-
-    if low.endswith("ia"):
-        return name
-
-    if low.endswith("a"):
-        # Przymiotniki żeńskie: -ska/-cka/-dzka -> -skiej/-ckiej/-dzkiej
-        if low.endswith("dzka"):
-            return name[:-4] + "dzkiej"
-        if low.endswith("cka"):
-            return name[:-3] + "ckiej"
-        if low.endswith("ska"):
-            return name[:-3] + "skiej"
-
-        base = name[:-1]
-        # -ga -> -giej (Długa -> Długiej), -ka -> -kiej (Szeroka -> Szerokiej)
-        if low.endswith("ga"):
-            return base + "iej"
-        if low.endswith("ka"):
-            return base + "iej"
-
-        # Pozostałe żeńskie: Nowa -> Nowej, Stara -> Starej
-        return base + "ej"
-
-    return name
+    source = str(street)
+    comma_index = source.find(",")
+    if comma_index >= 0:
+        return (
+            _decline_single_street_value(source[:comma_index])
+            + source[comma_index:]
+        )
+    return _decline_single_street_value(source)
 
 
 # ============================================================================
@@ -820,18 +1087,14 @@ def city_to_powiat(city: str) -> str:
     return normalized
 
 
-def decline_city(city: str, overrides=None) -> str:
+def decline_city(city: str) -> str:
     """Odmienia nazwę miejscowości przez miejscownik.
 
-    Najpierw używa wpisanej przez użytkownika formy, potem słownika nazw
-    nieregularnych, a na końcu reguł dla regularnych końcówek. Dzięki temu
-    wartości tagów obsługują nie tylko nazwy na ``-owo``, ale też m.in.
-    ``-ice``, ``-y/-i/-e``, ``-a``, ``-ino/-yno``, ``-ko/-no`` i nazwy
-    męskie zakończone spółgłoską.
-
-    ``overrides`` może być słownikiem ``nazwa -> miejscownik`` albo tekstem
-    w formacie ``Nazwa = Forma``. Pozwala wskazać poprawną formę każdej
-    nieregularnej lub wielowyrazowej miejscowości bez zmiany danych źródłowych.
+    Wbudowany słownik obejmuje formy nieregularne i wielowyrazowe, a reguły
+    rozpoznają pozostałe częste zakończenia. Dzięki temu wartości tagów DOCX
+    obsługują nie tylko nazwy na ``-owo``, ale też m.in. ``-ice``, ``-y/-i/-e``,
+    ``-a``, ``-ino/-yno``, ``-ko/-no`` i nazwy męskie zakończone spółgłoską –
+    bez ręcznego wpisywania wyjątków i bez zmiany danych źródłowych.
     """
     if not city:
         return city
@@ -852,15 +1115,6 @@ def decline_city(city: str, overrides=None) -> str:
     ):
         postal_prefix = normalized[:7]
         normalized = normalized[7:].strip()
-
-    # Własny słownik ma pierwszeństwo przed wbudowanymi formami.
-    custom_forms = {
-        _lookup_key(source): declined
-        for source, declined in parse_city_declension_overrides(overrides).items()
-    }
-    custom_declined = custom_forms.get(_lookup_key(normalized))
-    if custom_declined is not None:
-        return postal_prefix + _match_city_case(normalized, custom_declined)
 
     # Słownik miejscowości (niezależnie od wielkości liter wejścia) musi być
     # sprawdzany przed nazwami powiatów: np. Pruszcz Gdański to miejscowość,
