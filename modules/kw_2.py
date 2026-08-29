@@ -1,20 +1,23 @@
-"""KW 2 – ręczne centrum pracy z Elektronicznymi Księgami Wieczystymi.
+"""KW 2 – osobny moduł pracy z Elektronicznymi Księgami Wieczystymi.
 
-Ta zakładka celowo nie steruje stroną eKW, nie wykonuje zapytań do serwisu
-ani nie automatyzuje pobierania. Ułatwia pracę w zwykłej przeglądarce:
-porządkuje numery KW, kopiuje je do schowka i otwiera oficjalną stronę.
+Zawiera ręczny przepływ pracy w zwykłej przeglądarce oraz osobny, widoczny
+tryb Chrome dla pojedynczo wybranego numeru KW. Nie stosuje proxy,
+rozwiązywania CAPTCHA, równoległych zadań ani ukrywania automatyzacji.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -31,13 +34,231 @@ from PySide6.QtWidgets import (
 from utils.kw2_utils import collect_owner_kw_parcels, extract_kw_numbers
 
 
-EKW_HOME_URL = "https://ekw.ms.gov.pl/"
+EKW_HOME_URL = "https://przegladarka-ekw.ms.gov.pl/"
+EKW_CHROME_URL = EKW_HOME_URL
 STATE_FILE_NAME = "kw2_manual_state.json"
 DRAFT_CONFIG_KEY = "kw2_manual_draft"
+SECTION_FILE_CODES = {
+    "Dział I-O": "1o",
+    "Dział I-Sp": "1sp",
+    "Dział II": "2",
+    "Dział III": "3",
+    "Dział IV": "4",
+}
+
+
+class KW2ChromeWorker(QThread):
+    """Pobiera wskazaną pojedynczą KW w widocznym, zwykłym oknie Chrome.
+
+    Nie używa proxy, rozwiązywania CAPTCHA, ukrywania automatyzacji ani
+    równoległego przetwarzania. Gdy formularz serwisu nie jest dostępny,
+    kończy zadanie zamiast podejmować kolejne próby.
+    """
+
+    log_message = Signal(str)
+    result_ready = Signal(str, bool, str)
+
+    def __init__(
+        self,
+        number: str,
+        sections: list[str],
+        output_dir: Path,
+        *,
+        print_background: bool = False,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.number = number
+        self.sections = list(sections)
+        self.output_dir = Path(output_dir)
+        self.print_background = bool(print_background)
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        self._stop_requested = True
+
+    def run(self) -> None:
+        driver = None
+        try:
+            try:
+                from selenium import webdriver
+                from selenium.webdriver.common.by import By
+                from selenium.webdriver.support.ui import Select
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Brak biblioteki Selenium. Zainstaluj ją w środowisku programu: "
+                    "pip install selenium."
+                ) from exc
+
+            department, book_number, check_digit = self.number.split("/", 2)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Selenium domyślnie uruchamia widoczną, zainstalowaną przeglądarkę
+            # Chrome. Nie ustawiamy tu żadnych opcji maskujących automatyzację.
+            options = webdriver.ChromeOptions()
+            driver = webdriver.Chrome(options=options)
+            try:
+                driver.maximize_window()
+            except Exception:
+                pass
+
+            self.log_message.emit("🌐 Otwieram eKW w widocznym oknie Chrome...")
+            driver.get(EKW_CHROME_URL)
+            self._fill_search_form(
+                driver,
+                By,
+                Select,
+                department,
+                book_number,
+                check_digit,
+            )
+            self._wait_or_stop(1200)
+
+            print_button = self._wait_for_first_element(
+                driver,
+                By,
+                ((By.ID, "przyciskWydrukZwykly"), (By.NAME, "przyciskWydrukZwykly")),
+                timeout_sec=30,
+                label="przycisk wydruku księgi",
+            )
+            print_button.click()
+            self._wait_or_stop(1500)
+
+            saved_count = 0
+            for section in self.sections:
+                if self._stop_requested:
+                    raise RuntimeError("Pobieranie przerwane przez użytkownika.")
+                self.log_message.emit(f"📄 {self.number}: zapisuję {section}...")
+                section_button = self._wait_for_first_element(
+                    driver,
+                    By,
+                    ((By.CSS_SELECTOR, f'[value="{section}"]'),),
+                    timeout_sec=20,
+                    label=section,
+                )
+                section_button.click()
+                self._wait_or_stop(1200)
+
+                response = driver.execute_cdp_cmd(
+                    "Page.printToPDF",
+                    {"printBackground": self.print_background},
+                )
+                encoded_pdf = response.get("data", "") if isinstance(response, dict) else ""
+                if not encoded_pdf:
+                    raise RuntimeError(f"Chrome nie zwrócił danych PDF dla {section}.")
+
+                filename = (
+                    f"{self.number.replace('/', '.')}_{SECTION_FILE_CODES[section]}.pdf"
+                )
+                path = self.output_dir / filename
+                path.write_bytes(base64.b64decode(encoded_pdf))
+                if not path.is_file() or path.stat().st_size <= 0:
+                    raise RuntimeError(f"Nie udało się zapisać pliku {filename}.")
+                saved_count += 1
+                self._wait_or_stop(800)
+
+            self.result_ready.emit(
+                self.number,
+                True,
+                f"Pobrano przez Chrome: {saved_count} plików PDF.",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.result_ready.emit(self.number, False, str(exc))
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+    def _fill_search_form(
+        self,
+        driver: Any,
+        By: Any,
+        Select: Any,
+        department: str,
+        book_number: str,
+        check_digit: str,
+    ) -> None:
+        department_input = self._wait_for_first_element(
+            driver,
+            By,
+            ((By.ID, "kodWydzialuInput"), (By.ID, "kodWydzialu")),
+            timeout_sec=30,
+            label="pole kodu wydziału",
+        )
+        if str(department_input.tag_name).casefold() == "select":
+            Select(department_input).select_by_value(department)
+        else:
+            department_input.clear()
+            department_input.send_keys(department)
+
+        number_input = self._wait_for_first_element(
+            driver,
+            By,
+            ((By.ID, "numerKsiegiWieczystej"), (By.NAME, "numerKw")),
+            timeout_sec=10,
+            label="pole numeru księgi",
+        )
+        number_input.clear()
+        number_input.send_keys(book_number)
+
+        digit_input = self._wait_for_first_element(
+            driver,
+            By,
+            ((By.ID, "cyfraKontrolna"), (By.NAME, "cyfraKontrolna")),
+            timeout_sec=10,
+            label="pole cyfry kontrolnej",
+        )
+        digit_input.clear()
+        digit_input.send_keys(check_digit)
+
+        search_button = self._wait_for_first_element(
+            driver,
+            By,
+            ((By.ID, "wyszukaj"), (By.NAME, "wyszukaj")),
+            timeout_sec=10,
+            label="przycisk wyszukania",
+        )
+        self.log_message.emit(f"⌨️ Wyszukuję KW: {self.number}")
+        search_button.click()
+
+    def _wait_for_first_element(
+        self,
+        driver: Any,
+        By: Any,
+        locators: tuple[tuple[Any, str], ...],
+        *,
+        timeout_sec: int,
+        label: str,
+    ) -> Any:
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if self._stop_requested:
+                raise RuntimeError("Pobieranie przerwane przez użytkownika.")
+            for by, selector in locators:
+                try:
+                    elements = driver.find_elements(by, selector)
+                    if elements:
+                        return elements[0]
+                except Exception:
+                    continue
+            time.sleep(0.25)
+        raise RuntimeError(
+            f"Nie pojawiło się wymagane pole: {label}. "
+            "Sprawdź widoczne okno Chrome i spróbuj później ręcznie."
+        )
+
+    def _wait_or_stop(self, milliseconds: int) -> None:
+        deadline = time.monotonic() + milliseconds / 1000
+        while time.monotonic() < deadline:
+            if self._stop_requested:
+                raise RuntimeError("Pobieranie przerwane przez użytkownika.")
+            time.sleep(0.1)
 
 
 class KW2ManualWidget(QWidget):
-    """Pomocnik do ręcznego przeglądania i zapisywania KW w zwykłej przeglądarce."""
+    """Osobna zakładka do ręcznej pracy i pojedynczego pobrania przez Chrome."""
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
@@ -46,6 +267,8 @@ class KW2ManualWidget(QWidget):
         self.project_path = ""
         self.manual_numbers: list[str] = []
         self.completed_numbers: set[str] = set()
+        self.chrome_statuses: dict[str, str] = {}
+        self._worker: KW2ChromeWorker | None = None
         self._build_ui()
         self.input_edit.setPlainText(str(self.config.get(DRAFT_CONFIG_KEY, "") or ""))
         self._rebuild_table()
@@ -77,9 +300,9 @@ class KW2ManualWidget(QWidget):
         layout.addLayout(header)
 
         info = QLabel(
-            "<b>Tryb ręczny:</b> zakładka nie łączy się z eKW i nie steruje stroną. "
-            "Po skopiowaniu numeru otwiera wyłącznie oficjalną stronę w Twojej "
-            "normalnej przeglądarce. Wyszukiwanie oraz zapis PDF wykonujesz tam ręcznie."
+            "<b>Tryb ręczny:</b> przyciski kopiowania otwierają wyłącznie oficjalną "
+            "stronę w Twojej normalnej przeglądarce. Niżej jest też osobny tryb "
+            "widocznego Chrome dla jednego zaznaczonego numeru i wybranych działów PDF."
         )
         info.setWordWrap(True)
         info.setStyleSheet(
@@ -87,6 +310,58 @@ class KW2ManualWidget(QWidget):
             "padding: 8px; border-radius: 4px;"
         )
         layout.addWidget(info)
+
+        chrome_box = QGroupBox("Pobierz jedną zaznaczoną KW przez Chrome")
+        chrome_layout = QVBoxLayout(chrome_box)
+        chrome_hint = QLabel(
+            "Wymaga zainstalowanego Google Chrome oraz biblioteki Selenium. Chrome "
+            "jest uruchamiany widocznie i zadanie dotyczy tylko jednego zaznaczonego "
+            "numeru. Jeśli strona nie pokaże formularza lub wyniku, zadanie zostanie "
+            "zatrzymane — moduł nie rozwiązuje CAPTCHA ani nie podejmuje prób obejścia "
+            "komunikatu serwisu."
+        )
+        chrome_hint.setWordWrap(True)
+        chrome_hint.setStyleSheet("color: #888; font-size: 11px;")
+        chrome_layout.addWidget(chrome_hint)
+
+        sections_row = QHBoxLayout()
+        sections_row.addWidget(QLabel("Zapisz działy:"))
+        self.section_checks: dict[str, QCheckBox] = {}
+        for section in SECTION_FILE_CODES:
+            checkbox = QCheckBox(section)
+            checkbox.setChecked(
+                bool(self.config.get(f"kw2_section_{section}", True))
+            )
+            checkbox.toggled.connect(
+                lambda checked, name=section: self.config.update(
+                    {f"kw2_section_{name}": bool(checked)}
+                )
+            )
+            self.section_checks[section] = checkbox
+            sections_row.addWidget(checkbox)
+        sections_row.addStretch()
+        chrome_layout.addLayout(sections_row)
+
+        chrome_actions = QHBoxLayout()
+        self.btn_download_chrome = QPushButton("▶ Pobierz przez Chrome")
+        self.btn_download_chrome.setObjectName("btn_primary")
+        self.btn_download_chrome.clicked.connect(self._start_chrome_download)
+        chrome_actions.addWidget(self.btn_download_chrome)
+        self.btn_stop_chrome = QPushButton("⛔ Zatrzymaj")
+        self.btn_stop_chrome.setEnabled(False)
+        self.btn_stop_chrome.clicked.connect(self._stop_chrome_download)
+        chrome_actions.addWidget(self.btn_stop_chrome)
+        chrome_actions.addStretch()
+        chrome_layout.addLayout(chrome_actions)
+
+        self.chrome_log = QTextEdit()
+        self.chrome_log.setReadOnly(True)
+        self.chrome_log.setMaximumHeight(100)
+        self.chrome_log.setPlaceholderText(
+            "Tutaj pojawi się przebieg pojedynczego pobierania przez Chrome."
+        )
+        chrome_layout.addWidget(self.chrome_log)
+        layout.addWidget(chrome_box)
 
         input_box = QGroupBox("Dodaj numery KW ręcznie")
         input_layout = QVBoxLayout(input_box)
@@ -167,9 +442,13 @@ class KW2ManualWidget(QWidget):
     def set_project(self, project: dict) -> None:
         """Zmienia projekt i odtwarza jego lokalną listę ręcznie dodanych KW."""
 
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.request_stop()
+            self._worker.wait(5000)
         self.save_state()
         self.project_path = str((project or {}).get("path", "") or "")
         self.owners = []
+        self.chrome_statuses = {}
         self._load_state()
         self._rebuild_table()
 
@@ -276,11 +555,21 @@ class KW2ManualWidget(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(record["parcels"]))
             self.table.setItem(row, 2, QTableWidgetItem(record["source"]))
 
+            chrome_status = self.chrome_statuses.get(number, "")
             is_done = number in self.completed_numbers
-            status_item = QTableWidgetItem(
-                "Zapisano ręcznie" if is_done else "Do ręcznego sprawdzenia"
-            )
-            status_item.setForeground(QColor("#2ecc71" if is_done else "#e69f00"))
+            if chrome_status:
+                status_text = chrome_status
+                status_color = "#3498db" if chrome_status.startswith("Pobieranie") else "#e74c3c"
+                if chrome_status.startswith("Pobrano"):
+                    status_color = "#2ecc71"
+            elif is_done:
+                status_text = "Zapisano ręcznie"
+                status_color = "#2ecc71"
+            else:
+                status_text = "Do ręcznego sprawdzenia"
+                status_color = "#e69f00"
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(QColor(status_color))
             self.table.setItem(row, 3, status_item)
             if number in selected_numbers:
                 self.table.selectRow(row)
@@ -352,6 +641,94 @@ class KW2ManualWidget(QWidget):
         self.input_edit.clear()
         self._rebuild_table()
         self.save_state()
+
+    def _selected_sections(self) -> list[str]:
+        return [
+            section
+            for section, checkbox in self.section_checks.items()
+            if checkbox.isChecked()
+        ]
+
+    def _start_chrome_download(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Pobieranie w toku",
+                "Trwa już pobieranie jednej księgi przez Chrome.",
+            )
+            return
+
+        numbers = self._selected_numbers()
+        if len(numbers) != 1:
+            QMessageBox.information(
+                self,
+                "Wybierz jedną księgę",
+                "Dla bezpieczeństwa KW 2 pobiera tylko jeden zaznaczony numer naraz.",
+            )
+            return
+
+        sections = self._selected_sections()
+        if not sections:
+            QMessageBox.information(
+                self,
+                "Brak działów",
+                "Zaznacz co najmniej jeden dział do zapisania w PDF.",
+            )
+            return
+        if not self.project_path:
+            QMessageBox.information(
+                self,
+                "Brak projektu",
+                "Najpierw wybierz aktywny projekt, aby wskazać folder zapisu PDF.",
+            )
+            return
+
+        number = numbers[0]
+        output_dir = Path(self.project_path) / "ksiegi_wieczyste_pdf"
+        self.chrome_log.clear()
+        self._append_chrome_log(
+            f"▶ Start: {number}; działy: {', '.join(sections)}; folder: {output_dir}"
+        )
+        self.chrome_statuses[number] = "Pobieranie przez Chrome"
+        self._rebuild_table()
+
+        self._worker = KW2ChromeWorker(number, sections, output_dir, parent=self)
+        self._worker.log_message.connect(self._append_chrome_log)
+        self._worker.result_ready.connect(self._on_chrome_result)
+        self._worker.finished.connect(self._on_chrome_finished)
+        self.btn_download_chrome.setEnabled(False)
+        self.btn_stop_chrome.setEnabled(True)
+        self._worker.start()
+
+    def _stop_chrome_download(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.request_stop()
+            self.btn_stop_chrome.setEnabled(False)
+            self._append_chrome_log("⛔ Wysłano żądanie zatrzymania.")
+
+    def _append_chrome_log(self, message: str) -> None:
+        if hasattr(self, "chrome_log"):
+            self.chrome_log.append(message)
+        self._set_status(message)
+
+    def _on_chrome_result(self, number: str, success: bool, message: str) -> None:
+        if success:
+            self.completed_numbers.add(number)
+            self.chrome_statuses[number] = message
+            self._append_chrome_log(f"✅ {number}: {message}")
+            self.save_state()
+        else:
+            self.chrome_statuses[number] = "Błąd Chrome — sprawdź log"
+            self._append_chrome_log(f"❌ {number}: {message}")
+        self._rebuild_table()
+
+    def _on_chrome_finished(self) -> None:
+        self.btn_download_chrome.setEnabled(True)
+        self.btn_stop_chrome.setEnabled(False)
+        worker = self._worker
+        self._worker = None
+        if worker is not None:
+            worker.deleteLater()
 
     def _copy_selected_numbers(self) -> bool:
         numbers = self._selected_numbers()
@@ -428,5 +805,8 @@ class KW2ManualWidget(QWidget):
             self.status_label.setText(text)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.request_stop()
+            self._worker.wait(5000)
         self.save_state()
         super().closeEvent(event)
