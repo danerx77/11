@@ -204,8 +204,18 @@ class LegalTitlesWidget(QWidget):
         dlg = QDialog(self)
         dlg.setObjectName("legalGroupingSettingsDialog")
         dlg.setWindowTitle("⚙️ Tytuły prawne — grupowanie i wygląd")
-        dlg.resize(1040, 760)
-        dlg.setMinimumSize(900, 680)
+        # Otwieraj od razu szerokie okno, ale zawsze mieszczące się na ekranie,
+        # na którym znajduje się główne okno programu.
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            dialog_width = min(1440, max(720, available.width() - 48))
+            dialog_height = min(960, max(520, available.height() - 48))
+        else:
+            dialog_width, dialog_height = 1320, 880
+        dlg.resize(dialog_width, dialog_height)
+        dlg.setMinimumSize(min(1040, dialog_width), min(680, dialog_height))
+        dlg.setSizeGripEnabled(True)
         dlg.setStyleSheet(
             """
             QDialog#legalGroupingSettingsDialog { background: #f6f8fb; }
@@ -262,6 +272,16 @@ class LegalTitlesWidget(QWidget):
         tabs.setDocumentMode(True)
         tabs.setUsesScrollButtons(True)
         layout.addWidget(tabs, 1)
+
+        def add_settings_tab(page, title):
+            """Dodaje zakładkę z przewijaniem, aby żadna opcja nie znikała."""
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setWidget(page)
+            tabs.addTab(scroll, title)
 
         # W każdym kroku pokazujemy mały, czytelny fragment tabeli. Dzięki
         # temu ustawienie nie jest wyłącznie techniczną nazwą — od razu widać,
@@ -569,7 +589,7 @@ class LegalTitlesWidget(QWidget):
                 )
         refresh_group_pair_preview()
         group_layout.addWidget(base_box)
-        tabs.addTab(tab_group, "① Grupowanie")
+        add_settings_tab(tab_group, "① Grupowanie")
 
         # ───────────────────────── 2. Osobne wiersze / scalanie
         tab_rows = QWidget()
@@ -714,7 +734,7 @@ class LegalTitlesWidget(QWidget):
         rows_content.addWidget(box_rows, 3)
         rows_content.addWidget(rows_preview_box, 2)
         rows_layout.addLayout(rows_content, 1)
-        tabs.addTab(tab_rows, "② Wiersze i scalenia")
+        add_settings_tab(tab_rows, "② Wiersze i scalenia")
 
         # ───────────────────────── 3. Tabela 1 i 2
         tab_t12 = QWidget()
@@ -902,7 +922,7 @@ class LegalTitlesWidget(QWidget):
         t12_content.addWidget(box_t12, 3)
         t12_content.addWidget(t12_preview_box, 2)
         t12_layout.addLayout(t12_content, 1)
-        tabs.addTab(tab_t12, "③ Tabele 1 i 2")
+        add_settings_tab(tab_t12, "③ Tabele 1 i 2")
 
         # ───────────────────────── 4. Tabela 3
         tab_t3 = QWidget()
@@ -992,7 +1012,7 @@ class LegalTitlesWidget(QWidget):
         t3_content.addWidget(box_t3, 3)
         t3_content.addWidget(t3_preview_box, 2)
         t3_layout.addLayout(t3_content, 1)
-        tabs.addTab(tab_t3, "④ Tabela 3")
+        add_settings_tab(tab_t3, "④ Tabela 3")
 
         # ───────────────────────── 5. Tabela 5
         tab_t5 = QWidget()
@@ -1147,7 +1167,7 @@ class LegalTitlesWidget(QWidget):
         t5_content.addWidget(box_t5, 3)
         t5_content.addWidget(t5_preview_box, 2)
         t5_layout.addLayout(t5_content, 1)
-        tabs.addTab(tab_t5, "⑤ Tabela 5")
+        add_settings_tab(tab_t5, "⑤ Tabela 5")
 
         # ───────────────────────── 6. Wygląd
         tab_view = QWidget()
@@ -1268,7 +1288,7 @@ class LegalTitlesWidget(QWidget):
         view_content.addWidget(box_view, 3)
         view_content.addWidget(view_preview_box, 2)
         view_layout.addLayout(view_content, 1)
-        tabs.addTab(tab_view, "⑥ Wygląd")
+        add_settings_tab(tab_view, "⑥ Wygląd")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("💾 Zapisz i przebuduj")
