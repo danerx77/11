@@ -5,8 +5,17 @@ import json
 import re
 import webbrowser
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
+from utils.shipment_tracking import (
+    format_tracking_event,
+    format_tracking_history,
+    latest_tracking_event,
+    normalize_tracking_code,
+    parse_tracking_response,
+    summarize_tracking_statuses,
+    tracking_status_category,
+)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QGroupBox,
@@ -63,7 +72,10 @@ class ShipmentTrackerWidget(QWidget):
         self.chk_show_c6.stateChanged.connect(self._on_type_filter_changed)
         top_row.addWidget(self.chk_show_c6)
 
-        self.btn_fetch_status = QPushButton('🔄 Pobierz statusy')
+        self.btn_fetch_status = QPushButton('🔄 Pobierz statusy Poczty Polskiej')
+        self.btn_fetch_status.setToolTip(
+            'Pobiera najnowsze zdarzenia z systemu śledzenia Poczty Polskiej.'
+        )
         self.btn_fetch_status.clicked.connect(self._fetch_all_tracking_statuses)
         top_row.addWidget(self.btn_fetch_status)
 
@@ -78,10 +90,23 @@ class ShipmentTrackerWidget(QWidget):
 
         layout.addLayout(top_row)
 
+        status_box = QGroupBox('Podsumowanie statusów kopert')
+        status_layout = QVBoxLayout(status_box)
+        self.lbl_status_summary = QLabel(
+            'Brak przesyłek do podsumowania. Pobierz statusy Poczty Polskiej.'
+        )
+        self.lbl_status_summary.setWordWrap(True)
+        self.lbl_status_summary.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.lbl_status_summary.setStyleSheet('color:#cfd8dc; font-size:12px;')
+        status_layout.addWidget(self.lbl_status_summary)
+        layout.addWidget(status_box)
+
         # Tabela przesyłek
         self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels([
-            'Projekt', 'Data generowania', 'Adresat / Opis', 'Działki', 'Typ koperty', 'Kod znaczka', 'Kopiuj', 'Śledzenie', 'Status', 'Ścieżka pliku'
+            'Projekt', 'Data generowania', 'Adresat / Opis', 'Działki', 'Typ koperty', 'Kod znaczka', 'Kopiuj', 'Śledzenie', 'Status Poczty Polskiej', 'Ścieżka pliku'
         ])
         
         # Ustawienia kolumn
@@ -119,8 +144,7 @@ class ShipmentTrackerWidget(QWidget):
         self._refresh_table()
 
     def _normalize_stamp_code(self, code: str) -> str:
-        code = str(code or '').strip().replace('(00)', '00')
-        return re.sub(r'[^0-9A-Za-z]', '', code)
+        return normalize_tracking_code(code)
 
     def _copy_stamp_code(self, code: str):
         QGuiApplication.clipboard().setText(self._normalize_stamp_code(code))
@@ -146,25 +170,64 @@ class ShipmentTrackerWidget(QWidget):
     def _current_tracking_status(self, shipment: dict) -> str:
         return shipment.get('tracking_status') or 'Nie pobrano'
 
-    def _fetch_tracking_status_from_www(self, code: str) -> str:
+    def _tracking_error_result(self, message: str) -> dict:
+        return {
+            "tracking_status": f"Nie pobrano statusu: {message}"[:500],
+            "tracking_latest_event": {},
+            "tracking_events": [],
+            "tracking_checked_at": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ),
+        }
+
+    def _tracking_result_from_response(self, xml: bytes) -> dict:
+        parsed = parse_tracking_response(xml)
+        events = [
+            event for event in parsed.get("events", []) if isinstance(event, dict)
+        ]
+        latest_event = latest_tracking_event(events)
+        if latest_event:
+            return {
+                # Pierwsza część to niezmieniona nazwa zdarzenia otrzymana od
+                # Poczty Polskiej; dalsze części tylko ją czytelnie opisują.
+                "tracking_status": format_tracking_event(latest_event),
+                "tracking_latest_event": latest_event,
+                "tracking_events": events,
+                "tracking_checked_at": datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
+            }
+
+        message = str(parsed.get("message") or "brak zdarzeń w odpowiedzi SOAP")
+        return self._tracking_error_result(message)
+
+    def _fetch_tracking_status_from_www(self, code: str) -> dict:
+        """Pobiera pełną historię zdarzeń przez oficjalne SOAP Poczty Polskiej."""
         code = self._normalize_stamp_code(code)
         if not code:
-            return 'Brak kodu'
+            return self._tracking_error_result("brak kodu przesyłki")
+
         try:
             from urllib.request import Request, urlopen
-            from xml.etree import ElementTree as ET
-            from datetime import datetime, timezone
 
-            endpoint = 'https://tt.poczta-polska.pl/Sledzenie/services/Sledzenie/SledzenieHttpSoap11Endpoint'
-            created = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-            logins = ('sledeniepp', 'sledzeniepp', 'trackingpp')
-            last_error = ''
+            endpoint = (
+                "https://tt.poczta-polska.pl/Sledzenie/services/Sledzenie/"
+                "SledzenieHttpSoap11Endpoint"
+            )
+            created = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z"
+            )
+            # Pierwszy login jest aktualnym kontem jednorazowych zapytań
+            # wskazanym w dokumentacji Poczty Polskiej. Pozostałe zachowują
+            # zgodność z odpowiedziami starszych wdrożeń usługi.
+            logins = ("sledeniepp", "sledzeniepp", "trackingpp")
+            last_error = ""
             for login in logins:
-                body = f'''<?xml version="1.0" encoding="UTF-8"?>
+                body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sled="http://sledzenie.pocztapolska.pl">
   <soapenv:Header>
     <wsse:Security soapenv:mustUnderstand="1" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-      <wsse:UsernameToken xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+      <wsse:UsernameToken wsu:Id="UsernameToken-2" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
         <wsse:Username>{login}</wsse:Username>
         <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">PPSA</wsse:Password>
         <wsu:Created>{created}</wsu:Created>
@@ -174,76 +237,30 @@ class ShipmentTrackerWidget(QWidget):
   <soapenv:Body>
     <sled:sprawdzPrzesylkePl><sled:numer>{code}</sled:numer></sled:sprawdzPrzesylkePl>
   </soapenv:Body>
-</soapenv:Envelope>'''.encode('utf-8')
-                req = Request(endpoint, data=body, headers={
-                    'Content-Type': 'text/xml; charset=utf-8',
-                    'SOAPAction': 'urn:sprawdzPrzesylkePl',
-                    'User-Agent': 'Mozilla/5.0'
-                })
+</soapenv:Envelope>""".encode("utf-8")
+                request = Request(
+                    endpoint,
+                    data=body,
+                    headers={
+                        "Content-Type": "text/xml; charset=utf-8",
+                        "SOAPAction": "urn:sprawdzPrzesylkePl",
+                        "User-Agent": "Mozilla/5.0",
+                    },
+                )
                 try:
-                    with urlopen(req, timeout=25) as resp:
-                        xml = resp.read()
-                    root = ET.fromstring(xml)
-                    events = []
-                    for elem in root.iter():
-                        lname = elem.tag.split('}', 1)[-1].lower()
-                        if lname in ('zdarzenie', 'event', 'zdarzenia'):
-                            data = {}
-                            for child in elem.iter():
-                                cl = child.tag.split('}', 1)[-1].lower()
-                                txt = (child.text or '').strip()
-                                if txt:
-                                    data[cl] = txt
-                            if data:
-                                events.append(data)
-                    if events:
-                        # Wybierz najważniejszy realny status, nie techniczny wpis.
-                        priorities = [
-                            (120, ('odebran', 'odebrana', 'odebrano', 'wydano')),
-                            (100, ('doręcz', 'dorecz')),
-                            (80, ('awiz',)),
-                            (60, ('przekazano do doręczenia', 'przekazano do doreczenia')),
-                        ]
-                        best_score = -1
-                        ev = None
-                        for candidate in events:
-                            blob = ' '.join(str(v) for v in candidate.values()).lower()
-                            if 'udostępnienie podpisu' in blob or 'udostepnienie podpisu' in blob:
-                                score = 10
-                            else:
-                                score = 20
-                            for val, keys in priorities:
-                                if any(k in blob for k in keys):
-                                    score = max(score, val)
-                            if score >= best_score:
-                                best_score = score
-                                ev = candidate
-                        if ev is None:
-                            ev = events[-1]
-                        vals = [str(v) for v in ev.values() if v]
-                        status = (ev.get('nazwa') or ev.get('nazwa_zdarzenia') or ev.get('status') or ev.get('rodzaj') or '')
-                        if not status:
-                            status = next((v for v in vals if not re.search(r'\d{4}-\d{2}-\d{2}|\d{2}:\d{2}', v)), '')
-                        if 'udostępnienie podpisu' in status.lower() or 'udostepnienie podpisu' in status.lower():
-                            status = next((v for v in vals if 'doręcz' in v.lower() or 'dorecz' in v.lower()), status)
-                        when = ev.get('czas') or ev.get('data') or ev.get('dataiczas') or ev.get('data_i_czas') or ''
-                        if not when:
-                            when = next((v for v in vals if re.search(r'\d{4}-\d{2}-\d{2}|\d{2}:\d{2}', v)), '')
-                        if status and when:
-                            return f'{status} | Data i czas: {when}'[:300]
-                        if status:
-                            return status[:300]
-                        return str(ev)[:300]
-                    text = xml.decode('utf-8', errors='ignore')
-                    m = re.search(r'<[^>]*(?:opis|komunikat|status)[^>]*>(.*?)</', text, re.I | re.S)
-                    if m:
-                        return re.sub(r'\s+', ' ', m.group(1)).strip()[:250]
-                    last_error = 'brak zdarzeń w odpowiedzi SOAP'
-                except Exception as e:
-                    last_error = str(e)
-            return f'Nie pobrano statusu: {last_error}'[:300]
-        except Exception as e:
-            return f'Błąd pobrania: {e}'[:300]
+                    with urlopen(request, timeout=25) as response:
+                        xml = response.read()
+                    result = self._tracking_result_from_response(xml)
+                    if result.get("tracking_events"):
+                        return result
+                    last_error = result["tracking_status"].removeprefix(
+                        "Nie pobrano statusu: "
+                    )
+                except Exception as error:
+                    last_error = str(error)
+            return self._tracking_error_result(last_error or "brak odpowiedzi usługi")
+        except Exception as error:
+            return self._tracking_error_result(f"błąd pobrania: {error}")
 
     def _fetch_all_tracking_statuses(self):
         updated = 0
@@ -251,12 +268,70 @@ class ShipmentTrackerWidget(QWidget):
             code = self._normalize_stamp_code(shipment.get('stamp_barcode', ''))
             if not code:
                 continue
-            shipment['tracking_status'] = self._fetch_tracking_status_from_www(code)
+            shipment.update(self._fetch_tracking_status_from_www(code))
             updated += 1
         if updated:
             self._save_shipments()
             self._refresh_table()
-        QMessageBox.information(self, 'Statusy przesyłek', f'Pobrano/odświeżono statusy: {updated}')
+        QMessageBox.information(
+            self,
+            'Statusy przesyłek',
+            f'Pobrano/odświeżono statusy: {updated}',
+        )
+
+    def _tracking_tooltip(self, shipment: dict) -> str:
+        checked_at = str(shipment.get("tracking_checked_at") or "").strip()
+        events = shipment.get("tracking_events")
+        if isinstance(events, list) and events:
+            history = format_tracking_history(
+                event for event in events if isinstance(event, dict)
+            )
+            if history:
+                suffix = f"\n\nSprawdzono: {checked_at}" if checked_at else ""
+                return "Pełna historia zdarzeń z Poczty Polskiej:\n" + history + suffix
+        status = self._current_tracking_status(shipment)
+        return f"{status}\nSprawdzono: {checked_at}" if checked_at else status
+
+    def _shipment_summary_label(self, shipment: dict) -> str:
+        recipient = re.sub(r"\s+", " ", str(shipment.get("addressee") or "")).strip()
+        recipient = recipient or "[brak adresata]"
+        if len(recipient) > 48:
+            recipient = recipient[:45].rstrip() + "…"
+        code = self._normalize_stamp_code(shipment.get("stamp_barcode", ""))
+        return f"{recipient} [{code[-8:] if code else 'brak kodu'}]"
+
+    def _update_status_summary(self, shipments: list[dict]):
+        if not hasattr(self, "lbl_status_summary"):
+            return
+        if not shipments:
+            self.lbl_status_summary.setText(
+                "Brak przesyłek spełniających aktualne filtry."
+            )
+            return
+
+        c5_count = sum(
+            shipment.get("envelope_type", shipment.get("env_type", "")) == "C5"
+            for shipment in shipments
+        )
+        c6_count = sum(
+            shipment.get("envelope_type", shipment.get("env_type", "")) == "C6"
+            for shipment in shipments
+        )
+        printed_count = sum(
+            bool(shipment.get("printed_on_druczek")) for shipment in shipments
+        )
+        lines = [
+            f"Przesyłki w widoku: {len(shipments)} | C5: {c5_count} | "
+            f"C6: {c6_count} | wydrukowane na druczku: {printed_count}."
+        ]
+        for category, entries in summarize_tracking_statuses(shipments).items():
+            labels = [self._shipment_summary_label(entry) for entry in entries[:4]]
+            if len(entries) > len(labels):
+                labels.append(f"… i {len(entries) - len(labels)} kolejne")
+            lines.append(
+                f"• {category} ({len(entries)}): " + "; ".join(labels)
+            )
+        self.lbl_status_summary.setText("\n".join(lines))
 
     def _refresh_project_filter(self):
         if not hasattr(self, 'project_filter_combo'):
@@ -353,6 +428,7 @@ class ShipmentTrackerWidget(QWidget):
                 source_records = [r for r in source_records if r.get('_project_path') == chosen]
 
         shown = 0
+        shown_records = []
         for s in source_records:
             addr = s.get('addressee', '')
             env_type = s.get('envelope_type', s.get('env_type', ''))
@@ -392,12 +468,33 @@ class ShipmentTrackerWidget(QWidget):
             self.table.setCellWidget(row, 7, btn_track)
 
             status_item = QTableWidgetItem(self._current_tracking_status(s))
-            status_item.setForeground(QColor('#f1c40f') if status_item.text() == 'Nie pobrano' else QColor('#2ecc71'))
+            latest_event = s.get("tracking_latest_event")
+            category = tracking_status_category(
+                latest_event if isinstance(latest_event, dict) else status_item.text()
+            )
+            status_colors = {
+                "Doręczona / odebrana": "#2ecc71",
+                "W doręczeniu": "#40c4ff",
+                "W transporcie": "#00b4d8",
+                "Nadana": "#f1c40f",
+                "Awizowana": "#ff9800",
+                "Zwrot / niedoręczona": "#e74c3c",
+                "Problem z pobraniem": "#e74c3c",
+                "Nie pobrano": "#f1c40f",
+                "Inny status": "#cfd8dc",
+            }
+            status_item.setForeground(QColor(status_colors.get(category, "#cfd8dc")))
+            status_item.setToolTip(self._tracking_tooltip(s))
             self.table.setItem(row, 8, status_item)
             self.table.setItem(row, 9, QTableWidgetItem(s.get('path', '')))
+            shown_records.append(s)
             shown += 1
 
-        self.lbl_summary.setText(f'Wyświetlono przesyłek: {shown} (Razem w projekcie: {len(self.shipments)})')
+        self._update_status_summary(shown_records)
+        self.lbl_summary.setText(
+            f'Wyświetlono przesyłek: {shown} '
+            f'(w wybranym zakresie: {len(source_records)})'
+        )
 
     def _apply_filter(self):
         self._refresh_table()

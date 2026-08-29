@@ -42,6 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from utils.kw_utils import ekw_access_denied_reason, should_use_native_pdf_export
+
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
@@ -53,6 +55,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -475,6 +478,7 @@ class KWDownloadWorker(QThread):
         black_white_enabled: bool = False,
         background_mode_enabled: bool = False,
         browser_mode: str = "auto",
+        browser_executable_path: str = "",
     ):
         super().__init__()
         # kw_queue to lista krotek (kw, lista_numerow_dzialek)
@@ -491,6 +495,8 @@ class KWDownloadWorker(QThread):
         self.black_white_enabled = bool(black_white_enabled)
         self.background_mode_enabled = bool(background_mode_enabled)
         self.browser_mode = browser_mode if browser_mode in ("auto", "chrome", "msedge", "opera", "firefox") else "auto"
+        self.browser_executable_path = str(browser_executable_path or "").strip()
+        self.browser_engine = ""  # ustalany przy uruchomieniu kontekstu
         self.profile_dir = LOG_DIR / f"playwright_kw_profile_{int(time.time() * 1000)}"
         self._stop_requested = False
         self.browser_context: Any = None
@@ -590,8 +596,14 @@ class KWDownloadWorker(QThread):
                             )
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("Błąd przy pobieraniu KW %s", kw)
-                            self.log_msg.emit(f"❌ {kw}: błąd: {exc}")
-                            self.item_finished.emit(kw, False, "Błąd PDF")
+                            error_text = str(exc)
+                            status = (
+                                "Odmowa dostępu"
+                                if "Access Denied / Error 15" in error_text
+                                else "Błąd PDF"
+                            )
+                            self.log_msg.emit(f"❌ {kw}: błąd: {error_text}")
+                            self.item_finished.emit(kw, False, status)
 
                         if (
                             index < len(self.kw_queue) - 1
@@ -644,7 +656,6 @@ class KWDownloadWorker(QThread):
             viewport={"width": 1600, "height": 1000},
             slow_mo=int(speed.get("slow_mo_ms", 0)),
             args=[
-                "--disable-blink-features=AutomationControlled",
                 "--start-maximized",
                 "--enable-print-browser",
                 "--force-renderer-accessibility",
@@ -654,20 +665,51 @@ class KWDownloadWorker(QThread):
 
         last_error: Optional[Exception] = None
         if self.browser_mode == "firefox":
-            # Nie używamy zwykłego firefox.exe, bo Playwright nie steruje stabilnie
-            # normalną instalacją Firefoksa. Używamy przeglądarki Firefox z Playwright.
+            # Użytkownik wybrał Firefox, więc świadomie używamy zwykłego,
+            # zainstalowanego firefox.exe — nigdy po cichu wersji Nightly
+            # dołączanej przez Playwright.
+            if self.browser_executable_path:
+                firefox_path = self.browser_executable_path
+                if not Path(firefox_path).is_file():
+                    raise RuntimeError(
+                        "Wskazana ścieżka do Firefox nie istnieje: "
+                        f"{firefox_path}"
+                    )
+            else:
+                firefox_path = _find_browser_executable("firefox")
+            if not firefox_path:
+                raise RuntimeError(
+                    "Nie znaleziono zwykłego Firefox. Zainstaluj Mozilla Firefox "
+                    "albo wskaż firefox.exe w ustawieniach modułu KW."
+                )
+
             kwargs = dict(launch_kwargs)
             kwargs.pop("args", None)
-            self.log_msg.emit("🌐 Uruchamiam Firefox Playwright. Jeśli go brakuje: python -m playwright install firefox")
-            return playwright.firefox.launch_persistent_context(str(self.profile_dir), **kwargs)
+            kwargs["executable_path"] = firefox_path
+            self.browser_engine = "firefox"
+            self.log_msg.emit(
+                f"🌐 Uruchamiam zainstalowany Firefox: {firefox_path}"
+            )
+            try:
+                return playwright.firefox.launch_persistent_context(
+                    str(self.profile_dir), **kwargs
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "Nie udało się uruchomić zainstalowanego Firefox przez "
+                    "Playwright. Wybierz Edge/Chrome albo zaktualizuj Firefox. "
+                    f"Szczegóły: {exc}"
+                ) from exc
         if self.browser_mode == "opera":
             opera_path = _find_browser_executable("opera")
             if not opera_path:
                 raise RuntimeError("Nie znaleziono Opera. Zainstaluj Operę albo wybierz inną przeglądarkę.")
             kwargs = dict(launch_kwargs)
             kwargs["executable_path"] = opera_path
+            self.browser_engine = "chromium"
             self.log_msg.emit(f"🌐 Uruchamiam Operę: {opera_path}")
             return playwright.chromium.launch_persistent_context(str(self.profile_dir), **kwargs)
+        self.browser_engine = "chromium"
         channels = {"auto": ("chrome", "msedge", None), "chrome": ("chrome",), "msedge": ("msedge",)}.get(self.browser_mode, ("chrome", "msedge", None))
         for channel in channels:
             try:
@@ -707,7 +749,8 @@ class KWDownloadWorker(QThread):
         self.row_status.emit(kw, "W trakcie")
         self.log_msg.emit(f"🔎 Otwieram KW: {kw}")
         self.log_msg.emit(
-            "ℹ️ Jeśli w przeglądarce pojawi się komunikat / blokada, potwierdź ręcznie — program poczeka."
+            "ℹ️ Wykryta odmowa eKW (Access Denied / Error 15) zostanie zgłoszona "
+            "dla tej księgi bez prób obchodzenia zabezpieczenia."
         )
 
         page.goto(KW_SEARCH_URL, wait_until="domcontentloaded", timeout=90000)
@@ -725,6 +768,11 @@ class KWDownloadWorker(QThread):
         if result is None:
             self.log_msg.emit(f"⛔ {kw}: przerwano.")
             self.item_finished.emit(kw, False, "Przerwano")
+            return
+        if result.startswith("BLOCKED:"):
+            error_text = result[8:].strip() or "Odmowa dostępu serwisu eKW"
+            self.log_msg.emit(f"⛔ {kw}: {error_text}")
+            self.item_finished.emit(kw, False, "Odmowa dostępu")
             return
         if result.startswith("ERR:"):
             error_text = result[4:].strip() or "Błąd księgi"
@@ -749,6 +797,12 @@ class KWDownloadWorker(QThread):
 
         if not self.sections:
             self.item_finished.emit(kw, False, "Brak działów")
+            return
+
+        blocked_reason = self._ekw_access_denied_reason(page)
+        if blocked_reason:
+            self.log_msg.emit(f"⛔ {kw}: {blocked_reason}")
+            self.item_finished.emit(kw, False, "Odmowa dostępu")
             return
 
         first_selector = f'input[value="{self.sections[0]}"]'
@@ -776,6 +830,11 @@ class KWDownloadWorker(QThread):
                 page.wait_for_selector(selector, timeout=10000)
                 page.click(selector, timeout=10000)
                 page.wait_for_timeout(int(speed.get("after_section_wait_ms", 2200)))
+                blocked_reason = self._ekw_access_denied_reason(page)
+                if blocked_reason:
+                    self.log_msg.emit(f"⛔ {kw}: {blocked_reason}")
+                    self.item_finished.emit(kw, False, "Odmowa dostępu")
+                    return
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Nie udało się otworzyć działu %s dla %s: %s", section, kw, exc)
                 self.log_msg.emit(f"⚠️ {kw}: nie udało się kliknąć działu {section}")
@@ -853,11 +912,33 @@ class KWDownloadWorker(QThread):
             logger.warning("Nie udało się zminimalizować okna przeglądarki: %s", exc)
             self.log_msg.emit(f"⚠️ Nie udało się zminimalizować przeglądarki: {exc}")
 
+    def _ekw_access_denied_reason(self, page: Any) -> str:
+        """Rozpoznaje stronę odmowy eKW bez prób obchodzenia zabezpieczenia."""
+        parts: list[str] = []
+        try:
+            parts.append(str(page.title() or ""))
+        except Exception:
+            pass
+        try:
+            parts.append(str(page.url or ""))
+        except Exception:
+            pass
+        try:
+            body = page.locator("body").inner_text(timeout=1500)
+            parts.append(str(body or "")[:4000])
+        except Exception:
+            pass
+        return ekw_access_denied_reason("\n".join(parts))
+
     def _wait_for_kw_form(self, page: Any, timeout_error_class: type[Exception]) -> None:
         start = time.time()
         while time.time() - start < 180:
             if self._stop_requested:
                 raise RuntimeError("Pobieranie przerwane przez użytkownika.")
+            blocked_reason = self._ekw_access_denied_reason(page)
+            if blocked_reason:
+                self.log_msg.emit(f"⛔ {blocked_reason}")
+                raise RuntimeError(blocked_reason)
             try:
                 if page.locator("#kodWydzialuInput").count() > 0:
                     page.wait_for_selector("#kodWydzialuInput", timeout=2000)
@@ -926,6 +1007,9 @@ class KWDownloadWorker(QThread):
             if self._stop_requested:
                 return None
             page.wait_for_timeout(1000)
+            blocked_reason = self._ekw_access_denied_reason(page)
+            if blocked_reason:
+                return f"BLOCKED:{blocked_reason}"
             result = page.evaluate(
                 """() => {
                     if (location.href.indexOf('pokazWydruk') >= 0) return 'SECTIONS';
@@ -956,21 +1040,110 @@ class KWDownloadWorker(QThread):
         pdf_path = self.output_dir / filename
 
         source_page.wait_for_timeout(after_pdf_wait_ms)
-        # Najstabilniejszy tryb: bez okien zapisu i bez wieszania drukarki PDF.
-        # Gdy wybrano „Zapisz jako PDF (przeglądarka)” albo checkbox bezpośredniego zapisu,
-        # zapisujemy PDF natywnie przez Playwright.
-        if self.pdf_printer_name == "Save as PDF":
-            # BEZPOŚREDNI ZAPIS ma iść tą samą ścieżką co prawdziwe drukowanie
-            # przeglądarki: window.print() + kiosk Save as PDF.
-            # Nie używamy page.pdf(), bo dawało inny wygląd (dodatkowe linie/ramki
-            # jak w błędnym 104 kw 2.pdf).
-            self._print_page_via_system_dialog(source_page, pdf_path)
+        if should_use_native_pdf_export(
+            self.direct_save_enabled,
+            self.pdf_printer_name,
+            self.browser_engine,
+        ):
+            # W Chrome/Edge/Operze page.pdf() zapisuje od razu wskazany plik.
+            # Nie otwieramy window.print(), bo opcja „Save as PDF” w Edge nie
+            # wybiera automatycznie nazwy pliku i wcześniej powodowała czekanie
+            # bez utworzenia PDF.
+            self._save_current_section_via_browser_pdf(source_page, pdf_path)
             return pdf_path
+
+        if self.pdf_printer_name == "Save as PDF":
+            raise RuntimeError(
+                "Wybrana przeglądarka nie obsługuje bezpośredniego zapisu PDF. "
+                "Dla Firefox wybierz Microsoft Print to PDF albo Adobe PDF."
+            )
 
         self._print_page_via_system_dialog(source_page, pdf_path)
         return pdf_path
 
+    def _save_current_section_via_browser_pdf(
+        self,
+        page: Any,
+        pdf_path: Path,
+    ) -> None:
+        """Zapisuje bieżący dział bezpośrednio przez silnik Chromium.
+
+        To świadomie nie używa systemowego dialogu „Save as PDF”. W Edge ten
+        dialog nie przyjmuje nazwy z preferencji profilu i potrafi pozostawić
+        zadanie na ekranie drukowania, mimo że moduł czeka na plik.
+        """
+        try:
+            pdf_path.parent.mkdir(parents=True, exist_ok=True)
+            if pdf_path.exists():
+                pdf_path.unlink()
+        except OSError as exc:
+            raise RuntimeError(
+                f"Nie można przygotować pliku PDF: {pdf_path} ({exc})"
+            ) from exc
+
+        if self.black_white_enabled:
+            try:
+                page.add_style_tag(
+                    content=(
+                        "@media print { html { filter: grayscale(100%) !important; "
+                        "-webkit-filter: grayscale(100%) !important; } }"
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Nie udało się dodać filtru czarno-białego: %s", exc)
+
+        options: dict[str, Any] = {
+            "path": str(pdf_path),
+            "format": "A4",
+            "landscape": False,
+            "scale": 0.70,
+            "print_background": False,
+            "prefer_css_page_size": False,
+            "display_header_footer": bool(self.header_footer_enabled),
+            "margin": {
+                "top": "0.45in" if self.header_footer_enabled else "0.25in",
+                "bottom": "0.45in" if self.header_footer_enabled else "0.25in",
+                "left": "0.25in",
+                "right": "0.25in",
+            },
+        }
+        if self.header_footer_enabled:
+            options["header_template"] = (
+                "<div style='font-size:7px;width:100%;padding:0 12px;color:#555;'>"
+                "<span class='date'></span> &nbsp; <span class='title'></span></div>"
+            )
+            options["footer_template"] = (
+                "<div style='font-size:7px;width:100%;padding:0 12px;color:#555;'>"
+                "<span class='url'></span>"
+                "<span style='float:right'>Strona <span class='pageNumber'></span> / "
+                "<span class='totalPages'></span></span></div>"
+            )
+
+        self.log_msg.emit(f"⚡ Zapisuję PDF bezpośrednio: {pdf_path.name}")
+        try:
+            page.pdf(**options)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "Przeglądarka nie zapisała PDF bezpośrednio. "
+                f"Szczegóły: {exc}"
+            ) from exc
+
+        try:
+            if not pdf_path.is_file() or pdf_path.stat().st_size <= 0:
+                raise OSError("plik nie został utworzony lub jest pusty")
+        except OSError as exc:
+            raise RuntimeError(
+                f"PDF nie został zapisany w folderze docelowym: {pdf_path} ({exc})"
+            ) from exc
+        self.log_msg.emit(f"✅ Wydrukowano do PDF: {pdf_path.name}")
+
     def _print_page_via_system_dialog(self, page: Any, pdf_path: Path) -> None:
+        # „Save as PDF” jest obsługiwane przez page.pdf() w metodzie wyżej.
+        # Nie wolno tu wpadać w oczekiwanie na nieistniejący automatyczny zapis.
+        if self.pdf_printer_name == "Save as PDF":
+            raise RuntimeError(
+                "Opcja „Save as PDF” wymaga bezpośredniego zapisu Chromium."
+            )
         try:
             from pywinauto import Desktop
             from pywinauto.keyboard import send_keys
@@ -1010,13 +1183,6 @@ class KWDownloadWorker(QThread):
         page.evaluate(js_code)
 
         desktop = Desktop(backend="uia")
-
-        # Save as PDF – kiosk-printing zapisze automatycznie
-        if self.pdf_printer_name == "Save as PDF":
-            self._wait_for_pdf_and_ensure_name(before_snapshot, pdf_path, timeout_sec=300)
-            self.log_msg.emit(f"✅ Wydrukowano do PDF: {pdf_path.name}")
-            self._finalize_after_pdf_save(page, desktop)
-            return
 
         # Adobe PDF / Microsoft Print to PDF
         self.log_msg.emit("⏳ Oczekiwanie na okno dialogowe zapisu PDF...")
@@ -1859,7 +2025,9 @@ class KWDownloaderWidget(QWidget):
         settings_layout.addWidget(group_delay)
 
         group_speed = QGroupBox("Tempo / przeglądarka")
-        speed_layout = QHBoxLayout(group_speed)
+        speed_layout = QVBoxLayout(group_speed)
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(QLabel("Tempo:"))
         self.speed_combo = QComboBox()
         self.speed_combo.addItem("Szybka", "fast")
         self.speed_combo.addItem("Normalna", "normal")
@@ -1870,18 +2038,40 @@ class KWDownloaderWidget(QWidget):
         )
         self.speed_combo.setCurrentIndex(max(0, speed_index))
         self.speed_combo.currentIndexChanged.connect(self._on_speed_changed)
-        speed_layout.addWidget(self.speed_combo)
-        speed_layout.addWidget(QLabel("Przeglądarka:"))
+        speed_row.addWidget(self.speed_combo)
+        speed_row.addWidget(QLabel("Przeglądarka:"))
         self.browser_combo = QComboBox()
         self.browser_combo.addItem("Domyślna z programu", "auto")
         self.browser_combo.addItem("Chrome", "chrome")
         self.browser_combo.addItem("Edge", "msedge")
         self.browser_combo.addItem("Opera", "opera")
-        self.browser_combo.addItem("Firefox", "firefox")
+        self.browser_combo.addItem("Firefox (zainstalowany)", "firefox")
         browser_index = self.browser_combo.findData(str(self.config.get("kw_browser", self.config.get("default_browser", "auto"))))
         self.browser_combo.setCurrentIndex(max(0, browser_index))
         self.browser_combo.currentIndexChanged.connect(self._on_browser_changed)
-        speed_layout.addWidget(self.browser_combo)
+        speed_row.addWidget(self.browser_combo)
+        speed_layout.addLayout(speed_row)
+
+        self.firefox_path_widget = QWidget()
+        firefox_path_layout = QHBoxLayout(self.firefox_path_widget)
+        firefox_path_layout.setContentsMargins(0, 0, 0, 0)
+        firefox_path_layout.addWidget(QLabel("Firefox.exe:"))
+        self.firefox_path_edit = QLineEdit(
+            str(self.config.get("kw_firefox_executable", ""))
+        )
+        self.firefox_path_edit.setPlaceholderText(
+            "Automatycznie wykryj zainstalowany Firefox"
+        )
+        self.firefox_path_edit.editingFinished.connect(
+            self._on_firefox_path_changed
+        )
+        firefox_path_layout.addWidget(self.firefox_path_edit, 1)
+        btn_browse_firefox = QPushButton("📂")
+        btn_browse_firefox.setToolTip("Wskaż zwykły plik firefox.exe")
+        btn_browse_firefox.clicked.connect(self._browse_firefox_executable)
+        firefox_path_layout.addWidget(btn_browse_firefox)
+        speed_layout.addWidget(self.firefox_path_widget)
+        self._update_firefox_path_visibility()
         settings_layout.addWidget(group_speed)
 
         group_printer = QGroupBox("PDF / tło")
@@ -1900,9 +2090,9 @@ class KWDownloaderWidget(QWidget):
             "⚡ Zapisuj bezpośrednio jako PDF (pomiń okno drukowania Adobe/Microsoft)"
         )
         self.chk_direct_save.setToolTip(
-            "Gdy zaznaczone: program zapisuje PDF od razu przez przeglądarkę,\n"
-            "bez otwierania okna dialogowego zapisu i bez automatyzacji Adobe/\n"
-            "Microsoft Print to PDF. To najbardziej niezawodna opcja."
+            "Gdy zaznaczone: program zapisuje PDF od razu przez Chrome, Edge\n"
+            "lub Operę — bez okna drukowania Adobe/Microsoft. To najbardziej\n"
+            "niezawodna opcja. Firefox wymaga Microsoft Print to PDF lub Adobe PDF."
         )
         self.chk_direct_save.setChecked(bool(self.config.get("kw_direct_save", False)))
         self.chk_direct_save.toggled.connect(self._on_direct_save_toggled)
@@ -2039,15 +2229,48 @@ class KWDownloaderWidget(QWidget):
         """Zapisuje wybór przeglądarki w konfiguracji."""
         mode = self._get_browser_mode()
         self.config["kw_browser"] = mode
+        self._update_firefox_path_visibility()
         labels = {
             "auto": "Domyślna z programu",
             "chrome": "Chrome",
             "msedge": "Edge",
             "opera": "Opera",
-            "firefox": "Firefox",
+            "firefox": "Firefox (zainstalowany)",
         }
         if hasattr(self, "log_to_console"):
             self.log_to_console(f"🌐 Ustawiono przeglądarkę KW: {labels.get(mode, mode)}")
+            if mode == "firefox" and self._get_printer_name() == "Save as PDF":
+                self.log_to_console(
+                    "⚠️ Firefox nie obsługuje bezpośredniego zapisu PDF. "
+                    "Wybierz Microsoft Print to PDF lub Adobe PDF."
+                )
+
+    def _update_firefox_path_visibility(self) -> None:
+        widget = getattr(self, "firefox_path_widget", None)
+        if widget is not None:
+            widget.setVisible(self._get_browser_mode() == "firefox")
+
+    def _on_firefox_path_changed(self) -> None:
+        if hasattr(self, "firefox_path_edit"):
+            self.config["kw_firefox_executable"] = (
+                self.firefox_path_edit.text().strip()
+            )
+
+    def _browse_firefox_executable(self) -> None:
+        start_path = ""
+        if hasattr(self, "firefox_path_edit"):
+            start_path = self.firefox_path_edit.text().strip()
+        if start_path and Path(start_path).is_file():
+            start_path = str(Path(start_path).parent)
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Wskaż zainstalowany Firefox",
+            start_path,
+            "Firefox (firefox.exe);;Pliki wykonywalne (*.exe);;Wszystkie pliki (*.*)",
+        )
+        if path and hasattr(self, "firefox_path_edit"):
+            self.firefox_path_edit.setText(path)
+            self._on_firefox_path_changed()
 
     def _get_browser_mode(self) -> str:
         combo = getattr(self, "browser_combo", None)
@@ -2056,6 +2279,11 @@ class KWDownloaderWidget(QWidget):
         else:
             mode = str(combo.currentData() or "auto")
         return mode if mode in ("auto", "chrome", "msedge", "opera", "firefox") else "auto"
+
+    def _get_browser_executable_path(self) -> str:
+        if hasattr(self, "firefox_path_edit"):
+            return self.firefox_path_edit.text().strip()
+        return str(self.config.get("kw_firefox_executable", "") or "").strip()
 
     def _on_speed_changed(self, *_args) -> None:
         speed_mode = self._get_speed_mode()
@@ -2367,6 +2595,19 @@ class KWDownloaderWidget(QWidget):
             QMessageBox.warning(self, "Brak działów", "Zaznacz przynajmniej jeden dział do pobrania.")
             return
 
+        if (
+            self._get_browser_mode() == "firefox"
+            and self._get_printer_name() == "Save as PDF"
+        ):
+            QMessageBox.warning(
+                self,
+                "Firefox i zapis PDF",
+                "Firefox nie udostępnia bezpośredniego zapisu PDF używanego "
+                "przez program. Dla Firefox wybierz Microsoft Print to PDF "
+                "lub Adobe PDF i wyłącz opcję bezpośredniego zapisu.",
+            )
+            return
+
         output_dir = self._output_dir()
         if output_dir is None:
             QMessageBox.warning(self, "Błąd", "Nie wybrano aktywnego projektu.")
@@ -2415,6 +2656,7 @@ class KWDownloaderWidget(QWidget):
             black_white_enabled=self._get_black_white(),
             background_mode_enabled=self._get_background_mode(),
             browser_mode=self._get_browser_mode(),
+            browser_executable_path=self._get_browser_executable_path(),
         )
         self._worker.log_msg.connect(self.log_to_console)
         self._worker.row_status.connect(self._on_row_status)

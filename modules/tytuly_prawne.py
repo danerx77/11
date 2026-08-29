@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox, QFileDialog,
-    QGroupBox, QLineEdit, QFormLayout, QTabWidget, QSplitter, QCheckBox, QComboBox,
-    QStyledItemDelegate, QTextEdit, QDialog, QDialogButtonBox, QScrollArea
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QRadioButton, QScrollArea, QSplitter, QStyledItemDelegate, QTableWidget,
+    QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QGuiApplication, QShortcut
@@ -201,33 +202,193 @@ class LegalTitlesWidget(QWidget):
     def _open_grouping_settings_dialog(self):
         """Szczegółowe ustawienia działania grupowania i wyglądu tabel Tytułów prawnych."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Ustawienia Tytułów Prawnych – szczegółowo")
-        dlg.setMinimumSize(860, 680)
+        dlg.setObjectName("legalGroupingSettingsDialog")
+        dlg.setWindowTitle("⚙️ Tytuły prawne — grupowanie i wygląd")
+        dlg.resize(1040, 760)
+        dlg.setMinimumSize(900, 680)
+        dlg.setStyleSheet(
+            """
+            QDialog#legalGroupingSettingsDialog { background: #f6f8fb; }
+            QDialog#legalGroupingSettingsDialog QGroupBox {
+                border: 1px solid #d8e1ec; border-radius: 8px;
+                margin-top: 12px; padding: 12px 10px 10px 10px;
+                font-weight: 700; color: #263b53; background: white;
+            }
+            QDialog#legalGroupingSettingsDialog QGroupBox::title {
+                subcontrol-origin: margin; left: 12px; padding: 0 6px;
+            }
+            QDialog#legalGroupingSettingsDialog QTabBar::tab {
+                background: #e8eef5; color: #40556d; border: none;
+                border-radius: 6px; margin: 2px; padding: 9px 14px;
+                font-weight: 700;
+            }
+            QDialog#legalGroupingSettingsDialog QTabBar::tab:selected {
+                background: #2b78c5; color: white;
+            }
+            QDialog#legalGroupingSettingsDialog QLabel,
+            QDialog#legalGroupingSettingsDialog QCheckBox,
+            QDialog#legalGroupingSettingsDialog QRadioButton {
+                color: #263b53; background: transparent; padding: 4px 2px;
+            }
+            QDialog#legalGroupingSettingsDialog QComboBox {
+                min-height: 26px; padding-left: 6px;
+                color: #263b53; background: #ffffff; border: 1px solid #b9c9d9;
+                border-radius: 4px;
+            }
+            QDialog#legalGroupingSettingsDialog QDialogButtonBox QPushButton {
+                min-width: 120px; padding: 8px 14px; border-radius: 5px;
+            }
+            """
+        )
         layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(10)
 
+        title = QLabel("Ustawienia grupowania i wyglądu tabel")
+        title.setStyleSheet("font-size:20px; font-weight:800; color:#1d4f80;")
+        layout.addWidget(title)
         info = QLabel(
-            "Tu ustawiasz dokładnie jak mają powstawać wiersze, co ma być scalane, "
-            "co ma zostać osobno oraz jak mają wyglądać tabele. Po zatwierdzeniu tabele są przebudowywane."
+            "Wybierz sposób prezentacji danych, a następnie doprecyzuj tabele. "
+            "Po kliknięciu <b>Zapisz i przebuduj</b> zmiany będą widoczne od razu."
         )
         info.setWordWrap(True)
-        info.setStyleSheet("color: gray; font-size: 12px;")
+        info.setStyleSheet(
+            "color:#4f6478; background:#eaf4ff; border-left:4px solid #2b78c5; "
+            "padding:9px; border-radius:5px;"
+        )
         layout.addWidget(info)
 
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.setUsesScrollButtons(True)
         layout.addWidget(tabs, 1)
 
         # ───────────────────────── 1. Tryb grupowania
         tab_group = QWidget()
         group_layout = QVBoxLayout(tab_group)
-        box_main = QGroupBox("Główne ustawienia grupowania")
-        form = QFormLayout(box_main)
+        group_layout.setSpacing(10)
+        group_intro = QLabel(
+            "<b>Krok 1.</b> Wybierz jeden z pięciu trybów. Po prawej stronie "
+            "od razu zobaczysz uproszczony efekt grupowania."
+        )
+        group_intro.setWordWrap(True)
+        group_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        group_layout.addWidget(group_intro)
 
-        combo_group = QComboBox()
-        for i in range(self.combo_group_owners.count()):
-            combo_group.addItem(self.combo_group_owners.itemText(i))
-        combo_group.setCurrentIndex(self.combo_group_owners.currentIndex())
-        form.addRow("Tryb grupowania Tabel 1 i 2:", combo_group)
+        mode_specs = (
+            (
+                "1. Osobne wpisy",
+                "Każdy właściciel i każda działka otrzymują własny wiersz.",
+                "Działka 12/1 → Anna Kowalska<br>Działka 12/1 → Jan Nowak",
+            ),
+            (
+                "2. Współwłaściciele wg działki",
+                "Jedna działka, jeden wiersz; współwłaściciele są razem.",
+                "Działka 12/1 → Anna Kowalska, Jan Nowak",
+            ),
+            (
+                "3. Działki wg właściciela",
+                "Wszystkie działki jednej osoby są zebrane przy jej nazwie.",
+                "Anna Kowalska → 12/1, 12/2, 13/1",
+            ),
+            (
+                "4. Identyczne pakiety",
+                "Łączy powtarzające się zestawy działek i współwłaścicieli.",
+                "12/1 + 12/2 → Anna Kowalska, Jan Nowak",
+            ),
+            (
+                "5. Zestawienie wg działki",
+                "Grupuje według działki także w Tabeli 5, ze scaleniami.",
+                "Działka 12/1 → wspólna komórka właścicieli",
+            ),
+        )
+        current_group_mode = self.combo_group_owners.currentIndex()
+        if current_group_mode < 0 or current_group_mode >= len(mode_specs):
+            current_group_mode = 1
+        mode_button_group = QButtonGroup(dlg)
+        mode_cards: dict[int, QFrame] = {}
 
+        modes_layout = QHBoxLayout()
+        modes_layout.setSpacing(14)
+        modes_column = QVBoxLayout()
+        modes_column.setSpacing(6)
+        for index, (mode_title, description, _example) in enumerate(mode_specs):
+            card = QFrame()
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 7, 10, 7)
+            card_layout.setSpacing(2)
+            radio = QRadioButton(mode_title)
+            radio.setChecked(index == current_group_mode)
+            radio.setStyleSheet("font-weight:700; color:#244566;")
+            mode_button_group.addButton(radio, index)
+            card_layout.addWidget(radio)
+            description_label = QLabel(description)
+            description_label.setWordWrap(True)
+            description_label.setStyleSheet("color:#607080; font-size:11px;")
+            card_layout.addWidget(description_label)
+            modes_column.addWidget(card)
+            mode_cards[index] = card
+        modes_column.addStretch()
+        modes_layout.addLayout(modes_column, 3)
+
+        preview_box = QGroupBox("Podgląd wybranego trybu")
+        preview_layout = QVBoxLayout(preview_box)
+        preview_title = QLabel()
+        preview_title.setWordWrap(True)
+        preview_title.setStyleSheet("font-size:15px; font-weight:800; color:#1d5f99;")
+        preview_layout.addWidget(preview_title)
+        preview_description = QLabel()
+        preview_description.setWordWrap(True)
+        preview_description.setStyleSheet("color:#52687a;")
+        preview_layout.addWidget(preview_description)
+        preview_example = QLabel()
+        preview_example.setWordWrap(True)
+        preview_example.setTextFormat(Qt.TextFormat.RichText)
+        preview_example.setMinimumHeight(90)
+        preview_example.setStyleSheet(
+            "background:#f3f7fb; border:1px dashed #9ebbd7; border-radius:5px; "
+            "padding:10px; color:#294b67;"
+        )
+        preview_layout.addWidget(preview_example)
+        preview_note = QLabel(
+            "To schemat pomocniczy — rzeczywiste wartości nadal pochodzą z danych projektu."
+        )
+        preview_note.setWordWrap(True)
+        preview_note.setStyleSheet("color:#8091a0; font-size:10px; font-style:italic;")
+        preview_layout.addWidget(preview_note)
+        preview_layout.addStretch()
+        modes_layout.addWidget(preview_box, 2)
+        group_layout.addLayout(modes_layout, 1)
+
+        def update_group_preview(index: int):
+            index = max(0, min(index, len(mode_specs) - 1))
+            mode_title, description, example = mode_specs[index]
+            preview_title.setText(mode_title)
+            preview_description.setText(description)
+            preview_example.setText(f"<b>Przykładowy układ</b><br><br>{example}")
+            for card_index, card in mode_cards.items():
+                if card_index == index:
+                    card.setStyleSheet(
+                        "QFrame { border:2px solid #2b78c5; border-radius:8px; "
+                        "background:#eaf4ff; }"
+                    )
+                else:
+                    card.setStyleSheet(
+                        "QFrame { border:1px solid #d8e1ec; border-radius:8px; "
+                        "background:#ffffff; }"
+                    )
+
+        for index in range(len(mode_specs)):
+            button = mode_button_group.button(index)
+            if button is not None:
+                button.toggled.connect(
+                    lambda checked, i=index: update_group_preview(i) if checked else None
+                )
+        update_group_preview(current_group_mode)
+
+        base_box = QGroupBox("Dodatkowe ustawienia podstawowe")
+        form = QFormLayout(base_box)
         combo_pair = QComboBox()
         for i in range(self.combo_owner_sep.count()):
             combo_pair.addItem(self.combo_owner_sep.itemText(i))
@@ -241,22 +402,8 @@ class LegalTitlesWidget(QWidget):
         chk_exclude_dead = QCheckBox("Pomiń zmarłych i osoby bez poprawnego adresu")
         chk_exclude_dead.setChecked(self.config.get('legal_exclude_dead_missing', True))
         form.addRow("", chk_exclude_dead)
-
-        group_layout.addWidget(box_main)
-
-        help_group = QLabel(
-            "Opis trybów:\n"
-            "Opcja 1 – każdy właściciel/działka oddzielnie.\n"
-            "Opcja 2 – współwłaściciele scalani wg działki.\n"
-            "Opcja 3 – działki grupowane wg właściciela.\n"
-            "Opcja 4 – identyczne pakiety działek/właścicieli.\n"
-            "Opcja 5 – grupowanie wg działki z dodatkowymi scaleniami."
-        )
-        help_group.setWordWrap(True)
-        help_group.setStyleSheet("color:#888; font-size:11px;")
-        group_layout.addWidget(help_group)
-        group_layout.addStretch()
-        tabs.addTab(tab_group, "1. Grupowanie")
+        group_layout.addWidget(base_box)
+        tabs.addTab(tab_group, "① Grupowanie")
 
         # ───────────────────────── 2. Osobne wiersze / scalanie
         tab_rows = QWidget()
@@ -290,7 +437,7 @@ class LegalTitlesWidget(QWidget):
 
         rows_layout.addWidget(box_rows)
         rows_layout.addStretch()
-        tabs.addTab(tab_rows, "2. Wiersze / scalanie")
+        tabs.addTab(tab_rows, "② Wiersze i scalenia")
 
         # ───────────────────────── 3. Tabela 1 i 2
         tab_t12 = QWidget()
@@ -339,7 +486,7 @@ class LegalTitlesWidget(QWidget):
 
         t12_layout.addWidget(box_t12)
         t12_layout.addStretch()
-        tabs.addTab(tab_t12, "3. Tabela 1/2")
+        tabs.addTab(tab_t12, "③ Tabele 1 i 2")
 
         # ───────────────────────── 4. Tabela 3
         tab_t3 = QWidget()
@@ -361,7 +508,7 @@ class LegalTitlesWidget(QWidget):
 
         t3_layout.addWidget(box_t3)
         t3_layout.addStretch()
-        tabs.addTab(tab_t3, "4. Tabela 3")
+        tabs.addTab(tab_t3, "④ Tabela 3")
 
         # ───────────────────────── 5. Tabela 5
         tab_t5 = QWidget()
@@ -400,7 +547,7 @@ class LegalTitlesWidget(QWidget):
 
         t5_layout.addWidget(box_t5)
         t5_layout.addStretch()
-        tabs.addTab(tab_t5, "5. Tabela 5")
+        tabs.addTab(tab_t5, "⑤ Tabela 5")
 
         # ───────────────────────── 6. Wygląd
         tab_view = QWidget()
@@ -430,9 +577,11 @@ class LegalTitlesWidget(QWidget):
 
         view_layout.addWidget(box_view)
         view_layout.addStretch()
-        tabs.addTab(tab_view, "6. Wygląd")
+        tabs.addTab(tab_view, "⑥ Wygląd")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("💾 Zapisz i przebuduj")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Anuluj")
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         layout.addWidget(buttons)
@@ -440,7 +589,9 @@ class LegalTitlesWidget(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-        new_group = combo_group.currentIndex()
+        new_group = mode_button_group.checkedId()
+        if new_group < 0:
+            new_group = current_group_mode
         self.config['legal_group_owners'] = new_group
         self.config['legal_owner_sep'] = combo_pair.currentIndex()
         self.config['legal_split_couples_option1'] = chk_split_couples.isChecked()
@@ -794,7 +945,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl1.clicked.connect(lambda: self._browse_tmpl(self.tmpl_1_edit, 'legal_tmpl_1'))
         row1.addWidget(self.tmpl_1_edit)
         row1.addWidget(btn_tmpl1)
-        paths_layout.addRow('Szablon 1 (Działki):', row1)
+        paths_layout.addRow('Szablon 1 — Wykaz działek podmiotów pozostałych:', row1)
 
         row2 = QHBoxLayout()
         self.tmpl_2_edit = QLineEdit()
@@ -803,7 +954,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl2.clicked.connect(lambda: self._browse_tmpl(self.tmpl_2_edit, 'legal_tmpl_2'))
         row2.addWidget(self.tmpl_2_edit)
         row2.addWidget(btn_tmpl2)
-        paths_layout.addRow('Szablon 2 (Wykaz właścicieli):', row2)
+        paths_layout.addRow('Szablon 2 — Wykaz właścicieli nieruchomości szczegółowy:', row2)
 
         row3 = QHBoxLayout()
         self.tmpl_3_edit = QLineEdit()
@@ -812,7 +963,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl3.clicked.connect(lambda: self._browse_tmpl(self.tmpl_3_edit, 'legal_tmpl_3'))
         row3.addWidget(self.tmpl_3_edit)
         row3.addWidget(btn_tmpl3)
-        paths_layout.addRow('Szablon 3 (Tabela końcowa):', row3)
+        paths_layout.addRow('Szablon 3 — Nowa tabela końcowa:', row3)
 
         export_layout.addLayout(paths_layout)
 
@@ -960,9 +1111,23 @@ class LegalTitlesWidget(QWidget):
         self.table_3.viewport().update()
 
     def _browse_tmpl(self, line_edit, config_key):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file(): start_dir = str(Path(start_dir).parent)
-        path, _ = QFileDialog.getOpenFileName(self, 'Wybierz szablon Excel', start_dir, 'Excel (*.xlsx *.xlsm)')
+        from utils.templates import (
+            LEGAL_TITLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key='path_tytuly',
+            folder_names=LEGAL_TITLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Wybierz szablon Excel',
+            str(start_dir),
+            'Excel (*.xlsx *.xlsm)',
+        )
         if path:
             line_edit.setText(path)
             self.config[config_key] = path
