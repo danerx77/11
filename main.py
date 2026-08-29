@@ -92,6 +92,7 @@ from modules.tytuly_prawne import LegalTitlesWidget
 from modules.wydziel_pdf import ExtractPdfWidget
 from modules.statystyki_dzialek import ParcelOwnersStatsWidget
 from modules.kw import KWDownloaderWidget
+from modules.kw_2 import KW2ManualWidget
 from modules.krs import KrsDownloaderWidget
 from utils.global_settings import (
     load_global_druczek_profile,
@@ -603,6 +604,7 @@ class MainWindow(QMainWindow):
         self.print_tab = PrintManagerWidget(self.config)
         self.extract_pdf_tab = ExtractPdfWidget(self)
         self.kw_tab = KWDownloaderWidget(self.config)
+        self.kw2_tab = KW2ManualWidget(self.config)
         self.krs_downloader_tab = KrsDownloaderWidget(self.config)
         self.settings_tab = SettingsTabWidget(
             self.config, self.save_configuration
@@ -625,6 +627,7 @@ class MainWindow(QMainWindow):
             (self.extract_pdf_tab, "✂️ Wydziel PDF", "✂️ Wydzielanie PDF"),
             (self.stats_tab, "📈 Statystyki", "📈 Statystyki Działek"),
             (self.kw_tab, "📚 Księgi wieczyste KW", "📚 Księgi Wieczyste KW (PDF)"),
+            (self.kw2_tab, "📖 KW 2 — ręcznie", "📖 KW 2 — ręczne przeglądanie"),
             (self.krs_downloader_tab, "🏛️ KRS", "🏛️ Odpisy KRS"),
             (self.settings_tab, "⚙️ Ustawienia", "⚙️ Ustawienia"),
         ]
@@ -760,6 +763,7 @@ class MainWindow(QMainWindow):
             # podczas set_owners(), więc musi znać nową ścieżkę — inaczej
             # zapisze go do STAREJ ścieżki i odtworzy stary folder projektu.
             self.envelope_tab.set_project(project)
+            self.kw2_tab.set_project(project)
 
             # Czyszczenie danych przed załadowaniem nowego projektu.
             empty_list = []
@@ -771,6 +775,7 @@ class MainWindow(QMainWindow):
             self.envelope_tab.set_owners(empty_list)
             self.tracker_tab.set_owners(empty_list)
             self.kw_tab.set_owners(empty_list)
+            self.kw2_tab.set_owners(empty_list)
             self.legal_titles_tab.set_owners(empty_list)
             self.krs_downloader_tab.set_owners(empty_list)
 
@@ -795,6 +800,7 @@ class MainWindow(QMainWindow):
             self.tracker_tab.set_owners(fresh_owners)
             self.print_tab.set_owners(fresh_owners)
             self.kw_tab.set_owners(fresh_owners)
+            self.kw2_tab.set_owners(fresh_owners)
             self.legal_titles_tab.set_owners(fresh_owners)
             self.krs_downloader_tab.set_owners(fresh_owners)
 
@@ -818,6 +824,7 @@ class MainWindow(QMainWindow):
         self.dashboard_tab.set_owners(owners)
         self.stats_tab.set_owners(owners)
         self.kw_tab.set_owners(owners)
+        self.kw2_tab.set_owners(owners)
         self.decl_tab.set_owners(owners)
         self.cover_tab.set_owners(owners)
         self.envelope_tab.set_owners(owners)
@@ -848,6 +855,7 @@ class MainWindow(QMainWindow):
             self.cover_tab._save_groups()
         self.owners_tab._save_to_project_state()
         self.parcel_tab._save_to_project_state()
+        self.kw2_tab.save_state()
 
         QMessageBox.information(
             self,
@@ -897,6 +905,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._remember_module_tab_order()
+        self.kw2_tab.save_state()
         self.save_configuration()
 
         if self.ocr_overlay is not None:
