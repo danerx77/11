@@ -213,13 +213,28 @@ class DeclGeneratorWidget(QWidget):
         
         self.table_owners.horizontalHeader().setSectionsMovable(True)
         table_state_decl_hex = self.config.get('table_state_decl', '')
+        restored_table_state = False
         if table_state_decl_hex:
             from PySide6.QtCore import QByteArray
-            self.table_owners.horizontalHeader().restoreState(QByteArray.fromHex(table_state_decl_hex.encode()))
+            restored_table_state = self.table_owners.horizontalHeader().restoreState(
+                QByteArray.fromHex(str(table_state_decl_hex).encode())
+            )
 
         header = self.table_owners.horizontalHeader()
         for col in range(self.table_owners.columnCount()):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+
+        # Zapisane ustawienie nagłówka z wcześniejszej wersji mogło zostawić
+        # część listy właścicieli jako ukrytą lub o szerokości 0. Nie zmieniamy
+        # stylu tabeli ani kolejności użytkownika — tylko przywracamy widoczność.
+        if restored_table_state:
+            default_widths = (60, 95, 85, 105, 250, 150, 240)
+            for col, default_width in enumerate(default_widths):
+                if self.table_owners.isColumnHidden(col):
+                    self.table_owners.setColumnHidden(col, False)
+                if self.table_owners.columnWidth(col) <= 1:
+                    self.table_owners.setColumnWidth(col, default_width)
+
         self.table_owners.setColumnWidth(0, 60)
         self.table_owners.setColumnWidth(1, 95)
         self.table_owners.setColumnWidth(2, 85)
@@ -227,6 +242,10 @@ class DeclGeneratorWidget(QWidget):
         self.table_owners.setColumnWidth(4, 250)
         self.table_owners.setColumnWidth(5, 150)
         self.table_owners.setColumnWidth(6, 240)
+        if restored_table_state:
+            self.config['table_state_decl'] = (
+                self.table_owners.horizontalHeader().saveState().toHex().data().decode()
+            )
         self.table_owners.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
         self.table_owners.horizontalHeader().sectionResized.connect(lambda *args: self.config.update({'table_state_decl': self.table_owners.horizontalHeader().saveState().toHex().data().decode()}))
