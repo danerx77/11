@@ -558,6 +558,7 @@ class MainWindow(QMainWindow):
             "parcel_duplicate_result_separator": "auto",
             "parcel_sorter_active_tab": 0,
             "shipment_history_active_tab": 0,
+            "shipment_summary_status_filter": "",
         }
 
     def _get_default_examples(self) -> dict:

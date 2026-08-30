@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QGroupBox,
     QHeaderView, QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout,
-    QTabWidget
+    QScrollArea, QTabWidget
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication
@@ -36,6 +36,7 @@ class ShipmentTrackerWidget(QWidget):
         self.active_project_path = None
         self.current_project_name = ''
         self.global_mode = False
+        self._summary_shipments: list[dict] = []
         self._build_ui()
 
     def _build_ui(self):
@@ -140,8 +141,20 @@ class ShipmentTrackerWidget(QWidget):
         history_layout.addWidget(self.lbl_summary)
         self.history_tabs.addTab(history_page, '📋 Historia przesyłek')
 
+        # Podsumowanie może mieć dziewięć kart statusów i tabelę szczegółów.
+        # Umieszczamy je w przewijanym obszarze, aby dolna ramka była zawsze
+        # dostępna także przy małym oknie albo dużym skalowaniu systemowym.
+        self.summary_scroll = QScrollArea()
+        self.summary_scroll.setObjectName('shipment_summary_scroll')
+        self.summary_scroll.setWidgetResizable(True)
+        self.summary_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.summary_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
         summary_page = QWidget()
         summary_page.setObjectName('shipment_summary_page')
+        self.summary_scroll.setWidget(summary_page)
         summary_layout = QVBoxLayout(summary_page)
         summary_layout.setContentsMargins(14, 16, 14, 14)
         summary_layout.setSpacing(12)
@@ -171,6 +184,31 @@ class ShipmentTrackerWidget(QWidget):
         )
         intro_layout.addWidget(self.lbl_status_summary)
         summary_layout.addWidget(summary_intro)
+
+        summary_filter_row = QHBoxLayout()
+        summary_filter_row.addWidget(QLabel('Szczegóły dla statusu:'))
+        self.status_summary_filter_combo = QComboBox()
+        self.status_summary_filter_combo.setMinimumWidth(245)
+        self.status_summary_filter_combo.addItem('Wszystkie statusy', '')
+        for category in TRACKING_CATEGORY_ORDER:
+            self.status_summary_filter_combo.addItem(category, category)
+        saved_status_filter = str(
+            self.config.get('shipment_summary_status_filter', '') or ''
+        )
+        filter_index = self.status_summary_filter_combo.findData(saved_status_filter)
+        self.status_summary_filter_combo.setCurrentIndex(
+            filter_index if filter_index >= 0 else 0
+        )
+        self.status_summary_filter_combo.setToolTip(
+            'Ogranicza dolną tabelę szczegółów do wybranego statusu. '
+            'Karty powyżej nadal pokazują pełne podsumowanie bieżącego widoku.'
+        )
+        self.status_summary_filter_combo.currentIndexChanged.connect(
+            self._on_status_summary_filter_changed
+        )
+        summary_filter_row.addWidget(self.status_summary_filter_combo)
+        summary_filter_row.addStretch()
+        summary_layout.addLayout(summary_filter_row)
 
         cards_caption = QLabel('Liczba przesyłek według statusu')
         cards_caption.setObjectName('shipment_summary_section_title')
@@ -239,7 +277,7 @@ class ShipmentTrackerWidget(QWidget):
         self.lbl_status_summary_scope.setObjectName('shipment_summary_scope')
         self.lbl_status_summary_scope.setWordWrap(True)
         summary_layout.addWidget(self.lbl_status_summary_scope)
-        self.history_tabs.addTab(summary_page, '📊 Podsumowanie statusów')
+        self.history_tabs.addTab(self.summary_scroll, '📊 Podsumowanie statusów')
         saved_tab = self.config.get('shipment_history_active_tab', 0)
         try:
             saved_tab = int(saved_tab)
@@ -437,6 +475,13 @@ class ShipmentTrackerWidget(QWidget):
         code = self._normalize_stamp_code(shipment.get("stamp_barcode", ""))
         return f"{recipient} [{code[-8:] if code else 'brak kodu'}]"
 
+    def _on_status_summary_filter_changed(self):
+        """Odświeża wyłącznie szczegóły po zmianie filtru statusu."""
+
+        selected = str(self.status_summary_filter_combo.currentData() or '')
+        self.config['shipment_summary_status_filter'] = selected
+        self._update_status_summary(self._summary_shipments)
+
     def _set_status_card_values(self, status_groups: dict):
         """Ustawia licznik dla każdego rozpoznawanego statusu przesyłki."""
 
@@ -451,7 +496,20 @@ class ShipmentTrackerWidget(QWidget):
         if not hasattr(self, 'lbl_status_summary'):
             return
 
-        status_groups = summarize_tracking_statuses(shipments)
+        self._summary_shipments = list(shipments)
+        status_groups = summarize_tracking_statuses(self._summary_shipments)
+        selected_status = str(
+            self.status_summary_filter_combo.currentData() or ''
+        )
+        if selected_status:
+            self.lbl_status_summary_scope.setText(
+                f'Dolna tabela pokazuje tylko status: {selected_status}. '
+                'Wybierz „Wszystkie statusy”, aby przywrócić pełną listę.'
+            )
+        else:
+            self.lbl_status_summary_scope.setText(
+                'Zmiana wyszukiwania, projektu lub typu koperty odświeża to zestawienie.'
+            )
         delivered_count = len(status_groups.get('Doręczona / odebrana', []))
         in_delivery_count = len(status_groups.get('W doręczeniu', []))
         in_transit_count = len(status_groups.get('W transporcie', []))
@@ -488,7 +546,11 @@ class ShipmentTrackerWidget(QWidget):
             f'wydrukowane na druczku: {printed_count}.'
         )
 
+        displayed_statuses = 0
         for category, entries in status_groups.items():
+            if selected_status and category != selected_status:
+                continue
+            displayed_statuses += 1
             labels = [self._shipment_summary_label(entry) for entry in entries[:4]]
             if len(entries) > len(labels):
                 labels.append(f'… i {len(entries) - len(labels)} kolejne')
@@ -508,6 +570,16 @@ class ShipmentTrackerWidget(QWidget):
             self.status_summary_table.setItem(row, 0, category_item)
             self.status_summary_table.setItem(row, 1, count_item)
             self.status_summary_table.setItem(row, 2, example_item)
+
+        if selected_status and not displayed_statuses:
+            self.status_summary_table.insertRow(0)
+            self.status_summary_table.setItem(
+                0, 0, QTableWidgetItem(selected_status)
+            )
+            self.status_summary_table.setItem(0, 1, QTableWidgetItem('0'))
+            self.status_summary_table.setItem(
+                0, 2, QTableWidgetItem('Brak przesyłek z tym statusem.')
+            )
 
         self.status_summary_table.resizeRowsToContents()
 
