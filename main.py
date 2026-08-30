@@ -552,6 +552,10 @@ class MainWindow(QMainWindow):
             "parcel_sorter_input": "",
             "parcel_sorter_result": "",
             "parcel_sorter_remove_duplicates": False,
+            "parcel_duplicate_cleaner_input": "",
+            "parcel_duplicate_cleaner_result": "",
+            "parcel_sorter_active_tab": 0,
+            "shipment_history_active_tab": 0,
         }
 
     def _get_default_examples(self) -> dict:
@@ -1085,6 +1089,50 @@ class MainWindow(QMainWindow):
                 color: #4da6ff;
             }
 
+            /* Karty osobnej zakładki podsumowania przesyłek. */
+            QFrame#shipment_summary_intro {
+                background-color: #172536;
+                border: 1px solid #315475;
+                border-radius: 10px;
+            }
+            QFrame#shipment_summary_card {
+                background-color: #1e2b38;
+                border: 1px solid #3a5268;
+                border-radius: 9px;
+            }
+            QLabel#shipment_summary_title {
+                color: #f4f9ff;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_description,
+            QLabel#shipment_summary_scope {
+                color: #d5e3ef;
+                font-size: 12px;
+            }
+            QLabel#shipment_summary_overview {
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_card_title {
+                color: #e7f1f9;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#shipment_summary_card_value {
+                color: #ffffff;
+                font-size: 27px;
+                font-weight: 700;
+            }
+            QGroupBox#shipment_status_detail_box {
+                background-color: #1e2b38;
+                border-color: #3a5268;
+            }
+            QGroupBox#shipment_status_detail_box::title {
+                color: #8dcbff;
+            }
+
             QTableWidget, QTreeWidget, QListWidget {
                 background-color: #1e1e1e;
                 border: 1px solid #404040;
@@ -1317,6 +1365,60 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 color: #005a9e;
+            }
+
+            /* Karty osobnej zakładki podsumowania przesyłek.
+               Wszystkie etykiety są celowo czarne w jasnym motywie. */
+            QFrame#shipment_summary_intro {
+                background-color: #e8f3ff;
+                border: 1px solid #9bc7ee;
+                border-radius: 10px;
+            }
+            QFrame#shipment_summary_card {
+                background-color: #ffffff;
+                border: 1px solid #c8d8e8;
+                border-radius: 9px;
+            }
+            QLabel#shipment_summary_title {
+                color: #000000;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_description,
+            QLabel#shipment_summary_scope {
+                color: #000000;
+                font-size: 12px;
+            }
+            QLabel#shipment_summary_overview {
+                color: #000000;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_card_title {
+                color: #000000;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#shipment_summary_card_value {
+                color: #000000;
+                font-size: 27px;
+                font-weight: 700;
+            }
+            QGroupBox#shipment_status_detail_box {
+                background-color: #ffffff;
+                border-color: #c8d8e8;
+            }
+            QGroupBox#shipment_status_detail_box::title {
+                color: #000000;
+            }
+            QTableWidget#shipment_status_summary_table,
+            QTableWidget#shipment_status_summary_table::item {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            QTableWidget#shipment_status_summary_table QHeaderView::section {
+                background-color: #e8f3ff;
+                color: #000000;
             }
 
             QTableWidget, QTreeWidget, QListWidget {

@@ -19,7 +19,8 @@ from utils.shipment_tracking import (
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QGroupBox,
-    QHeaderView, QAbstractItemView, QCheckBox, QComboBox
+    QHeaderView, QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout,
+    QTabWidget
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication
@@ -39,15 +40,23 @@ class ShipmentTrackerWidget(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
-        # Nagłówek
         hdr = QLabel('📦 Śledzenie i Historia Przesyłek')
         hdr.setStyleSheet('font-size:16px; font-weight:700;')
         layout.addWidget(hdr)
 
+        self.history_tabs = QTabWidget()
+        self.history_tabs.setObjectName('shipment_history_tabs')
+        layout.addWidget(self.history_tabs, 1)
+
+        history_page = QWidget()
+        history_layout = QVBoxLayout(history_page)
+        history_layout.setContentsMargins(10, 12, 10, 10)
+        history_layout.setSpacing(8)
+
         # Górny pasek opcji (filtr i przyciski akcji)
         top_row = QHBoxLayout()
-        
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText('Szukaj po adresacie lub kodzie znaczka...')
         self.search_edit.textChanged.connect(self._apply_filter)
@@ -87,29 +96,16 @@ class ShipmentTrackerWidget(QWidget):
         self.btn_clear_history.setObjectName('btn_danger')
         self.btn_clear_history.clicked.connect(self._clear_history)
         top_row.addWidget(self.btn_clear_history)
-
-        layout.addLayout(top_row)
-
-        status_box = QGroupBox('Podsumowanie statusów kopert')
-        status_layout = QVBoxLayout(status_box)
-        self.lbl_status_summary = QLabel(
-            'Brak przesyłek do podsumowania. Pobierz statusy Poczty Polskiej.'
-        )
-        self.lbl_status_summary.setWordWrap(True)
-        self.lbl_status_summary.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.lbl_status_summary.setStyleSheet('color:#cfd8dc; font-size:12px;')
-        status_layout.addWidget(self.lbl_status_summary)
-        layout.addWidget(status_box)
+        history_layout.addLayout(top_row)
 
         # Tabela przesyłek
         self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels([
-            'Projekt', 'Data generowania', 'Adresat / Opis', 'Działki', 'Typ koperty', 'Kod znaczka', 'Kopiuj', 'Śledzenie', 'Status Poczty Polskiej', 'Ścieżka pliku'
+            'Projekt', 'Data generowania', 'Adresat / Opis', 'Działki',
+            'Typ koperty', 'Kod znaczka', 'Kopiuj', 'Śledzenie',
+            'Status Poczty Polskiej', 'Ścieżka pliku'
         ])
-        
-        # Ustawienia kolumn
+
         header = self.table.horizontalHeader()
         header.setSectionsMovable(True)
         for col in range(0, 9):
@@ -121,19 +117,143 @@ class ShipmentTrackerWidget(QWidget):
         if table_state:
             from PySide6.QtCore import QByteArray
             header.restoreState(QByteArray.fromHex(table_state.encode()))
-        header.sectionResized.connect(lambda *args: self.config.update({'table_state_shipments': header.saveState().toHex().data().decode()}))
-        header.sectionMoved.connect(lambda *args: self.config.update({'table_state_shipments': header.saveState().toHex().data().decode()}))
-        
+        header.sectionResized.connect(
+            lambda *args: self.config.update({
+                'table_state_shipments': header.saveState().toHex().data().decode()
+            })
+        )
+        header.sectionMoved.connect(
+            lambda *args: self.config.update({
+                'table_state_shipments': header.saveState().toHex().data().decode()
+            })
+        )
+
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.doubleClicked.connect(self._on_row_double_clicked)
-        
-        layout.addWidget(self.table)
+        history_layout.addWidget(self.table, 1)
 
         self.lbl_summary = QLabel('Łącznie przesyłek: 0')
-        self.lbl_summary.setStyleSheet('color:#aaa; font-size:12px;')
-        layout.addWidget(self.lbl_summary)
+        self.lbl_summary.setObjectName('shipment_history_count')
+        history_layout.addWidget(self.lbl_summary)
+        self.history_tabs.addTab(history_page, '📋 Historia przesyłek')
+
+        summary_page = QWidget()
+        summary_page.setObjectName('shipment_summary_page')
+        summary_layout = QVBoxLayout(summary_page)
+        summary_layout.setContentsMargins(14, 16, 14, 14)
+        summary_layout.setSpacing(12)
+
+        summary_intro = QFrame()
+        summary_intro.setObjectName('shipment_summary_intro')
+        intro_layout = QVBoxLayout(summary_intro)
+        intro_layout.setContentsMargins(18, 16, 18, 16)
+        intro_layout.setSpacing(5)
+        summary_title = QLabel('Podsumowanie statusów kopert')
+        summary_title.setObjectName('shipment_summary_title')
+        intro_layout.addWidget(summary_title)
+        summary_description = QLabel(
+            'Zestawienie używa najnowszego zapisanego zdarzenia Poczty Polskiej '
+            'i uwzględnia aktualne filtry Historii przesyłek.'
+        )
+        summary_description.setObjectName('shipment_summary_description')
+        summary_description.setWordWrap(True)
+        intro_layout.addWidget(summary_description)
+        self.lbl_status_summary = QLabel(
+            'Brak przesyłek do podsumowania. Pobierz statusy Poczty Polskiej.'
+        )
+        self.lbl_status_summary.setObjectName('shipment_summary_overview')
+        self.lbl_status_summary.setWordWrap(True)
+        self.lbl_status_summary.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        intro_layout.addWidget(self.lbl_status_summary)
+        summary_layout.addWidget(summary_intro)
+
+        cards_layout = QGridLayout()
+        cards_layout.setHorizontalSpacing(12)
+        cards_layout.setVerticalSpacing(12)
+        self.status_cards: dict[str, QLabel] = {}
+        card_data = (
+            ('all', 'Przesyłki w widoku', 'Łączna liczba przesyłek po zastosowaniu filtrów.'),
+            ('c5', 'Koperty C5', 'Liczba kopert typu C5 w aktualnym widoku.'),
+            ('c6', 'Koperty C6', 'Liczba kopert typu C6 w aktualnym widoku.'),
+            ('printed', 'Na druczku', 'Koperty oznaczone jako wydrukowane na druczku.'),
+        )
+        for column, (key, title, tooltip) in enumerate(card_data):
+            cards_layout.addWidget(
+                self._create_status_card(key, title, tooltip), 0, column
+            )
+            cards_layout.setColumnStretch(column, 1)
+        summary_layout.addLayout(cards_layout)
+
+        detail_box = QGroupBox('Statusy według ostatniego zdarzenia')
+        detail_box.setObjectName('shipment_status_detail_box')
+        detail_layout = QVBoxLayout(detail_box)
+        detail_layout.setContentsMargins(12, 18, 12, 12)
+        self.status_summary_table = QTableWidget(0, 3)
+        self.status_summary_table.setObjectName('shipment_status_summary_table')
+        self.status_summary_table.setHorizontalHeaderLabels([
+            'Status', 'Liczba', 'Przykładowe przesyłki'
+        ])
+        self.status_summary_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.status_summary_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.status_summary_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.status_summary_table.setAlternatingRowColors(True)
+        self.status_summary_table.setWordWrap(True)
+        self.status_summary_table.verticalHeader().setVisible(False)
+        summary_header = self.status_summary_table.horizontalHeader()
+        summary_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        summary_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        summary_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        detail_layout.addWidget(self.status_summary_table)
+        summary_layout.addWidget(detail_box, 1)
+
+        self.lbl_status_summary_scope = QLabel(
+            'Zmiana wyszukiwania, projektu lub typu koperty odświeża to zestawienie.'
+        )
+        self.lbl_status_summary_scope.setObjectName('shipment_summary_scope')
+        self.lbl_status_summary_scope.setWordWrap(True)
+        summary_layout.addWidget(self.lbl_status_summary_scope)
+        self.history_tabs.addTab(summary_page, '📊 Podsumowanie statusów')
+        saved_tab = self.config.get('shipment_history_active_tab', 0)
+        try:
+            saved_tab = int(saved_tab)
+        except (TypeError, ValueError):
+            saved_tab = 0
+        self.history_tabs.setCurrentIndex(max(0, min(saved_tab, self.history_tabs.count() - 1)))
+        self.history_tabs.currentChanged.connect(
+            lambda index: self.config.update({'shipment_history_active_tab': index})
+        )
+
+    def _create_status_card(self, key: str, title: str, tooltip: str) -> QFrame:
+        """Tworzy czytelną kartę wskaźnika dla zakładki podsumowania."""
+
+        card = QFrame()
+        card.setObjectName('shipment_summary_card')
+        card.setToolTip(tooltip)
+        card.setMinimumHeight(96)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(15, 12, 15, 12)
+        card_layout.setSpacing(4)
+        title_label = QLabel(title)
+        title_label.setObjectName('shipment_summary_card_title')
+        title_label.setWordWrap(True)
+        card_layout.addWidget(title_label)
+        value_label = QLabel('0')
+        value_label.setObjectName('shipment_summary_card_value')
+        value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        card_layout.addWidget(value_label)
+        card_layout.addStretch()
+        self.status_cards[key] = value_label
+        return card
 
     # ──────────────────────────────────────────────────────────────
     # Logika ładowania i zapisu danych
@@ -300,38 +420,78 @@ class ShipmentTrackerWidget(QWidget):
         code = self._normalize_stamp_code(shipment.get("stamp_barcode", ""))
         return f"{recipient} [{code[-8:] if code else 'brak kodu'}]"
 
+    def _set_status_card_values(self, *, all_count: int, c5_count: int,
+                                c6_count: int, printed_count: int):
+        values = {
+            'all': all_count,
+            'c5': c5_count,
+            'c6': c6_count,
+            'printed': printed_count,
+        }
+        for key, value in values.items():
+            card = self.status_cards.get(key)
+            if card is not None:
+                card.setText(str(value))
+
     def _update_status_summary(self, shipments: list[dict]):
-        if not hasattr(self, "lbl_status_summary"):
-            return
-        if not shipments:
-            self.lbl_status_summary.setText(
-                "Brak przesyłek spełniających aktualne filtry."
-            )
+        """Odświeża wyłącznie zakładkę podsumowania, bez zmiany danych statusu."""
+
+        if not hasattr(self, 'lbl_status_summary'):
             return
 
         c5_count = sum(
-            shipment.get("envelope_type", shipment.get("env_type", "")) == "C5"
+            shipment.get('envelope_type', shipment.get('env_type', '')) == 'C5'
             for shipment in shipments
         )
         c6_count = sum(
-            shipment.get("envelope_type", shipment.get("env_type", "")) == "C6"
+            shipment.get('envelope_type', shipment.get('env_type', '')) == 'C6'
             for shipment in shipments
         )
         printed_count = sum(
-            bool(shipment.get("printed_on_druczek")) for shipment in shipments
+            bool(shipment.get('printed_on_druczek')) for shipment in shipments
         )
-        lines = [
-            f"Przesyłki w widoku: {len(shipments)} | C5: {c5_count} | "
-            f"C6: {c6_count} | wydrukowane na druczku: {printed_count}."
-        ]
+        self._set_status_card_values(
+            all_count=len(shipments),
+            c5_count=c5_count,
+            c6_count=c6_count,
+            printed_count=printed_count,
+        )
+
+        self.status_summary_table.setRowCount(0)
+        if not shipments:
+            self.lbl_status_summary.setText(
+                'Brak przesyłek spełniających aktualne filtry.'
+            )
+            return
+
+        self.lbl_status_summary.setText(
+            f'W aktualnym widoku: {len(shipments)} przesyłek • '
+            f'C5: {c5_count} • C6: {c6_count} • '
+            f'wydrukowane na druczku: {printed_count}.'
+        )
+
         for category, entries in summarize_tracking_statuses(shipments).items():
             labels = [self._shipment_summary_label(entry) for entry in entries[:4]]
             if len(entries) > len(labels):
-                labels.append(f"… i {len(entries) - len(labels)} kolejne")
-            lines.append(
-                f"• {category} ({len(entries)}): " + "; ".join(labels)
+                labels.append(f'… i {len(entries) - len(labels)} kolejne')
+
+            row = self.status_summary_table.rowCount()
+            self.status_summary_table.insertRow(row)
+            category_item = QTableWidgetItem(category)
+            count_item = QTableWidgetItem(str(len(entries)))
+            count_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
             )
-        self.lbl_status_summary.setText("\n".join(lines))
+            count_item.setFont(QFont('', -1, QFont.Weight.Bold))
+            example_item = QTableWidgetItem('; '.join(labels))
+            example_item.setToolTip(
+                'Przykładowi adresaci / kody z tej grupy statusów.'
+            )
+            self.status_summary_table.setItem(row, 0, category_item)
+            self.status_summary_table.setItem(row, 1, count_item)
+            self.status_summary_table.setItem(row, 2, example_item)
+
+        self.status_summary_table.resizeRowsToContents()
 
     def _refresh_project_filter(self):
         if not hasattr(self, 'project_filter_combo'):

@@ -3,8 +3,10 @@
 import unittest
 
 from utils.parcel_sorting import (
+    find_duplicate_parcel_numbers,
     format_parcel_list,
     parse_parcel_list,
+    remove_duplicate_parcel_numbers,
     sort_parcel_numbers,
 )
 
@@ -36,6 +38,18 @@ class ParcelSortingTests(unittest.TestCase):
         result = sort_parcel_numbers(["1 / 2", "1/2", "1/10"], unique=True)
         self.assertEqual(result, ["1/2", "1/10"])
         self.assertEqual(format_parcel_list(result), "1/2, 1/10")
+
+    def test_duplicate_cleaner_keeps_input_order_without_sorting(self):
+        values = parse_parcel_list("1/2, 1/3, 1 / 2, 1/4")
+
+        self.assertEqual(
+            remove_duplicate_parcel_numbers(values),
+            ["1/2", "1/3", "1/4"],
+        )
+        self.assertEqual(
+            find_duplicate_parcel_numbers(values),
+            [("1/2", 2)],
+        )
 
 
 if __name__ == "__main__":

@@ -80,6 +80,61 @@ def format_parcel_list(values: Iterable[object]) -> str:
     )
 
 
+def _duplicate_key(value: str) -> str:
+    """Buduje klucz porównania dla wykrywania identycznych działek."""
+
+    return unicodedata.normalize("NFKC", value).casefold()
+
+
+def remove_duplicate_parcel_numbers(values: Iterable[object]) -> list[str]:
+    """Usuwa powtórzone numery działek, zachowując pierwszy zapis i kolejność.
+
+    W przeciwieństwie do ``sort_parcel_numbers(..., unique=True)`` funkcja nie
+    sortuje wyniku. Dzięki temu lista ``1/2, 1/3, 1/2, 1/4`` zwróci dokładnie
+    ``1/2, 1/3, 1/4``.
+    """
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_parcel_number(value)
+        if not normalized:
+            continue
+        key = _duplicate_key(normalized)
+        if key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return result
+
+
+def find_duplicate_parcel_numbers(values: Iterable[object]) -> list[tuple[str, int]]:
+    """Zwraca powielone działki jako ``(pierwszy_zapis, liczba_wystąpień)``.
+
+    Wynik zachowuje kolejność, w której duplikaty po raz pierwszy pojawiły się
+    na wejściu. Spacje wokół ukośnika są ignorowane, np. ``1 / 2`` i ``1/2``
+    są tym samym numerem.
+    """
+
+    counts: dict[str, int] = {}
+    first_values: dict[str, str] = {}
+    order: list[str] = []
+    for value in values:
+        normalized = normalize_parcel_number(value)
+        if not normalized:
+            continue
+        key = _duplicate_key(normalized)
+        if key not in counts:
+            counts[key] = 0
+            first_values[key] = normalized
+            order.append(key)
+        counts[key] += 1
+    return [
+        (first_values[key], counts[key])
+        for key in order
+        if counts[key] > 1
+    ]
+
+
 def sort_parcel_numbers(
     values: Iterable[object], *, unique: bool = False, reverse: bool = False
 ) -> list[str]:
@@ -96,13 +151,6 @@ def sort_parcel_numbers(
     ]
 
     if unique:
-        seen: set[str] = set()
-        unique_values: list[str] = []
-        for value in normalized_values:
-            key = unicodedata.normalize("NFKC", value).casefold()
-            if key not in seen:
-                seen.add(key)
-                unique_values.append(value)
-        normalized_values = unique_values
+        normalized_values = remove_duplicate_parcel_numbers(normalized_values)
 
     return sorted(normalized_values, key=parcel_sort_key, reverse=reverse)
