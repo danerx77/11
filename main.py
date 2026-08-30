@@ -41,6 +41,18 @@ def get_app_dir() -> Path:
 app_dir = get_app_dir()
 
 
+def _bundled_asset_candidates(folder_name: str) -> list[Path]:
+    """Zwraca miejsca danych w wydaniach PyInstaller 5 i 6."""
+    exe_dir = Path(sys.executable).parent
+    meipass = Path(getattr(sys, "_MEIPASS", exe_dir))
+    return [
+        exe_dir / folder_name,
+        meipass / folder_name,
+        # PyInstaller 6 w trybie --onedir często trzyma dane w _internal.
+        exe_dir / "_internal" / folder_name,
+    ]
+
+
 def setup_playwright_browsers() -> None:
     """Ustawia ścieżkę do przeglądarek Playwright po zbudowaniu PyInstallerem.
 
@@ -53,23 +65,35 @@ def setup_playwright_browsers() -> None:
     if not getattr(sys, "frozen", False):
         return
 
-    candidates = []
-    exe_dir = Path(sys.executable).parent
-    candidates.append(exe_dir / "ms-playwright")
-
-    meipass = Path(getattr(sys, "_MEIPASS", exe_dir))
-    candidates.append(meipass / "ms-playwright")
-
-    # PyInstaller 6 w trybie --onedir często trzyma dane w folderze _internal.
-    candidates.append(exe_dir / "_internal" / "ms-playwright")
-
-    for path in candidates:
+    for path in _bundled_asset_candidates("ms-playwright"):
         if path.exists():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(path)
             break
 
 
+def setup_easyocr_models() -> None:
+    """Wskazuje dołączone modele EasyOCR, gdy pełne wydanie je zawiera.
+
+    EasyOCR bez wskazanego katalogu szuka modeli w profilu użytkownika i przy
+    pierwszym OCR próbuje je pobrać. Wydanie z build_windows.ps1 dołącza cache
+    modeli jako easyocr-data/model, dlatego może działać również offline. Nie
+    ustawiamy EASYOCR_MODULE_PATH: EasyOCR zachowuje wtedy zapisywalny katalog
+    user_network w profilu użytkownika, nawet gdy EXE jest w Program Files.
+    """
+    import os
+
+    if not getattr(sys, "frozen", False):
+        return
+
+    for path in _bundled_asset_candidates("easyocr-data"):
+        model_path = path / "model"
+        if model_path.is_dir():
+            os.environ["PYSILDE6_EASYOCR_MODEL_DIR"] = str(model_path)
+            break
+
+
 setup_playwright_browsers()
+setup_easyocr_models()
 
 if str(app_dir) not in sys.path:
     sys.path.insert(0, str(app_dir))
