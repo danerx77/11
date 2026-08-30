@@ -279,7 +279,7 @@ class KW2ManualWidget(QWidget):
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("📖 KW 2 — ręczne przeglądanie")
+        title = QLabel("eKW — przeglądanie ksiąg wieczystych")
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
         header.addWidget(title)
         header.addStretch()
@@ -300,7 +300,7 @@ class KW2ManualWidget(QWidget):
         layout.addLayout(header)
 
         info = QLabel(
-            "<b>Tryb ręczny:</b> przyciski kopiowania otwierają wyłącznie oficjalną "
+            "<b>eKW:</b> przyciski kopiowania otwierają wyłącznie oficjalną "
             "stronę w Twojej normalnej przeglądarce. Niżej jest też osobny tryb "
             "widocznego Chrome dla jednego zaznaczonego numeru i wybranych działów PDF."
         )
@@ -389,7 +389,7 @@ class KW2ManualWidget(QWidget):
         input_layout.addLayout(input_actions)
         layout.addWidget(input_box)
 
-        table_box = QGroupBox("Numery gotowe do ręcznego sprawdzenia")
+        table_box = QGroupBox("Numery do sprawdzenia")
         table_layout = QVBoxLayout(table_box)
         table_hint = QLabel(
             "Numery z modułu Wypisy są dodawane automatycznie. Zaznacz jeden lub "
@@ -480,7 +480,7 @@ class KW2ManualWidget(QWidget):
             )
             temporary.replace(state_file)
         except OSError as exc:
-            self._set_status(f"Nie udało się zapisać stanu KW 2: {exc}")
+            self._set_status(f"Nie udało się zapisać stanu eKW: {exc}")
 
     def _state_file(self) -> Path | None:
         if not self.project_path:
@@ -663,7 +663,7 @@ class KW2ManualWidget(QWidget):
             QMessageBox.information(
                 self,
                 "Wybierz jedną księgę",
-                "Dla bezpieczeństwa KW 2 pobiera tylko jeden zaznaczony numer naraz.",
+                "Dla bezpieczeństwa eKW pobiera tylko jeden zaznaczony numer naraz.",
             )
             return
 

@@ -9,8 +9,8 @@ import json
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -135,12 +135,44 @@ class NoComboWheelFilter(QObject):
 
 
 TAB_MIME_TYPE = "application/x-pysilde-module-tab"
+EKW_TAB_NAME = "eKW"
+LEGACY_EKW_TAB_NAMES = {
+    "📖 KW 2 — ręcznie": EKW_TAB_NAME,
+    "📖 KW 2 — ręczne przeglądanie": EKW_TAB_NAME,
+}
+
+
+def create_ekw_icon() -> QIcon:
+    """Tworzy czytelną niebieską ikonę z literą E dla zakładki eKW."""
+    pixmap = QPixmap(30, 30)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#1677D2"))
+    painter.drawRoundedRect(1, 1, 28, 28, 7, 7)
+
+    font = QFont()
+    font.setBold(True)
+    font.setPixelSize(18)
+    painter.setFont(font)
+    painter.setPen(QColor("#FFFFFF"))
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "E")
+    painter.end()
+
+    return QIcon(pixmap)
+
+
+def tab_name_matches_saved_name(current_name: str, saved_name: str) -> bool:
+    """Zachowuje kolejność kart po zmianie nazwy KW 2 na eKW."""
+    return current_name == saved_name or LEGACY_EKW_TAB_NAMES.get(saved_name) == current_name
 
 
 class DraggableTabButton(QToolButton):
     """Przycisk modułu obsługujący rozpoczęcie przeciągania."""
 
-    def __init__(self, navigator, text: str, parent=None):
+    def __init__(self, navigator, text: str, parent=None, icon=None):
         super().__init__(parent)
         self.navigator = navigator
         self._press_position = QPoint()
@@ -151,7 +183,12 @@ class DraggableTabButton(QToolButton):
         self.setCheckable(True)
         self.setAutoRaise(False)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        if icon is not None and not icon.isNull():
+            self.setIcon(icon)
+            self.setIconSize(QSize(22, 22))
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        else:
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(38)
 
@@ -279,10 +316,15 @@ class ModuleTabWidget(QWidget):
 
         self.stack.currentChanged.connect(self.currentChanged.emit)
 
-    def addTab(self, widget: QWidget, text: str) -> int:
+    def addTab(self, widget: QWidget, text: str, icon=None) -> int:
         index = self.stack.addWidget(widget)
 
-        button = DraggableTabButton(self, text, self.navigation_widget)
+        button = DraggableTabButton(
+            self,
+            text,
+            self.navigation_widget,
+            icon=icon,
+        )
         button.clicked.connect(
             lambda checked=False, tab_button=button: self._activate_button(tab_button)
         )
@@ -421,7 +463,7 @@ class ModuleTabWidget(QWidget):
                 (
                     index
                     for index, button in enumerate(self.buttons)
-                    if button.text() == tab_name
+                    if tab_name_matches_saved_name(button.text(), tab_name)
                 ),
                 -1,
             )
@@ -658,14 +700,20 @@ class MainWindow(QMainWindow):
             (self.extract_pdf_tab, "✂️ Wydziel PDF", "✂️ Wydzielanie PDF"),
             (self.stats_tab, "📈 Statystyki", "📈 Statystyki Działek"),
             (self.kw_tab, "📚 Księgi wieczyste KW", "📚 Księgi Wieczyste KW (PDF)"),
-            (self.kw2_tab, "📖 KW 2 — ręcznie", "📖 KW 2 — ręczne przeglądanie"),
+            (self.kw2_tab, EKW_TAB_NAME, EKW_TAB_NAME),
             (self.krs_downloader_tab, "🏛️ KRS", "🏛️ Odpisy KRS"),
             (self.settings_tab, "⚙️ Ustawienia", "⚙️ Ustawienia"),
         ]
 
         for widget, modern_name, classic_name in modules:
             name = classic_name if self.tab_layout_mode == "classic" else modern_name
-            self.tabs.addTab(widget, name)
+            module_icon = create_ekw_icon() if widget is self.kw2_tab else None
+            if isinstance(self.tabs, ModuleTabWidget):
+                self.tabs.addTab(widget, name, module_icon)
+            elif module_icon is not None:
+                self.tabs.addTab(widget, module_icon, name)
+            else:
+                self.tabs.addTab(widget, name)
 
         # Każdy wygląd zachowuje własną kolejność zakładek.
         if self.tab_layout_mode == "classic":
@@ -760,7 +808,7 @@ class MainWindow(QMainWindow):
                 (
                     index
                     for index in range(self.tabs.count())
-                    if self.tabs.tabText(index) == tab_name
+                    if tab_name_matches_saved_name(self.tabs.tabText(index), tab_name)
                 ),
                 -1,
             )
