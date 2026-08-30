@@ -1,41 +1,36 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    Buduje przenośny katalog Windows dist\Pysilde6 dla aplikacji.
+    Builds the Windows onedir release in dist\Pysilde6.
+
+.DESCRIPTION
+    Run this file on 64-bit Windows from an activated Python virtual environment.
+    The script deliberately uses ASCII only and has a UTF-8 BOM so that it also
+    parses correctly in legacy Windows PowerShell 5.1.
 
 .EXAMPLE
     Set-ExecutionPolicy -Scope Process Bypass
-    .\build_windows.ps1
-
-.EXAMPLE
     .\build_windows.ps1 -Console
-
-.NOTES
-    Skrypt należy uruchomić na Windows, w aktywnym środowisku wirtualnym
-    zawierającym zależności z requirements-windows.txt. Nie buduje pliku .exe
-    na Linuxie ani macOS.
 #>
 
 [CmdletBinding()]
 param(
-    # "python" użyje aktywnego virtualenv. Dla launchera Pythona użyj: -PythonExe py
+    # "python" uses an activated venv. Use -PythonExe py for the Python launcher.
     [string]$PythonExe = "python",
 
-    # Pierwsze wydanie warto zrobić z konsolą, aby było widać ewentualne błędy.
+    # First build: show a console to make startup errors visible.
     [switch]$Console,
 
-    # Nie dołącza przeglądarek Playwright. Wtedy funkcje KW/KRS wymagające
-    # Playwright nie będą gotowe od razu po skopiowaniu programu na inny komputer.
+    # Do not bundle Playwright browsers. KW/KRS Playwright features will not be portable.
     [switch]$SkipBrowserBundle,
 
-    # Pomija ciężkie zależności OCR. Pozostałe funkcje programu nadal będą
-    # budowane, ale OCR EasyOCR/Tesseract nie będzie kompletny.
+    # Do not bundle EasyOCR/Tesseract Python dependencies and EasyOCR models.
     [switch]$SkipOcr,
 
-    # Nie usuwa poprzednich katalogów build i dist\Pysilde6 przed budowaniem.
+    # Keep previous build files instead of deleting build and dist\Pysilde6 first.
     [switch]$KeepBuildFiles,
 
-    # Pomija compileall i testy jednostkowe przed budowaniem.
+    # Skip compileall and unit tests before PyInstaller starts.
     [switch]$SkipTests
 )
 
@@ -46,27 +41,19 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
 if ($env:OS -ne "Windows_NT") {
-    throw "Ten skrypt buduje Windows .exe i musi zostać uruchomiony w Windows."
+    throw "This script must be run on Windows."
 }
 
 if (-not (Get-Command $PythonExe -ErrorAction SilentlyContinue)) {
-    throw "Nie znaleziono interpretera '$PythonExe'. Aktywuj virtualenv albo podaj -PythonExe py."
+    throw "Python command '$PythonExe' was not found. Activate the venv or use -PythonExe py."
 }
 
 function Test-PythonModule {
     param([Parameter(Mandatory = $true)][string]$ModuleName)
 
-    $probe = @'
-import importlib.util
-import sys
-try:
-    found = importlib.util.find_spec(sys.argv[1]) is not None
-except (ImportError, AttributeError, ValueError):
-    found = False
-raise SystemExit(0 if found else 1)
-'@
+    $probe = "import importlib.util, sys; raise SystemExit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
     & $PythonExe -c $probe $ModuleName
-    return $LASTEXITCODE -eq 0
+    return ($LASTEXITCODE -eq 0)
 }
 
 $requiredModules = @(
@@ -92,8 +79,7 @@ $requiredModules = @(
 )
 
 if (-not $SkipOcr) {
-    # EasyOCR importuje część tych bibliotek dopiero w trakcie odczytu obrazu.
-    # Sprawdzamy je jawnie, żeby PyInstaller nie stworzył pozornie kompletnego EXE.
+    # EasyOCR loads several of these modules dynamically at OCR runtime.
     $requiredModules += @(
         "easyocr", "pytesseract", "torch", "torchvision", "cv2", "scipy",
         "skimage", "bidi", "yaml", "shapely", "pyclipper", "ninja"
@@ -104,24 +90,19 @@ $missingModules = @(
     $requiredModules | Where-Object { -not (Test-PythonModule $_) }
 )
 if ($missingModules.Count -gt 0) {
-    $missingText = $missingModules -join ", "
-    throw "Brakuje modułów: $missingText`nUruchom: $PythonExe -m pip install -r requirements-windows.txt"
+    throw ("Missing Python modules: " + ($missingModules -join ", ") + "`nRun: $PythonExe -m pip install -r requirements-windows.txt")
 }
 
+$PlaywrightBrowsersPath = $null
 if (-not $SkipBrowserBundle) {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        throw "Nie można odczytać LOCALAPPDATA. Uruchom PowerShell jako zalogowany użytkownik."
+        throw "LOCALAPPDATA is not available for this user."
     }
 
     $PlaywrightBrowsersPath = Join-Path $env:LOCALAPPDATA "ms-playwright"
     if (-not (Test-Path -LiteralPath $PlaywrightBrowsersPath -PathType Container)) {
-        throw @"
-Nie znaleziono przeglądarek Playwright w:
-$PlaywrightBrowsersPath
-
-Najpierw uruchom:
-$PythonExe -m playwright install chromium firefox
-"@
+        throw ("Playwright browsers were not found in: $PlaywrightBrowsersPath`n" +
+               "Run: $PythonExe -m playwright install chromium firefox")
     }
 
     $browserNames = @(
@@ -129,15 +110,13 @@ $PythonExe -m playwright install chromium firefox
         ForEach-Object { $_.Name }
     )
     if ((-not ($browserNames -match "^chromium-")) -or (-not ($browserNames -match "^firefox-"))) {
-        Write-Warning "W folderze ms-playwright nie znaleziono Chromium i Firefox. Dla funkcji KW/KRS uruchom: $PythonExe -m playwright install chromium firefox"
+        Write-Warning "Chromium and/or Firefox is missing. Run: $PythonExe -m playwright install chromium firefox"
     }
 }
 
 $EasyOcrModulePath = $null
 if (-not $SkipOcr) {
-    # EasyOCR domyślnie używa EASYOCR_MODULE_PATH, MODULE_PATH albo
-    # %USERPROFILE%\.EasyOCR. Zachowujemy tę samą kolejność, aby dołączyć cache
-    # faktycznie używany przez interpreter budujący.
+    # This follows EasyOCR's standard cache resolution order.
     if (-not [string]::IsNullOrWhiteSpace($env:EASYOCR_MODULE_PATH)) {
         $EasyOcrModulePath = $env:EASYOCR_MODULE_PATH
     }
@@ -145,28 +124,27 @@ if (-not $SkipOcr) {
         $EasyOcrModulePath = $env:MODULE_PATH
     }
     else {
-        $EasyOcrModulePath = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".EasyOCR"
+        $EasyOcrModulePath = Join-Path $env:USERPROFILE ".EasyOCR"
     }
 
     $EasyOcrModelsPath = Join-Path $EasyOcrModulePath "model"
-    # Reader sprawdza kompletność i sumy kontrolne modeli. W razie potrzeby
-    # pobierze brakujący model dla języków używanych przez utils/ocr_utils.py.
-    Write-Host "Weryfikuję modele EasyOCR dla polskiego i angielskiego..." -ForegroundColor Cyan
-    Write-Host "Przy pierwszym pełnym buildzie może zostać pobrane kilkaset MB modeli." -ForegroundColor DarkYellow
+    Write-Host "Checking EasyOCR models for Polish and English..." -ForegroundColor Cyan
+    Write-Host "The first full build may download several hundred MB of OCR models." -ForegroundColor DarkYellow
     & $PythonExe -c "import easyocr; easyocr.Reader(['pl', 'en'], gpu=False, verbose=False)"
     if ($LASTEXITCODE -ne 0) {
-        throw "Nie udało się pobrać/przygotować modeli EasyOCR. Sprawdź Internet albo uruchom budowanie z -SkipOcr."
+        throw "EasyOCR model preparation failed. Check the Internet connection or use -SkipOcr."
     }
+
     $modelFiles = @(
         Get-ChildItem -LiteralPath $EasyOcrModelsPath -File -ErrorAction SilentlyContinue
     )
     if ($modelFiles.Count -eq 0) {
-        throw "Nie znaleziono modeli EasyOCR w $EasyOcrModelsPath po ich przygotowaniu."
+        throw "EasyOCR did not create models in: $EasyOcrModelsPath"
     }
 }
 
 if ((-not $SkipOcr) -and (-not (Get-Command "tesseract.exe" -ErrorAction SilentlyContinue))) {
-    Write-Warning "Nie znaleziono tesseract.exe. Pakiet pytesseract jest dołączony, ale awaryjny OCR Tesseract wymaga osobnej instalacji Tesseract OCR na komputerze docelowym."
+    Write-Warning "tesseract.exe was not found. The packaged pytesseract wrapper needs a separate Tesseract OCR installation with the pol language on the target PC."
 }
 
 $AppName = "Pysilde6"
@@ -182,20 +160,20 @@ if (-not $KeepBuildFiles) {
 New-Item -ItemType Directory -Path $SpecDir -Force | Out-Null
 
 if (-not $SkipTests) {
-    Write-Host "[1/3] Sprawdzam składnię..." -ForegroundColor Cyan
+    Write-Host "[1/3] Running compileall..." -ForegroundColor Cyan
     & $PythonExe -m compileall -q main.py modules utils tests
     if ($LASTEXITCODE -ne 0) {
-        throw "compileall zakończył się błędem. Budowanie przerwane."
+        throw "compileall failed. Build stopped."
     }
 
-    Write-Host "[2/3] Uruchamiam testy..." -ForegroundColor Cyan
+    Write-Host "[2/3] Running unit tests..." -ForegroundColor Cyan
     & $PythonExe -m unittest discover -s tests -v
     if ($LASTEXITCODE -ne 0) {
-        throw "Testy zakończyły się błędem. Budowanie przerwane."
+        throw "Unit tests failed. Build stopped."
     }
 }
 else {
-    Write-Warning "Pominięto compileall i testy (-SkipTests)."
+    Write-Warning "compileall and unit tests were skipped (-SkipTests)."
 }
 
 $collectAllPackages = @(
@@ -216,7 +194,6 @@ $collectAllPackages = @(
     "pyperclip"
 )
 if (-not $SkipOcr) {
-    # Są to moduły ładowane przez EasyOCR częściowo dynamicznie.
     $collectAllPackages += @(
         "easyocr", "pytesseract", "torch", "torchvision", "cv2", "scipy",
         "skimage", "bidi", "yaml", "shapely", "pyclipper", "ninja"
@@ -251,8 +228,7 @@ foreach ($packageName in $collectAllPackages) {
 }
 
 if (-not $SkipBrowserBundle) {
-    # Windowsowy separator add-data ma postać: źródło;folder_w_programie.
-    # main.py wyszukuje ten folder obok Pysilde6.exe.
+    # On Windows, PyInstaller add-data uses source;destination.
     $pyInstallerArgs += @(
         "--add-data",
         "$PlaywrightBrowsersPath;ms-playwright"
@@ -260,7 +236,6 @@ if (-not $SkipBrowserBundle) {
 }
 
 if (-not $SkipOcr) {
-    # main.py wskazuje easyocr-data/model przed pierwszym OCR.
     $pyInstallerArgs += @(
         "--add-data",
         "$EasyOcrModulePath;easyocr-data"
@@ -269,20 +244,19 @@ if (-not $SkipOcr) {
 
 $pyInstallerArgs += "main.py"
 
-Write-Host "[3/3] Buduję $AppName.exe..." -ForegroundColor Cyan
+Write-Host "[3/3] Building $AppName.exe..." -ForegroundColor Cyan
 & $PythonExe -m PyInstaller @pyInstallerArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller zakończył się błędem: $LASTEXITCODE"
+    throw "PyInstaller failed with exit code $LASTEXITCODE."
 }
 
 $exePath = Join-Path $OutputDir "$AppName.exe"
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-    throw "Budowanie zakończyło się bez oczekiwanego pliku: $exePath"
+    throw "Expected EXE was not created: $exePath"
 }
 
 if (-not $SkipBrowserBundle) {
-    # PyInstaller 5 umieszcza dane zwykle obok EXE, a PyInstaller 6 często
-    # przenosi je do _internal. Obie lokalizacje są obsługiwane przez main.py.
+    # PyInstaller 5 commonly uses the EXE folder, PyInstaller 6 commonly uses _internal.
     $bundledBrowserCandidates = @(
         (Join-Path $OutputDir "ms-playwright"),
         (Join-Path $OutputDir "_internal\ms-playwright")
@@ -292,7 +266,7 @@ if (-not $SkipBrowserBundle) {
         Where-Object { Test-Path -LiteralPath $_ -PathType Container }
     ) | Select-Object -First 1
     if (-not $bundledBrowsers) {
-        throw "Nie dołączono folderu ms-playwright do $OutputDir ani $OutputDir\_internal"
+        throw "The ms-playwright directory was not bundled."
     }
 }
 
@@ -306,11 +280,11 @@ if (-not $SkipOcr) {
         Where-Object { Test-Path -LiteralPath (Join-Path $_ "model") -PathType Container }
     ) | Select-Object -First 1
     if (-not $bundledEasyOcr) {
-        throw "Nie dołączono katalogu modeli EasyOCR do $OutputDir ani $OutputDir\_internal"
+        throw "The EasyOCR model directory was not bundled."
     }
 }
 
 Write-Host ""
-Write-Host "Gotowe: $exePath" -ForegroundColor Green
-Write-Host "Na inny komputer kopiuj lub spakuj cały folder: $OutputDir" -ForegroundColor Yellow
-Write-Host "Nie kopiuj samego pliku .exe — katalog zawiera biblioteki, Qt i przeglądarki Playwright." -ForegroundColor Yellow
+Write-Host "Build complete: $exePath" -ForegroundColor Green
+Write-Host "Copy or ZIP the entire folder: $OutputDir" -ForegroundColor Yellow
+Write-Host "Do not copy only the EXE. The folder contains Qt, Python modules and Playwright browsers." -ForegroundColor Yellow

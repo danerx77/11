@@ -12,6 +12,11 @@ nie tworzy poprawnego pliku Windows `.exe` z Linuxa lub macOS.
 
 ## Najprostsza, zalecana metoda
 
+`build_windows.ps1` jest zapisany jako UTF-8 z BOM i celowo zawiera wyłącznie
+znaki ASCII. Dzięki temu działa także w starszym **Windows PowerShell 5.1**,
+który potrafi błędnie odczytać polskie znaki z pliku UTF-8 bez BOM. Pobierz
+aktualną wersję skryptu zamiast używać wcześniejszej kopii.
+
 Otwórz **PowerShell** w katalogu projektu i wykonaj:
 
 ```powershell
