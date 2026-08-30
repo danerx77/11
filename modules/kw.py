@@ -644,7 +644,6 @@ class KWDownloadWorker(QThread):
             viewport={"width": 1600, "height": 1000},
             slow_mo=int(speed.get("slow_mo_ms", 0)),
             args=[
-                "--disable-blink-features=AutomationControlled",
                 "--start-maximized",
                 "--enable-print-browser",
                 "--force-renderer-accessibility",

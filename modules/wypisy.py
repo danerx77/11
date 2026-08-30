@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
 
+from utils.parcel_sorting import parcel_sort_key as parcel_number_sort_key
+
 def format_area_pl(val) -> str:
     if not val: return "0,00"
     s = f"{float(val):.4f}".rstrip('0')
@@ -236,7 +238,13 @@ class OwnersListWidget(QWidget):
         header_row.addWidget(QLabel('Sortowanie:'))
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(['Domyślne', 'Alfabetycznie', 'Od najniższego numeru działki', 'Od najwyższego numeru działki'])
-        self.sort_combo.currentIndexChanged.connect(lambda *_: self._refresh_table(self.search_edit.text()))
+        try:
+            saved_sort_index = int(self.config.get('owners_list_sort_index', 0))
+        except (TypeError, ValueError):
+            saved_sort_index = 0
+        if 0 <= saved_sort_index < self.sort_combo.count():
+            self.sort_combo.setCurrentIndex(saved_sort_index)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         header_row.addWidget(self.sort_combo)
         left_layout.addLayout(header_row)
 
@@ -261,13 +269,32 @@ class OwnersListWidget(QWidget):
 
         self.table.horizontalHeader().setSectionsMovable(True)
         table_state_owners_hex = self.config.get('table_state_owners', '')
+        restored_table_state = False
         if table_state_owners_hex:
             from PySide6.QtCore import QByteArray
-            self.table.horizontalHeader().restoreState(QByteArray.fromHex(table_state_owners_hex.encode()))
-            
+            restored_table_state = self.table.horizontalHeader().restoreState(
+                QByteArray.fromHex(str(table_state_owners_hex).encode())
+            )
+
+        # Stary zapis stanu nagłówka mógł ukryć dodane kolumny lub pozostawić
+        # im szerokość zero. Zachowujemy kolejność i szerokości użytkownika,
+        # ale każda kolumna z danymi pozostaje dostępna na pasku poziomym.
+        if restored_table_state:
+            for column in range(self.table.columnCount()):
+                if self.table.isColumnHidden(column):
+                    self.table.setColumnHidden(column, False)
+                if self.table.columnWidth(column) <= 1:
+                    self.table.setColumnWidth(column, 120)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
         for i in [5, 6, 7, 8]:
             self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             if self.table.columnWidth(i) < 150: self.table.setColumnWidth(i, 200)
+
+        if restored_table_state:
+            self.config['table_state_owners'] = (
+                self.table.horizontalHeader().saveState().toHex().data().decode()
+            )
             
         self.table.horizontalHeader().sectionResized.connect(lambda *args: self.config.update({'table_state_owners': self.table.horizontalHeader().saveState().toHex().data().decode()}))
         self.table.horizontalHeader().sectionMoved.connect(lambda *args: self.config.update({'table_state_owners': self.table.horizontalHeader().saveState().toHex().data().decode()}))
@@ -453,6 +480,32 @@ class OwnersListWidget(QWidget):
             self._save_to_project_state()
             self.owners_changed.emit(self.owners)
 
+    def _on_sort_changed(self, index: int):
+        self.config['owners_list_sort_index'] = index
+        self._refresh_table(self.search_edit.text())
+
+    @staticmethod
+    def _owner_table_value(owner: dict, key: str, parcel_key: str = None) -> str:
+        """Zwraca wartość właściciela albo dane zapisane przy jego działkach.
+
+        Starsze importy trzymają część danych gruntu tylko w rekordach działek.
+        Widok tabeli ma je pokazywać tak samo jak panel szczegółów, bez zmiany
+        zapisanych danych właściciela.
+        """
+        value = str(owner.get(key, '') or '').strip()
+        if value:
+            return value
+
+        source_key = parcel_key or key
+        values = []
+        for parcel in owner.get('parcels', []):
+            if not isinstance(parcel, dict):
+                continue
+            parcel_value = str(parcel.get(source_key, '') or '').strip()
+            if parcel_value and parcel_value not in values:
+                values.append(parcel_value)
+        return ', '.join(values)
+
     def _refresh_table(self, filter_text: str = ''):
         self.table.blockSignals(True) 
         self.table.setRowCount(0)
@@ -463,14 +516,18 @@ class OwnersListWidget(QWidget):
             if sort_mode == 'Alfabetycznie':
                 indexed_owners.sort(key=lambda pair: (pair[1].get('last_name') or pair[1].get('full_name') or '').lower())
             elif sort_mode in ('Od najniższego numeru działki', 'Od najwyższego numeru działki'):
-                def parcel_sort_key(owner):
-                    nums = []
+                def owner_parcel_sort_key(owner):
+                    keys = []
                     for parcel in owner.get('parcels', owner.get('parcel_numbers', [])):
-                        n = parcel.get('number', parcel) if isinstance(parcel, dict) else parcel
-                        parts = [int(x) if x.isdigit() else x.lower() for x in re.split(r'([0-9]+)', str(n))]
-                        nums.append(parts)
-                    return min(nums) if nums else [999999]
-                indexed_owners.sort(key=lambda pair: parcel_sort_key(pair[1]), reverse=(sort_mode == 'Od najwyższego numeru działki'))
+                        number = parcel.get('number', parcel) if isinstance(parcel, dict) else parcel
+                        keys.append(parcel_number_sort_key(number))
+                    # Właściciele bez działek są wyświetlani za wpisami z numerem.
+                    return min(keys) if keys else ((3, ''),)
+
+                indexed_owners.sort(
+                    key=lambda pair: owner_parcel_sort_key(pair[1]),
+                    reverse=(sort_mode == 'Od najwyższego numeru działki'),
+                )
         for idx, o in indexed_owners:
             full_name = o.get('full_name', f"{o.get('last_name','')} {o.get('first_name','')}")
             if filter_text:
@@ -490,7 +547,10 @@ class OwnersListWidget(QWidget):
             combo_type = self._create_type_combo(o, idx)
             self.table.setCellWidget(row, 1, combo_type)
             
-            addr_stat = self._get_address_status(o.get('address', ''))
+            owner_address = self._owner_table_value(o, 'address')
+            if not owner_address:
+                owner_address = str(o.get('address_2', '') or '').strip()
+            addr_stat = self._get_address_status(owner_address)
             it_addr = QTableWidgetItem(addr_stat)
             if addr_stat == "OK": it_addr.setForeground(QColor("#2ecc71"))
             else: it_addr.setForeground(QColor("#e67e22")); it_addr.setFont(QFont('', -1, QFont.Weight.Bold))
@@ -503,34 +563,60 @@ class OwnersListWidget(QWidget):
             self.table.setItem(row, 7, QTableWidgetItem(o.get('name_plural', o.get('full_name', ''))))
             self.table.setItem(row, 8, QTableWidgetItem(o.get('name_separate', o.get('full_name', ''))))
             
-            self.table.setItem(row, 9, QTableWidgetItem(o.get('address', '')))
+            self.table.setItem(row, 9, QTableWidgetItem(owner_address))
             parcels = ', '.join([p['number'] if isinstance(p, dict) else str(p) for p in o.get('parcels', o.get('parcel_numbers', []))])
             self.table.setItem(row, 3, QTableWidgetItem(parcels))
             
             area_val = o.get('total_area_ha', 0.0)
+            if not area_val:
+                try:
+                    area_val = sum(
+                        float(parcel.get('area_ha', 0) or 0)
+                        for parcel in o.get('parcels', [])
+                        if isinstance(parcel, dict)
+                    )
+                except (TypeError, ValueError):
+                    area_val = 0.0
             self.table.setItem(row, 10, QTableWidgetItem(format_area_pl(area_val)))
             
-            kws = ', '.join(o.get('kw_numbers', [p['kw'] if isinstance(p, dict) and p.get('kw') else '' for p in o.get('parcels', [])]))
+            kw_values = o.get('kw_numbers') or [
+                p['kw'] for p in o.get('parcels', [])
+                if isinstance(p, dict) and p.get('kw')
+            ]
+            kws = ', '.join(str(value) for value in kw_values)
             self.table.setItem(row, 11, QTableWidgetItem(kws))
             self.table.setItem(row, 12, QTableWidgetItem(o.get('share', '1/1')))
             
-            self.table.setItem(row, 13, QTableWidgetItem(o.get('city', '')))
-            
-            ulice_dz_list = []
-            for p_info in o.get('parcels', []):
-                if isinstance(p_info, dict) and p_info.get('parcel_address'):
-                    ul_dz = p_info.get('parcel_address')
-                    if ul_dz not in ulice_dz_list: ulice_dz_list.append(ul_dz)
-            
-            self.table.setItem(row, 14, QTableWidgetItem(o.get('parcel_street', ", ".join(ulice_dz_list))))
+            self.table.setItem(
+                row, 13, QTableWidgetItem(self._owner_table_value(o, 'city'))
+            )
+            self.table.setItem(
+                row,
+                14,
+                QTableWidgetItem(
+                    self._owner_table_value(
+                        o, 'parcel_street', parcel_key='parcel_address'
+                    )
+                ),
+            )
 
             self.table.setItem(row, 15, QTableWidgetItem(o.get('pesel', '')))
             self.table.setItem(row, 16, QTableWidgetItem(o.get('nip', '')))
-            self.table.setItem(row, 17, QTableWidgetItem(o.get('voivodeship', '')))
-            self.table.setItem(row, 18, QTableWidgetItem(o.get('county', '')))
-            self.table.setItem(row, 19, QTableWidgetItem(o.get('municipality', '')))
-            self.table.setItem(row, 20, QTableWidgetItem(o.get('precinct', '')))
-            self.table.setItem(row, 21, QTableWidgetItem(o.get('precinct_number', '')))
+            self.table.setItem(
+                row, 17, QTableWidgetItem(self._owner_table_value(o, 'voivodeship'))
+            )
+            self.table.setItem(
+                row, 18, QTableWidgetItem(self._owner_table_value(o, 'county'))
+            )
+            self.table.setItem(
+                row, 19, QTableWidgetItem(self._owner_table_value(o, 'municipality'))
+            )
+            self.table.setItem(
+                row, 20, QTableWidgetItem(self._owner_table_value(o, 'precinct'))
+            )
+            self.table.setItem(
+                row, 21, QTableWidgetItem(self._owner_table_value(o, 'precinct_number'))
+            )
             identifiers = []
             for p_info in o.get('parcels', []):
                 if isinstance(p_info, dict) and p_info.get('identifier') and p_info.get('identifier') not in identifiers:
@@ -552,16 +638,20 @@ class OwnersListWidget(QWidget):
         owner = self.owners[idx_data]
         new_val = item.text().strip()
         
-        mapping = {3: 'last_name', 4: 'first_name', 5: 'last_name_plural', 6: 'name_plural', 
-                   7: 'name_separate', 8: 'address', 13: 'city', 14: 'parcel_street', 
-                   15: 'pesel', 16: 'nip', 17: 'voivodeship', 18: 'county', 19: 'municipality', 
+        # Numery są zgodne z faktycznym układem nagłówków tabeli. Wcześniej
+        # przesunięcie o jedną kolumnę zapisywało np. Adres jako Działki,
+        # przez co dane widoczne w szczegółach znikały z właściwych pól.
+        mapping = {4: 'last_name', 5: 'first_name', 6: 'last_name_plural',
+                   7: 'name_plural', 8: 'name_separate', 9: 'address',
+                   13: 'city', 14: 'parcel_street', 15: 'pesel', 16: 'nip',
+                   17: 'voivodeship', 18: 'county', 19: 'municipality',
                    20: 'precinct', 21: 'precinct_number'}
                    
         if col in mapping:
             owner[mapping[col]] = new_val
-            if col in [3, 4]: owner['full_name'] = f"{owner.get('last_name','')} {owner.get('first_name','')}".strip()
-            if col == 8: self._refresh_table(self.search_edit.text())
-        elif col == 9:
+            if col in [4, 5]: owner['full_name'] = f"{owner.get('last_name','')} {owner.get('first_name','')}".strip()
+            if col == 9: self._refresh_table(self.search_edit.text())
+        elif col == 3:
             nums = [x.strip() for x in new_val.split(',') if x.strip()]
             owner['parcel_numbers'] = nums
             old_parcels = owner.get('parcels', [])

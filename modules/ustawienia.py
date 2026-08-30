@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
+from utils.generation_targets import (
+    COVER_ADDRESS_RULES,
+    COVER_GENERATION_RULES,
+    cover_generation_rule_defaults,
+)
+from utils.global_settings import save_global_stamp_settings
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -43,10 +50,10 @@ DECL_TAGS = [
     ("nip", "NIP", "<Nip>"),
     ("pesel", "PESEL", "<Pesel>"),
     ("voivodeship", "Województwo", "<Województwo:>"),
-    ("county", "Powiat", "<Powiat:>"),
+    ("county", "Powiat (zamiana, gdy opcja jest włączona)", "<Powiat:>"),
     ("municipality", "Jednostka ewidencyjna (gmina)", "<Jednostka ewidencyjna:>"),
-    ("location", "Miejscowość działki", "<Miejscowość działki:>"),
-    ("address_street", "Ulica", "<Ulica>"),
+    ("location", "Miejscowość działki (odmiana, gdy opcja jest włączona)", "<Miejscowość działki:>"),
+    ("address_street", "Ulica (odmiana, gdy opcja jest włączona)", "<Ulica>"),
     ("parcel_numbers_budowa", "Działki budowa", "<działki budowa:>"),
     ("parcel_numbers_demontaz", "Działki demontaż", "<działki demontaż:>"),
     ("area_ha", "Powierzchnia [ha]", "<Powierzchnia [ha]>"),
@@ -68,8 +75,8 @@ DECL_TAGS = [
 
 
 COVER_TAGS = [
-    ("location", "Miejscowość działki", "<Miejscowość działki>"),
-    ("street", "Ulica działki z wypisu", "<Ulica>"),
+    ("location", "Miejscowość działki (odmiana, gdy opcja jest włączona)", "<Miejscowość działki>"),
+    ("street", "Ulica działki z wypisu (odmiana, gdy opcja jest włączona)", "<Ulica>"),
     ("subject", "Temat", "<Temat>"),
     ("task_construction", "Zadanie budowa", "<Zadanie budowa>"),
     ("task_demolition", "Zadanie demontaż", "<Zadanie demontaż>"),
@@ -139,28 +146,52 @@ class SettingsTabWidget(QWidget):
         return widget
 
     def _browse_docx_template(self, line_edit: QLineEdit):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file():
-            start_dir = str(Path(start_dir).parent)
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
 
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_przyklady",
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+            preferred_folder=(
+                self.path_przyklady_edit.text()
+                if hasattr(self, "path_przyklady_edit")
+                else ""
+            ),
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz szablon Word",
-            start_dir,
+            str(start_dir),
             "Word (*.docx)",
         )
         if path:
             line_edit.setText(path)
 
     def _browse_excel_template(self, line_edit: QLineEdit):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file():
-            start_dir = str(Path(start_dir).parent)
+        from utils.templates import (
+            LEGAL_TITLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
 
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_tytuly",
+            folder_names=LEGAL_TITLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+            preferred_folder=(
+                self.path_tytuly_edit.text()
+                if hasattr(self, "path_tytuly_edit")
+                else ""
+            ),
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz szablon Excel",
-            start_dir,
+            str(start_dir),
             "Excel (*.xlsx *.xlsm)",
         )
         if path:
@@ -387,21 +418,48 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", self.chk_decl_precinct_upper)
 
         self.chk_decl_location_locative = QCheckBox(
-            "Odmieniaj miejscowości działki "
-            "(np. Gdynia → Gdyni, Warszawa → Warszawie)"
+            "Odmieniaj tagi <Miejscowość działki:> / <Miejscowość działki> "
+            "(np. Gdynia → Gdyni, Żukowo → Żukowie, Kartuzy → Kartuzach)"
+        )
+        self.chk_decl_location_locative.setToolTip(
+            "Dotyczy standardowych tagów miejscowości w Oświadczeniach i Pismach."
         )
         decl_form.addRow("", self.chk_decl_location_locative)
 
         self.chk_decl_streets = QCheckBox(
-            "Odmieniaj ulice (np. ulica Miła → ul. Miłej)"
+            "Odmieniaj tag <Ulica> (np. ulica Miła → ulica Miłej)"
+        )
+        self.chk_decl_streets.setToolTip(
+            "Dotyczy standardowych tagów ulicy w Oświadczeniach i Pismach."
         )
         decl_form.addRow("", self.chk_decl_streets)
 
         self.chk_decl_powiat = QCheckBox(
-            "Zamieniaj miejscowości na właściwe nazwy powiatów "
+            "Zamieniaj tag <Powiat:> na właściwy powiat "
             "(np. Kościerzyna → kościerski, Wejherowo → wejherowski)"
         )
+        self.chk_decl_powiat.setToolTip(
+            "Dotyczy tagu <Powiat:> w Oświadczeniach woli."
+        )
         decl_form.addRow("", self.chk_decl_powiat)
+
+        # Zmiana działa w bieżącym uruchomieniu od razu; przycisk zapisu
+        # zachowuje ją także po ponownym uruchomieniu aplikacji.
+        self.chk_decl_location_locative.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_location_locative", enabled
+            )
+        )
+        self.chk_decl_streets.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_decline_streets", enabled
+            )
+        )
+        self.chk_decl_powiat.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_powiat_zamiana", enabled
+            )
+        )
 
         self.decl_budowa_edit = QLineEdit()
         decl_form.addRow(
@@ -457,9 +515,65 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", button_default_decl)
         main_layout.addWidget(decl_box)
 
+        # PISMA PRZEWODNIE — REGUŁY SERII
+        cover_rules_box = QGroupBox(
+            "Pisma przewodnie — reguły seryjnego generowania"
+        )
+        cover_rules_layout = QVBoxLayout(cover_rules_box)
+        cover_rules_info = QLabel(
+            "Zaznaczone pozycje będą pomijane przy „Generuj wszystkie” oraz "
+            "„Generuj dla zaznaczonych”. W razie potrzeby pojedyncze pismo "
+            "można nadal świadomie wymusić z poziomu modułu Pisma."
+        )
+        cover_rules_info.setWordWrap(True)
+        cover_rules_info.setStyleSheet(
+            "color:#607d8b; background:#edf7fb; border-left:3px solid #2196f3; "
+            "padding:8px; border-radius:4px;"
+        )
+        cover_rules_layout.addWidget(cover_rules_info)
+
+        cover_type_box = QGroupBox("Typ właściciela — nie generuj pisma dla")
+        cover_type_layout = QVBoxLayout(cover_type_box)
+        self.cover_skip_rule_checks: dict[str, QCheckBox] = {}
+        for config_key, _owner_flag, reason, default in COVER_GENERATION_RULES:
+            checkbox = QCheckBox(f"Pomiń: {reason}")
+            checkbox.setChecked(
+                bool(self.config.get(config_key, default))
+            )
+            checkbox.toggled.connect(
+                lambda enabled, key=config_key: self._set_runtime_cover_rule(
+                    key, enabled
+                )
+            )
+            self.cover_skip_rule_checks[config_key] = checkbox
+            cover_type_layout.addWidget(checkbox)
+        cover_rules_layout.addWidget(cover_type_box)
+
+        cover_address_box = QGroupBox("Dane adresowe — nie generuj pisma dla")
+        cover_address_layout = QVBoxLayout(cover_address_box)
+        address_labels = {
+            "cover_skip_missing_address": "Pomiń: brak adresu",
+            "cover_skip_invalid_postal_code": "Pomiń: adres bez kodu pocztowego",
+        }
+        for config_key, _reason, default in COVER_ADDRESS_RULES:
+            checkbox = QCheckBox(address_labels[config_key])
+            checkbox.setChecked(
+                bool(self.config.get(config_key, default))
+            )
+            checkbox.toggled.connect(
+                lambda enabled, key=config_key: self._set_runtime_cover_rule(
+                    key, enabled
+                )
+            )
+            self.cover_skip_rule_checks[config_key] = checkbox
+            cover_address_layout.addWidget(checkbox)
+        cover_rules_layout.addWidget(cover_address_box)
+        main_layout.addWidget(cover_rules_box)
+
         # USTAWIENIA WYCINANIA ZNACZKÓW
         crop_box = QGroupBox(
-            "Ustawienia wycinania znaczków C5 i C6 (Globalne)"
+            "Ustawienia wycinania znaczków C5 i C6 "
+            "(globalne: dane/stamp_profiles.json)"
         )
         crop_layout = QHBoxLayout(crop_box)
 
@@ -512,7 +626,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_1_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 1 (Działki):",
+            "Szablon 1 — Wykaz działek podmiotów pozostałych:",
             self._make_browse_row(
                 self.legal_tmpl_1_edit,
                 self._browse_excel_template,
@@ -521,7 +635,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_2_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 2 (Wykaz właścicieli):",
+            "Szablon 2 — Wykaz właścicieli nieruchomości szczegółowy:",
             self._make_browse_row(
                 self.legal_tmpl_2_edit,
                 self._browse_excel_template,
@@ -530,7 +644,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_3_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 3 (Końcowy):",
+            "Szablon 3 — Nowa tabela końcowa:",
             self._make_browse_row(
                 self.legal_tmpl_3_edit,
                 self._browse_excel_template,
@@ -965,6 +1079,14 @@ class SettingsTabWidget(QWidget):
             self.config.get("decl_powiat_zamiana", False)
         )
 
+        cover_rule_defaults = cover_generation_rule_defaults()
+        for key, checkbox in getattr(self, "cover_skip_rule_checks", {}).items():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(
+                bool(self.config.get(key, cover_rule_defaults.get(key, False)))
+            )
+            checkbox.blockSignals(False)
+
         c5_crop = self.config.get(
             "stamp_profile_c5",
             {
@@ -1041,6 +1163,14 @@ class SettingsTabWidget(QWidget):
             table.setItem(row, 1, QTableWidgetItem(label))
             table.setItem(row, 2, QTableWidgetItem(default_tag))
             row += 1
+
+    def _set_runtime_declension_option(self, key: str, enabled: bool):
+        """Udostępnia zmianę opcji generatorom przed zapisaniem formularza."""
+        self.config[key] = bool(enabled)
+
+    def _set_runtime_cover_rule(self, key: str, enabled: bool):
+        """Stosuje od razu regułę pomijania Pism przewodnich."""
+        self.config[key] = bool(enabled)
 
     def _get_tags_from_table(self, table: QTableWidget) -> dict:
         result = {}
@@ -1181,6 +1311,9 @@ class SettingsTabWidget(QWidget):
             self.chk_decl_powiat.isChecked()
         )
 
+        for key, checkbox in getattr(self, "cover_skip_rule_checks", {}).items():
+            self.config[key] = checkbox.isChecked()
+
         self.config["stamp_profile_c5"] = {
             "crop_left": self.c5_crop_l.value(),
             "crop_right": self.c5_crop_r.value(),
@@ -1193,6 +1326,9 @@ class SettingsTabWidget(QWidget):
             "crop_up": self.c6_crop_t.value(),
             "crop_down": self.c6_crop_b.value(),
         }
+        # Profile wycinania są dodatkowo zapisywane natychmiast w dane,
+        # niezależnie od danych konkretnego projektu.
+        save_global_stamp_settings(self.config)
 
         self.config["declaration_tag_map"] = self._get_tags_from_table(
             self.tags_table
@@ -1257,9 +1393,10 @@ class SettingsTabWidget(QWidget):
     def _set_default_decl_templates(self):
         from utils.templates import find_latest_file
 
-        examples_path = Path(self.path_przyklady_edit.text().strip())
+        examples_path_text = self.path_przyklady_edit.text().strip()
+        examples_path = Path(examples_path_text) if examples_path_text else None
 
-        if not examples_path.exists():
+        if examples_path is None or not examples_path.is_dir():
             QMessageBox.warning(
                 self,
                 "Błąd",
@@ -1329,11 +1466,12 @@ class SettingsTabWidget(QWidget):
             )
 
     def _set_default_excel_templates(self):
-        from utils.templates import find_file_newest
+        from utils.templates import LEGAL_TITLES_TEMPLATE_SPECS, find_file_newest
 
-        legal_path = Path(self.path_tytuly_edit.text().strip())
+        legal_path_text = self.path_tytuly_edit.text().strip()
+        legal_path = Path(legal_path_text) if legal_path_text else None
 
-        if not legal_path.exists():
+        if legal_path is None or not legal_path.is_dir():
             QMessageBox.warning(
                 self,
                 "Błąd",
@@ -1342,23 +1480,26 @@ class SettingsTabWidget(QWidget):
             )
             return
 
+        # Nazwy odpowiadają nazwom wzorów dostarczonych z programem.
+        # Stała zachowuje też krótkie nazwy szablon1–3, aby nie zerwać
+        # obsługi wcześniejszych katalogów użytkowników.
         specs = [
-            (self.legal_tmpl_1_edit, ["szablon1", "szablon 1"]),
-            (self.legal_tmpl_2_edit, ["szablon2", "szablon 2"]),
-            (self.legal_tmpl_3_edit, ["szablon3", "szablon 3"]),
+            (self.legal_tmpl_1_edit, *LEGAL_TITLES_TEMPLATE_SPECS[0]),
+            (self.legal_tmpl_2_edit, *LEGAL_TITLES_TEMPLATE_SPECS[1]),
+            (self.legal_tmpl_3_edit, *LEGAL_TITLES_TEMPLATE_SPECS[2]),
         ]
 
         found = []
         missing = []
-        for edit, bases in specs:
+        for edit, label, bases in specs:
             latest = find_file_newest(
                 legal_path, bases, (".xlsx", ".xlsm")
             )
             if latest is not None:
                 edit.setText(str(latest))
-                found.append(latest.name)
+                found.append(f"{label}: {latest.name}")
             else:
-                missing.append(bases[0])
+                missing.append(label)
 
         if found:
             QMessageBox.information(

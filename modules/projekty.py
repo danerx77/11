@@ -552,19 +552,6 @@ class ProjectManagerWidget(QWidget):
         self.projects = cleaned
         self.config['projects'] = self.projects
 
-        # Upewnij się, że stary folder zniknął (siatka bezpieczeństwa – po
-        # przeniesieniu nie powinien istnieć, ale sprzątamy ewentualne resztki).
-        if old_path_str != final_path_str:
-            removed = self._remove_dir_retry(old_path)
-            if not removed:
-                QMessageBox.warning(
-                    self,
-                    'Stary folder pozostał',
-                    f'Projekt używa już nowego folderu:\n{final_path}\n\n'
-                    f'Nie udało się automatycznie usunąć starego folderu:\n{old_path}\n\n'
-                    'Usuń go ręcznie, gdy żaden program nie będzie go używać.',
-                )
-
         self._refresh_tree()
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
@@ -574,7 +561,35 @@ class ProjectManagerWidget(QWidget):
                 self._on_project_selected(item, None)
                 break
         self.project_selected.emit(self.current_project)
+
+        # Po zmianie projektu wszystkie zakładki znają już nową ścieżkę.
+        # Dopiero teraz usuń ewentualne pozostałości starego folderu (np. gdyby
+        # jakiś moduł zdążył zapisać plik stanu do starej ścieżki).
+        self._schedule_old_folder_cleanup(old_path, final_path)
+
         QMessageBox.information(self, 'Zmieniono projekt', f'Zmieniono nazwę folderu projektu na:\n{final_path}')
+
+    def _schedule_old_folder_cleanup(self, old_path: Path, final_path: Path):
+        """Usuwa stary folder projektu (także odroczono, gdyby został odtworzony)."""
+        if str(old_path) == str(final_path):
+            return
+
+        def cleanup():
+            removed = self._remove_dir_retry(old_path)
+            if not removed:
+                QMessageBox.warning(
+                    self,
+                    'Stary folder pozostał',
+                    f'Projekt używa już nowego folderu:\n{final_path}\n\n'
+                    f'Nie udało się automatycznie usunąć starego folderu:\n{old_path}\n\n'
+                    'Zamknij programy korzystające z tego folderu i usuń go ręcznie.',
+                )
+
+        # Spróbuj natychmiast, a potem jeszcze dwukrotnie z opóźnieniem –
+        # na wypadek, gdyby system Windows chwilowo trzymał uchwyty.
+        cleanup()
+        QTimer.singleShot(1500, cleanup)
+        QTimer.singleShot(4000, cleanup)
 
     def _select_project(self, silent=False):
         if not self.current_project: return

@@ -78,6 +78,7 @@ if str(app_dir) not in sys.path:
 from modules.projekty import ProjectManagerWidget
 from modules.status import DashboardTabWidget
 from modules.dzialki import ParcelListWidget
+from modules.sortowanie_dzialek import ParcelSortingWidget
 from modules.wypisy import OwnersListWidget
 from modules.oswiadczenia_woli import DeclGeneratorWidget
 from modules.pisma_przewodnie import CoverLetterWidget
@@ -91,7 +92,13 @@ from modules.tytuly_prawne import LegalTitlesWidget
 from modules.wydziel_pdf import ExtractPdfWidget
 from modules.statystyki_dzialek import ParcelOwnersStatsWidget
 from modules.kw import KWDownloaderWidget
+from modules.kw_2 import KW2ManualWidget
 from modules.krs import KrsDownloaderWidget
+from utils.global_settings import (
+    load_global_druczek_profile,
+    load_global_envelope_preferences,
+    load_global_stamp_settings,
+)
 
 
 class NoComboWheelFilter(QObject):
@@ -206,7 +213,7 @@ class ModuleTabWidget(QWidget):
     """
     Dwurzędowy zamiennik QTabWidget.
 
-    Przy 16 modułach i columns=8 powstają dokładnie dwa rzędy.
+    Przy 17 modułach i columns=9 powstają nadal tylko dwa rzędy.
     Zakładki można przeciągać pomiędzy wszystkimi pozycjami.
     """
 
@@ -455,6 +462,12 @@ class MainWindow(QMainWindow):
         else:
             self.config = self._get_default_config()
 
+        # Profile wspólnych narzędzi są celowo niezależne od projektu i są
+        # zapisywane od razu w katalogu dane. Wczytaj je przed utworzeniem
+        # zakładek, aby Ustawienia, Koperty i Druczki używały tych samych
+        # wartości od pierwszego wyświetlenia.
+        self._load_global_tool_profiles()
+
         if self.examples_path.exists():
             try:
                 with open(self.examples_path, "r", encoding="utf-8") as file:
@@ -463,6 +476,19 @@ class MainWindow(QMainWindow):
                 self.examples = self._get_default_examples()
         else:
             self.examples = self._get_default_examples()
+
+    def _load_global_tool_profiles(self):
+        stamp_settings = load_global_stamp_settings(self.data_dir)
+        if stamp_settings:
+            self.config.update(stamp_settings)
+
+        envelope_preferences = load_global_envelope_preferences(self.data_dir)
+        if envelope_preferences:
+            self.config.update(envelope_preferences)
+
+        druczek_profile = load_global_druczek_profile(self.data_dir)
+        if druczek_profile:
+            self.config["druczek_profile"] = druczek_profile
 
     def save_configuration(self):
         try:
@@ -504,6 +530,32 @@ class MainWindow(QMainWindow):
             "module_tab_order": [],
             "module_tab_order_classic": [],
             "tab_layout_mode": "modern",
+            "parcel_list_filter": "Wszystkie",
+            "parcel_list_sort": "Domyślne",
+            "owners_list_sort_index": 0,
+            "envelope_hide_generated": False,
+            "envelope_show_only_generated": False,
+            "envelope_view_sort": 0,
+            "envelope_generation_sort": 0,
+            "envelope_single_files": False,
+            "envelope_output_dir": "",
+            "envelope_stamps_tab": 0,
+            "envelope_table_state": "",
+            "envelope_splitter_sizes": [],
+            "cover_skip_dead": True,
+            "cover_skip_institution": True,
+            "cover_skip_church": True,
+            "cover_skip_company": False,
+            "cover_skip_spolka": False,
+            "cover_skip_missing_address": True,
+            "cover_skip_invalid_postal_code": True,
+            "parcel_sorter_input": "",
+            "parcel_sorter_result": "",
+            "parcel_sorter_remove_duplicates": False,
+            "parcel_duplicate_cleaner_input": "",
+            "parcel_duplicate_cleaner_result": "",
+            "parcel_sorter_active_tab": 0,
+            "shipment_history_active_tab": 0,
         }
 
     def _get_default_examples(self) -> dict:
@@ -534,11 +586,12 @@ class MainWindow(QMainWindow):
             self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         else:
             self.tab_layout_mode = "modern"
-            self.tabs = ModuleTabWidget(columns=8)
+            self.tabs = ModuleTabWidget(columns=9)
 
         self.project_tab = ProjectManagerWidget(self.config)
         self.dashboard_tab = DashboardTabWidget(self.config)
         self.parcel_tab = ParcelListWidget(self.config)
+        self.parcel_sort_tab = ParcelSortingWidget(self.config)
         self.owners_tab = OwnersListWidget(self.config)
         self.legal_titles_tab = LegalTitlesWidget(self.config)
 
@@ -555,6 +608,7 @@ class MainWindow(QMainWindow):
         self.print_tab = PrintManagerWidget(self.config)
         self.extract_pdf_tab = ExtractPdfWidget(self)
         self.kw_tab = KWDownloaderWidget(self.config)
+        self.kw2_tab = KW2ManualWidget(self.config)
         self.krs_downloader_tab = KrsDownloaderWidget(self.config)
         self.settings_tab = SettingsTabWidget(
             self.config, self.save_configuration
@@ -565,6 +619,7 @@ class MainWindow(QMainWindow):
             (self.project_tab, "📁 Projekty", "📁 Projekty"),
             (self.dashboard_tab, "📊 Status", "📊 Status"),
             (self.parcel_tab, "📋 Działki", "📋 Lista Działek"),
+            (self.parcel_sort_tab, "↕️ Sortuj działki", "↕️ Sortowanie Działek"),
             (self.owners_tab, "👥 Wypisy", "👥 Wypisy"),
             (self.legal_titles_tab, "⚖️ Tytuły prawne", "⚖️ Tytuły Prawne"),
             (self.decl_tab, "📄 Oświadczenia", "📄 Oświadczenia"),
@@ -576,6 +631,7 @@ class MainWindow(QMainWindow):
             (self.extract_pdf_tab, "✂️ Wydziel PDF", "✂️ Wydzielanie PDF"),
             (self.stats_tab, "📈 Statystyki", "📈 Statystyki Działek"),
             (self.kw_tab, "📚 Księgi wieczyste KW", "📚 Księgi Wieczyste KW (PDF)"),
+            (self.kw2_tab, "📖 KW 2 — ręcznie", "📖 KW 2 — ręczne przeglądanie"),
             (self.krs_downloader_tab, "🏛️ KRS", "🏛️ Odpisy KRS"),
             (self.settings_tab, "⚙️ Ustawienia", "⚙️ Ustawienia"),
         ]
@@ -706,6 +762,13 @@ class MainWindow(QMainWindow):
             self.config["last_project_symbol"] = project.get("symbol", "")
             self.save_configuration()
 
+            # Zaktualizuj ścieżkę projektu w zakładkach ZANIM wyczyszczone
+            # zostaną dane. Zakładka Koperty zapisuje plik adresaci.json już
+            # podczas set_owners(), więc musi znać nową ścieżkę — inaczej
+            # zapisze go do STAREJ ścieżki i odtworzy stary folder projektu.
+            self.envelope_tab.set_project(project)
+            self.kw2_tab.set_project(project)
+
             # Czyszczenie danych przed załadowaniem nowego projektu.
             empty_list = []
             self.owners_tab.owners = []
@@ -716,6 +779,7 @@ class MainWindow(QMainWindow):
             self.envelope_tab.set_owners(empty_list)
             self.tracker_tab.set_owners(empty_list)
             self.kw_tab.set_owners(empty_list)
+            self.kw2_tab.set_owners(empty_list)
             self.legal_titles_tab.set_owners(empty_list)
             self.krs_downloader_tab.set_owners(empty_list)
 
@@ -725,7 +789,6 @@ class MainWindow(QMainWindow):
 
             self.decl_tab.set_project(project)
             self.cover_tab.set_project(project)
-            self.envelope_tab.set_project(project)
             self.druczek_tab.set_project(project)
             self.tracker_tab.set_project(project)
             self.print_tab.set_project(project)
@@ -741,10 +804,12 @@ class MainWindow(QMainWindow):
             self.tracker_tab.set_owners(fresh_owners)
             self.print_tab.set_owners(fresh_owners)
             self.kw_tab.set_owners(fresh_owners)
+            self.kw2_tab.set_owners(fresh_owners)
             self.legal_titles_tab.set_owners(fresh_owners)
             self.krs_downloader_tab.set_owners(fresh_owners)
 
             fresh_parcels = self.parcel_tab.get_parcels()
+            self.parcel_sort_tab.set_parcels(fresh_parcels)
             self.decl_tab.set_parcels(fresh_parcels)
             self.cover_tab.set_parcels(fresh_parcels)
             self.legal_titles_tab.set_parcels(fresh_parcels)
@@ -763,6 +828,7 @@ class MainWindow(QMainWindow):
         self.dashboard_tab.set_owners(owners)
         self.stats_tab.set_owners(owners)
         self.kw_tab.set_owners(owners)
+        self.kw2_tab.set_owners(owners)
         self.decl_tab.set_owners(owners)
         self.cover_tab.set_owners(owners)
         self.envelope_tab.set_owners(owners)
@@ -776,6 +842,7 @@ class MainWindow(QMainWindow):
         if self._is_switching_project:
             return
 
+        self.parcel_sort_tab.set_parcels(parcels)
         self.decl_tab.set_parcels(parcels)
         self.cover_tab.set_parcels(parcels)
         self.legal_titles_tab.set_parcels(parcels)
@@ -792,6 +859,7 @@ class MainWindow(QMainWindow):
             self.cover_tab._save_groups()
         self.owners_tab._save_to_project_state()
         self.parcel_tab._save_to_project_state()
+        self.kw2_tab.save_state()
 
         QMessageBox.information(
             self,
@@ -841,6 +909,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._remember_module_tab_order()
+        self.kw2_tab.save_state()
         self.save_configuration()
 
         if self.ocr_overlay is not None:
@@ -1018,6 +1087,50 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 color: #4da6ff;
+            }
+
+            /* Karty osobnej zakładki podsumowania przesyłek. */
+            QFrame#shipment_summary_intro {
+                background-color: #172536;
+                border: 1px solid #315475;
+                border-radius: 10px;
+            }
+            QFrame#shipment_summary_card {
+                background-color: #1e2b38;
+                border: 1px solid #3a5268;
+                border-radius: 9px;
+            }
+            QLabel#shipment_summary_title {
+                color: #f4f9ff;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_description,
+            QLabel#shipment_summary_scope {
+                color: #d5e3ef;
+                font-size: 12px;
+            }
+            QLabel#shipment_summary_overview {
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_card_title {
+                color: #e7f1f9;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#shipment_summary_card_value {
+                color: #ffffff;
+                font-size: 27px;
+                font-weight: 700;
+            }
+            QGroupBox#shipment_status_detail_box {
+                background-color: #1e2b38;
+                border-color: #3a5268;
+            }
+            QGroupBox#shipment_status_detail_box::title {
+                color: #8dcbff;
             }
 
             QTableWidget, QTreeWidget, QListWidget {
@@ -1252,6 +1365,60 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 color: #005a9e;
+            }
+
+            /* Karty osobnej zakładki podsumowania przesyłek.
+               Wszystkie etykiety są celowo czarne w jasnym motywie. */
+            QFrame#shipment_summary_intro {
+                background-color: #e8f3ff;
+                border: 1px solid #9bc7ee;
+                border-radius: 10px;
+            }
+            QFrame#shipment_summary_card {
+                background-color: #ffffff;
+                border: 1px solid #c8d8e8;
+                border-radius: 9px;
+            }
+            QLabel#shipment_summary_title {
+                color: #000000;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_description,
+            QLabel#shipment_summary_scope {
+                color: #000000;
+                font-size: 12px;
+            }
+            QLabel#shipment_summary_overview {
+                color: #000000;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_card_title {
+                color: #000000;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#shipment_summary_card_value {
+                color: #000000;
+                font-size: 27px;
+                font-weight: 700;
+            }
+            QGroupBox#shipment_status_detail_box {
+                background-color: #ffffff;
+                border-color: #c8d8e8;
+            }
+            QGroupBox#shipment_status_detail_box::title {
+                color: #000000;
+            }
+            QTableWidget#shipment_status_summary_table,
+            QTableWidget#shipment_status_summary_table::item {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            QTableWidget#shipment_status_summary_table QHeaderView::section {
+                background-color: #e8f3ff;
+                color: #000000;
             }
 
             QTableWidget, QTreeWidget, QListWidget {

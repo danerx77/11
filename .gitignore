@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+
+# Lokalne, globalne dane aplikacji (profile znaczków i druczków).
+dane/
+
+# Lokalny stan ręcznej pracy modułu KW 2 w folderze projektu.
+kw2_manual_state.json

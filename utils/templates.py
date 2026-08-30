@@ -11,10 +11,118 @@ pasującego do podanej nazwy bazowej (bez numeru wersji).
 from __future__ import annotations
 
 import re
+import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 # Numer wersji na końcu nazwy: "kabla 4", "kabla 10", "kabla v2", "kabla_7" itp.
 _VERSION_SUFFIX = re.compile(r"[\s._-]*[vV]?[\s._-]*(\d{1,4})\b")
+
+# Wersje zapisu folderów dołączanych do programu. W systemie Windows wielkość
+# liter nie ma znaczenia, ale w pozostałych systemach chcemy rozpoznać także
+# folder zapisany przez użytkownika wielką literą lub bez polskich znaków.
+EXAMPLES_FOLDER_NAMES = ("przykłady", "Przykłady", "przyklady", "Przyklady")
+STAMP_FOLDER_NAMES = ("znaczki", "Znaczki")
+LEGAL_TITLES_FOLDER_NAMES = (
+    "tytuły prawne",
+    "Tytuły prawne",
+    "tytuly prawne",
+    "Tytuly prawne",
+)
+
+# (Etykieta widoczna w programie, możliwe początki nazwy pliku).
+# Pierwsze dwa warianty obsługują nazwy wzorów z polskimi znakami i bez nich,
+# a dwa ostatnie zachowują zgodność z dotychczasowymi plikami szablon1–3.
+LEGAL_TITLES_TEMPLATE_SPECS = (
+    (
+        "Wykaz działek podmiotów pozostałych",
+        (
+            "Wykaz działek podmiotów pozostałych",
+            "Wykaz dzialek podmiotow pozostalych",
+            "szablon1",
+            "szablon 1",
+        ),
+    ),
+    (
+        "Wykaz właścicieli nieruchomości szczegółowy",
+        (
+            "Wykaz właścicieli nieruchomości szczegółowy",
+            "Wykaz wlascicieli nieruchomosci szczegolowy",
+            "szablon2",
+            "szablon 2",
+        ),
+    ),
+    (
+        "Nowa tabela końcowa",
+        (
+            "Nowa tabela końcowa",
+            "Nowa tabela koncowa",
+            "szablon3",
+            "szablon 3",
+        ),
+    ),
+)
+
+
+def _existing_directory(value: object) -> Path | None:
+    """Zwraca istniejący katalog wskazany przez folder albo plik."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        path = Path(text).expanduser()
+        if path.is_file():
+            return path.parent
+        if path.is_dir():
+            return path
+    except OSError:
+        return None
+    return None
+
+
+def resolve_template_start_directory(
+    config: Mapping | None,
+    *,
+    config_key: str,
+    folder_names: tuple[str, ...],
+    current_path: object = "",
+    preferred_folder: object = "",
+) -> Path:
+    """Wybiera folder początkowy okna wyboru szablonu.
+
+    Kolejność jest celowa: najpierw używany jest folder wskazany właśnie w
+    Ustawieniach, potem zapisana konfiguracja, następnie katalog obecnie
+    wybranego pliku. Jeśli żaden z nich nie istnieje, szukamy folderu
+    dołączonych przykładów obok aplikacji (oraz obok jej folderu nadrzędnego).
+    Dzięki temu przycisk ``Wybierz`` otwiera od razu folder z przykładami,
+    zamiast przypadkowego katalogu roboczego systemu.
+    """
+    candidates: list[object] = [preferred_folder]
+    if isinstance(config, Mapping):
+        candidates.append(config.get(config_key, ""))
+    candidates.append(current_path)
+
+    for candidate in candidates:
+        directory = _existing_directory(candidate)
+        if directory is not None:
+            return directory
+
+    if getattr(sys, "frozen", False):
+        app_directory = Path(sys.executable).parent.resolve()
+    else:
+        app_directory = Path(__file__).resolve().parent.parent
+
+    for base_directory in (app_directory, app_directory.parent):
+        for folder_name in folder_names:
+            directory = _existing_directory(base_directory / folder_name)
+            if directory is not None:
+                return directory
+
+    # QFileDialog może otworzyć katalog, który zostanie utworzony/dostarczony
+    # później wraz z szablonami. Zwracamy więc przewidywalną ścieżkę zamiast
+    # katalogu domowego albo bieżącego katalogu procesu.
+    return app_directory / (folder_names[0] if folder_names else "")
 
 
 def _version_of(stem: str, base: str):
