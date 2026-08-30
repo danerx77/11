@@ -177,9 +177,21 @@ class ShipmentTrackerWidget(QWidget):
         self.status_cards: dict[str, QLabel] = {}
         card_data = (
             ('all', 'Przesyłki w widoku', 'Łączna liczba przesyłek po zastosowaniu filtrów.'),
-            ('c5', 'Koperty C5', 'Liczba kopert typu C5 w aktualnym widoku.'),
-            ('c6', 'Koperty C6', 'Liczba kopert typu C6 w aktualnym widoku.'),
-            ('printed', 'Na druczku', 'Koperty oznaczone jako wydrukowane na druczku.'),
+            (
+                'delivered',
+                'Doręczono / odebrano',
+                'Liczba przesyłek ze statusem doręczenia lub odbioru.',
+            ),
+            (
+                'other',
+                'Pozostałe statusy',
+                'Wszystkie przesyłki bez potwierdzonego doręczenia lub odbioru.',
+            ),
+            (
+                'not_fetched',
+                'Nie pobrano statusu',
+                'Przesyłki, dla których nie ma jeszcze statusu Poczty Polskiej.',
+            ),
         )
         for column, (key, title, tooltip) in enumerate(card_data):
             cards_layout.addWidget(
@@ -420,13 +432,19 @@ class ShipmentTrackerWidget(QWidget):
         code = self._normalize_stamp_code(shipment.get("stamp_barcode", ""))
         return f"{recipient} [{code[-8:] if code else 'brak kodu'}]"
 
-    def _set_status_card_values(self, *, all_count: int, c5_count: int,
-                                c6_count: int, printed_count: int):
+    def _set_status_card_values(
+        self,
+        *,
+        all_count: int,
+        delivered_count: int,
+        other_count: int,
+        not_fetched_count: int,
+    ):
         values = {
             'all': all_count,
-            'c5': c5_count,
-            'c6': c6_count,
-            'printed': printed_count,
+            'delivered': delivered_count,
+            'other': other_count,
+            'not_fetched': not_fetched_count,
         }
         for key, value in values.items():
             card = self.status_cards.get(key)
@@ -434,9 +452,27 @@ class ShipmentTrackerWidget(QWidget):
                 card.setText(str(value))
 
     def _update_status_summary(self, shipments: list[dict]):
-        """Odświeża wyłącznie zakładkę podsumowania, bez zmiany danych statusu."""
+        """Odświeża podsumowanie statusów bez zmiany danych operatora."""
 
         if not hasattr(self, 'lbl_status_summary'):
+            return
+
+        status_groups = summarize_tracking_statuses(shipments)
+        delivered_count = len(status_groups.get('Doręczona / odebrana', []))
+        other_count = len(shipments) - delivered_count
+        not_fetched_count = len(status_groups.get('Nie pobrano', []))
+        self._set_status_card_values(
+            all_count=len(shipments),
+            delivered_count=delivered_count,
+            other_count=other_count,
+            not_fetched_count=not_fetched_count,
+        )
+
+        self.status_summary_table.setRowCount(0)
+        if not shipments:
+            self.lbl_status_summary.setText(
+                'Brak przesyłek spełniających aktualne filtry.'
+            )
             return
 
         c5_count = sum(
@@ -450,27 +486,15 @@ class ShipmentTrackerWidget(QWidget):
         printed_count = sum(
             bool(shipment.get('printed_on_druczek')) for shipment in shipments
         )
-        self._set_status_card_values(
-            all_count=len(shipments),
-            c5_count=c5_count,
-            c6_count=c6_count,
-            printed_count=printed_count,
-        )
-
-        self.status_summary_table.setRowCount(0)
-        if not shipments:
-            self.lbl_status_summary.setText(
-                'Brak przesyłek spełniających aktualne filtry.'
-            )
-            return
-
         self.lbl_status_summary.setText(
-            f'W aktualnym widoku: {len(shipments)} przesyłek • '
-            f'C5: {c5_count} • C6: {c6_count} • '
+            f'Doręczono / odebrano: {delivered_count} • '
+            f'pozostałe statusy: {other_count} • '
+            f'wszystkie przesyłki: {len(shipments)}.\n'
+            f'Koperty: C5 {c5_count}, C6 {c6_count} • '
             f'wydrukowane na druczku: {printed_count}.'
         )
 
-        for category, entries in summarize_tracking_statuses(shipments).items():
+        for category, entries in status_groups.items():
             labels = [self._shipment_summary_label(entry) for entry in entries[:4]]
             if len(entries) > len(labels):
                 labels.append(f'… i {len(entries) - len(labels)} kolejne')

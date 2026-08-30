@@ -13,7 +13,9 @@ import unicodedata
 from collections.abc import Iterable
 
 _TOKEN_RE = re.compile(r"\d+|\D+")
-_LIST_SEPARATOR_RE = re.compile(r"[\r\n,;\t]+")
+# Po znormalizowaniu spacji wokół ukośnika można bezpiecznie traktować każdą
+# pozostałą spację jako separator kolejnego numeru działki.
+_LIST_SEPARATOR_RE = re.compile(r"[\s,;]+")
 _SLASH_SPACES_RE = re.compile(r"\s*/\s*")
 
 
@@ -54,13 +56,19 @@ def parcel_sort_key(value: object) -> tuple[tuple[object, ...], ...]:
 
 
 def parse_parcel_list(text: object) -> list[str]:
-    """Odczytuje numery działek rozdzielone wierszem, tabulatorem, przecinkiem
-    lub średnikiem.
+    """Odczytuje numery działek rozdzielone spacją, wierszem, tabulatorem,
+    przecinkiem lub średnikiem.
+
+    Spacje wokół ukośnika są najpierw usuwane, dlatego zapis ``1 / 2`` nadal
+    oznacza jeden numer działki, a ``1/2 1/3`` oznacza dwa kolejne numery.
     """
 
+    # Najpierw zabezpieczamy poprawny zapis numeru ze spacjami wokół ukośnika,
+    # dopiero potem rozdzielamy pozostałe białe znaki na kolejne wpisy.
+    source = _SLASH_SPACES_RE.sub("/", str("" if text is None else text))
     return [
         number
-        for raw_value in _LIST_SEPARATOR_RE.split(str("" if text is None else text))
+        for raw_value in _LIST_SEPARATOR_RE.split(source)
         if (number := normalize_parcel_number(raw_value))
     ]
 

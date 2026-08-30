@@ -51,6 +51,20 @@ class ParcelSortingTests(unittest.TestCase):
             [("1/2", 2)],
         )
 
+    def test_space_separated_numbers_work_for_sorting_and_duplicates(self):
+        values = parse_parcel_list("1/2 1/2 1/3")
+
+        self.assertEqual(values, ["1/2", "1/2", "1/3"])
+        self.assertEqual(remove_duplicate_parcel_numbers(values), ["1/2", "1/3"])
+        self.assertEqual(
+            sort_parcel_numbers(parse_parcel_list("5 2 3")), ["2", "3", "5"]
+        )
+
+    def test_duplicate_cleaner_keeps_space_separated_list_order(self):
+        values = parse_parcel_list("5 2 3")
+
+        self.assertEqual(remove_duplicate_parcel_numbers(values), ["5", "2", "3"])
+
 
 if __name__ == "__main__":
     unittest.main()

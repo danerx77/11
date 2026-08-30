@@ -93,9 +93,9 @@ class ParcelSortingWidget(QWidget):
         layout.addLayout(header)
 
         hint = QLabel(
-            "Wpisz lub wklej numery w jednej linii, rozdzielając je przecinkami. "
-            "Możesz także wkleić starszą listę z nowymi wierszami, tabulatorami "
-            "lub średnikami — zostanie zapisana jako zwykła lista z przecinkami."
+            "Wpisz lub wklej numery rozdzielone przecinkami albo spacjami. "
+            "Rozpoznawane są także nowe wiersze, tabulatory i średniki; wynik "
+            "zostanie zapisany jako zwykła lista z przecinkami."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 11px;")
@@ -104,7 +104,7 @@ class ParcelSortingWidget(QWidget):
         input_box = QGroupBox("Lista do posortowania")
         input_layout = QVBoxLayout(input_box)
         self.input_edit = QLineEdit()
-        self.input_edit.setPlaceholderText("np. 12/10, 2, 12/3, 1")
+        self.input_edit.setPlaceholderText("np. 12/10 2 12/3 1")
         self.input_edit.setMinimumHeight(32)
         input_layout.addWidget(self.input_edit)
 
@@ -168,9 +168,11 @@ class ParcelSortingWidget(QWidget):
         layout.addWidget(title)
 
         hint = QLabel(
-            "Ta operacja nie sortuje listy. Dla wpisów „1/2, 1/3, 1/2, 1/4” "
-            "wynikiem będzie „1/2, 1/3, 1/4”. Warianty zapisu „1 / 2” i "
-            "„1/2” są traktowane jako ten sam numer."
+            "Ta operacja nie sortuje listy. Dla wpisów „1/2 1/3 1/2 1/4” "
+            "wynikiem będzie „1/2, 1/3, 1/4”, a „5 2 3” pozostanie w tej "
+            "kolejności. Numery mogą być rozdzielone spacją, przecinkiem, "
+            "średnikiem, tabulatorem lub nowym wierszem. Warianty „1 / 2” "
+            "i „1/2” są traktowane jako ten sam numer."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 11px;")
@@ -179,7 +181,7 @@ class ParcelSortingWidget(QWidget):
         input_box = QGroupBox("Lista do sprawdzenia")
         input_layout = QVBoxLayout(input_box)
         self.duplicate_input_edit = QLineEdit()
-        self.duplicate_input_edit.setPlaceholderText("np. 1/2, 1/3, 1/2, 1/4")
+        self.duplicate_input_edit.setPlaceholderText("np. 1/2 1/3 1/2 1/4")
         self.duplicate_input_edit.setMinimumHeight(32)
         input_layout.addWidget(self.duplicate_input_edit)
 
@@ -359,7 +361,10 @@ class ParcelSortingWidget(QWidget):
         if (
             current_text.strip()
             and not edit.hasSelectedText()
-            and not current_text.rstrip().endswith((",", ";", "\t", "\n"))
+            and not (
+                current_text.endswith((" ", "\t", "\n"))
+                or current_text.rstrip().endswith((",", ";"))
+            )
         ):
             pasted_text = ", " + pasted_text
         edit.insert(pasted_text)
