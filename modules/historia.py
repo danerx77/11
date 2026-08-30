@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from utils.shipment_tracking import (
+    TRACKING_CATEGORY_ORDER,
     format_tracking_event,
     format_tracking_history,
     latest_tracking_event,
@@ -171,31 +172,35 @@ class ShipmentTrackerWidget(QWidget):
         intro_layout.addWidget(self.lbl_status_summary)
         summary_layout.addWidget(summary_intro)
 
+        cards_caption = QLabel('Liczba przesyłek według statusu')
+        cards_caption.setObjectName('shipment_summary_section_title')
+        summary_layout.addWidget(cards_caption)
+
         cards_layout = QGridLayout()
         cards_layout.setHorizontalSpacing(12)
-        cards_layout.setVerticalSpacing(12)
+        cards_layout.setVerticalSpacing(10)
         self.status_cards: dict[str, QLabel] = {}
-        card_data = (
-            ('all', 'Przesyłki w widoku', 'Łączna liczba przesyłek po zastosowaniu filtrów.'),
-            (
-                'delivered',
-                'Doręczono / odebrano',
-                'Liczba przesyłek ze statusem doręczenia lub odbioru.',
-            ),
-            (
-                'other',
-                'Pozostałe statusy',
-                'Wszystkie przesyłki bez potwierdzonego doręczenia lub odbioru.',
-            ),
-            (
-                'not_fetched',
-                'Nie pobrano statusu',
-                'Przesyłki, dla których nie ma jeszcze statusu Poczty Polskiej.',
-            ),
-        )
-        for column, (key, title, tooltip) in enumerate(card_data):
+        card_tooltips = {
+            'Doręczona / odebrana': 'Przesyłki potwierdzone jako doręczone lub odebrane.',
+            'W doręczeniu': 'Przesyłki przekazane do doręczenia.',
+            'W transporcie': 'Przesyłki w drodze albo w sortowni.',
+            'Nadana': 'Przesyłki przyjęte lub nadane, bez kolejnego etapu.',
+            'Awizowana': 'Przesyłki z pozostawionym awizem.',
+            'Zwrot / niedoręczona': 'Przesyłki zwrócone albo niedoręczone.',
+            'Nie pobrano': 'Przesyłki bez pobranego statusu.',
+            'Problem z pobraniem': 'Przesyłki, dla których nie udało się pobrać statusu.',
+            'Inny status': 'Pozostałe zdarzenia Poczty Polskiej.',
+        }
+        for index, category in enumerate(TRACKING_CATEGORY_ORDER):
+            row, column = divmod(index, 3)
             cards_layout.addWidget(
-                self._create_status_card(key, title, tooltip), 0, column
+                self._create_status_card(
+                    category,
+                    category,
+                    card_tooltips.get(category, 'Liczba przesyłek w tej grupie.'),
+                ),
+                row,
+                column,
             )
             cards_layout.setColumnStretch(column, 1)
         summary_layout.addLayout(cards_layout)
@@ -432,24 +437,13 @@ class ShipmentTrackerWidget(QWidget):
         code = self._normalize_stamp_code(shipment.get("stamp_barcode", ""))
         return f"{recipient} [{code[-8:] if code else 'brak kodu'}]"
 
-    def _set_status_card_values(
-        self,
-        *,
-        all_count: int,
-        delivered_count: int,
-        other_count: int,
-        not_fetched_count: int,
-    ):
-        values = {
-            'all': all_count,
-            'delivered': delivered_count,
-            'other': other_count,
-            'not_fetched': not_fetched_count,
-        }
-        for key, value in values.items():
-            card = self.status_cards.get(key)
+    def _set_status_card_values(self, status_groups: dict):
+        """Ustawia licznik dla każdego rozpoznawanego statusu przesyłki."""
+
+        for category in TRACKING_CATEGORY_ORDER:
+            card = self.status_cards.get(category)
             if card is not None:
-                card.setText(str(value))
+                card.setText(str(len(status_groups.get(category, []))))
 
     def _update_status_summary(self, shipments: list[dict]):
         """Odświeża podsumowanie statusów bez zmiany danych operatora."""
@@ -459,14 +453,12 @@ class ShipmentTrackerWidget(QWidget):
 
         status_groups = summarize_tracking_statuses(shipments)
         delivered_count = len(status_groups.get('Doręczona / odebrana', []))
+        in_delivery_count = len(status_groups.get('W doręczeniu', []))
+        in_transit_count = len(status_groups.get('W transporcie', []))
+        sent_count = len(status_groups.get('Nadana', []))
         other_count = len(shipments) - delivered_count
         not_fetched_count = len(status_groups.get('Nie pobrano', []))
-        self._set_status_card_values(
-            all_count=len(shipments),
-            delivered_count=delivered_count,
-            other_count=other_count,
-            not_fetched_count=not_fetched_count,
-        )
+        self._set_status_card_values(status_groups)
 
         self.status_summary_table.setRowCount(0)
         if not shipments:
@@ -488,7 +480,9 @@ class ShipmentTrackerWidget(QWidget):
         )
         self.lbl_status_summary.setText(
             f'Doręczono / odebrano: {delivered_count} • '
-            f'pozostałe statusy: {other_count} • '
+            f'w doręczeniu: {in_delivery_count} • '
+            f'w transporcie: {in_transit_count} • nadano: {sent_count}.\n'
+            f'Pozostałe statusy: {other_count} • nie pobrano: {not_fetched_count} • '
             f'wszystkie przesyłki: {len(shipments)}.\n'
             f'Koperty: C5 {c5_count}, C6 {c6_count} • '
             f'wydrukowane na druczku: {printed_count}.'

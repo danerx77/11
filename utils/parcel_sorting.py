@@ -73,15 +73,30 @@ def parse_parcel_list(text: object) -> list[str]:
     ]
 
 
-def format_parcel_list(values: Iterable[object]) -> str:
-    """Zapisuje numery działek w jednym wierszu, rozdzielając je przecinkiem.
+def parcel_list_output_separator(input_text: object, mode: str = "auto") -> str:
+    """Wybiera separator wyniku zgodnie z ustawieniem widoku.
 
-    Ten format jest używany zarówno w widoku sortera, jak i w zapamiętanych
-    ustawieniach. ``parse_parcel_list`` nadal rozumie także starszy zapis w
-    wielu wierszach, więc wcześniej zapisane listy pozostają kompatybilne.
+    W trybie ``auto`` zachowujemy styl wejścia: obecność przecinka oznacza
+    wynik z przecinkami, a lista wpisana wyłącznie spacjami pozostaje listą
+    rozdzieloną spacjami. Użytkownik może też wymusić każdy z formatów.
     """
 
-    return ", ".join(
+    if mode == "comma":
+        return ", "
+    if mode == "space":
+        return " "
+    return ", " if "," in str("" if input_text is None else input_text) else " "
+
+
+def format_parcel_list(values: Iterable[object], *, separator: str = ", ") -> str:
+    """Zapisuje numery działek poziomo z podanym separatorem.
+
+    Domyślnie stosowany jest przecinek, co zachowuje zgodność z wcześniej
+    zapisanymi listami. Widok może przekazać pojedynczą spację, gdy użytkownik
+    wybrał format bez przecinków. ``parse_parcel_list`` odczytuje oba formaty.
+    """
+
+    return separator.join(
         normalized
         for value in values
         if (normalized := normalize_parcel_number(value))

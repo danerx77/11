@@ -554,6 +554,8 @@ class MainWindow(QMainWindow):
             "parcel_sorter_remove_duplicates": False,
             "parcel_duplicate_cleaner_input": "",
             "parcel_duplicate_cleaner_result": "",
+            "parcel_sorter_result_separator": "auto",
+            "parcel_duplicate_result_separator": "auto",
             "parcel_sorter_active_tab": 0,
             "shipment_history_active_tab": 0,
         }
@@ -1105,6 +1107,11 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 700;
             }
+            QLabel#shipment_summary_section_title {
+                color: #f4f9ff;
+                font-size: 13px;
+                font-weight: 700;
+            }
             QLabel#shipment_summary_description,
             QLabel#shipment_summary_scope {
                 color: #d5e3ef;
@@ -1382,6 +1389,11 @@ class MainWindow(QMainWindow):
             QLabel#shipment_summary_title {
                 color: #000000;
                 font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_section_title {
+                color: #000000;
+                font-size: 13px;
                 font-weight: 700;
             }
             QLabel#shipment_summary_description,

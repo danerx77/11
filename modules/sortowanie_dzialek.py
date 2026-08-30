@@ -7,6 +7,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 from utils.parcel_sorting import (
     find_duplicate_parcel_numbers,
     format_parcel_list,
+    parcel_list_output_separator,
     parse_parcel_list,
     remove_duplicate_parcel_numbers,
     sort_parcel_numbers,
@@ -35,6 +37,8 @@ class ParcelSortingWidget(QWidget):
     UNIQUE_KEY = "parcel_sorter_remove_duplicates"
     DUPLICATE_INPUT_KEY = "parcel_duplicate_cleaner_input"
     DUPLICATE_RESULT_KEY = "parcel_duplicate_cleaner_result"
+    SORT_SEPARATOR_MODE_KEY = "parcel_sorter_result_separator"
+    DUPLICATE_SEPARATOR_MODE_KEY = "parcel_duplicate_result_separator"
     ACTIVE_TAB_KEY = "parcel_sorter_active_tab"
 
     def __init__(self, config: dict, parent=None):
@@ -65,11 +69,31 @@ class ParcelSortingWidget(QWidget):
         self.input_edit.returnPressed.connect(self._sort_ascending)
         self.input_edit.installEventFilter(self)
         self.chk_remove_duplicates.toggled.connect(self._on_unique_toggled)
+        self.sort_separator_combo.currentIndexChanged.connect(
+            self._on_sort_separator_mode_changed
+        )
 
         self.duplicate_input_edit.textChanged.connect(self._on_duplicate_input_changed)
         self.duplicate_input_edit.returnPressed.connect(self._remove_duplicates)
         self.duplicate_input_edit.installEventFilter(self)
+        self.duplicate_separator_combo.currentIndexChanged.connect(
+            self._on_duplicate_separator_mode_changed
+        )
         self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    @staticmethod
+    def _create_separator_combo() -> QComboBox:
+        """Tworzy wybór czy wynik ma zawierać przecinki, czy same spacje."""
+
+        combo = QComboBox()
+        combo.addItem("Automatycznie — jak w wejściu", "auto")
+        combo.addItem("Z przecinkami", "comma")
+        combo.addItem("Bez przecinków (spacje)", "space")
+        combo.setToolTip(
+            "Automatycznie zachowuje przecinki, jeśli zostały użyte w liście. "
+            "Możesz też wymusić wynik z przecinkami albo ze spacjami."
+        )
+        return combo
 
     def _build_sorting_tab(self):
         sorting_page = QWidget()
@@ -94,8 +118,8 @@ class ParcelSortingWidget(QWidget):
 
         hint = QLabel(
             "Wpisz lub wklej numery rozdzielone przecinkami albo spacjami. "
-            "Rozpoznawane są także nowe wiersze, tabulatory i średniki; wynik "
-            "zostanie zapisany jako zwykła lista z przecinkami."
+            "Rozpoznawane są także nowe wiersze, tabulatory i średniki. Niżej "
+            "wybierz automatyczny format, przecinki albo wynik bez przecinków."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 11px;")
@@ -125,6 +149,13 @@ class ParcelSortingWidget(QWidget):
         input_layout.addLayout(input_buttons)
         layout.addWidget(input_box)
 
+        output_format = QHBoxLayout()
+        output_format.addWidget(QLabel("Format wyniku:"))
+        self.sort_separator_combo = self._create_separator_combo()
+        output_format.addWidget(self.sort_separator_combo)
+        output_format.addStretch()
+        layout.addLayout(output_format)
+
         self.btn_sort = QPushButton("↕️ Sortuj rosnąco")
         self.btn_sort.setObjectName("btn_primary")
         self.btn_sort.setMinimumHeight(38)
@@ -140,7 +171,8 @@ class ParcelSortingWidget(QWidget):
         )
         self.result_edit.setMinimumHeight(32)
         self.result_edit.setToolTip(
-            "Lista jest gotowa do skopiowania w formacie: 1/1, 1/2, 1/10."
+            "Lista jest gotowa do skopiowania z wybranym separatorem: "
+            "przecinkami albo spacjami."
         )
         result_layout.addWidget(self.result_edit)
 
@@ -169,10 +201,11 @@ class ParcelSortingWidget(QWidget):
 
         hint = QLabel(
             "Ta operacja nie sortuje listy. Dla wpisów „1/2 1/3 1/2 1/4” "
-            "wynikiem będzie „1/2, 1/3, 1/4”, a „5 2 3” pozostanie w tej "
-            "kolejności. Numery mogą być rozdzielone spacją, przecinkiem, "
-            "średnikiem, tabulatorem lub nowym wierszem. Warianty „1 / 2” "
-            "i „1/2” są traktowane jako ten sam numer."
+            "wynikiem będą „1/2 1/3 1/4” w wybranym formacie, a „5 2 3” "
+            "pozostanie w tej kolejności. Numery mogą być rozdzielone spacją, "
+            "przecinkiem, średnikiem, tabulatorem lub nowym wierszem. Format "
+            "wyniku wybierzesz niżej. Warianty „1 / 2” i „1/2” są traktowane "
+            "jako ten sam numer."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 11px;")
@@ -201,6 +234,13 @@ class ParcelSortingWidget(QWidget):
         input_buttons.addWidget(self.btn_duplicate_clear)
         input_layout.addLayout(input_buttons)
         layout.addWidget(input_box)
+
+        output_format = QHBoxLayout()
+        output_format.addWidget(QLabel("Format wyniku:"))
+        self.duplicate_separator_combo = self._create_separator_combo()
+        output_format.addWidget(self.duplicate_separator_combo)
+        output_format.addStretch()
+        layout.addLayout(output_format)
 
         self.btn_remove_duplicates = QPushButton(
             "🧹 Znajdź i usuń powtórzenia bez sortowania"
@@ -260,17 +300,54 @@ class ParcelSortingWidget(QWidget):
             return True
         return super().eventFilter(watched, event)
 
+    @staticmethod
+    def _restore_separator_mode(combo: QComboBox, saved_mode: object):
+        mode = str(saved_mode or "auto")
+        index = combo.findData(mode)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+
+    @staticmethod
+    def _separator_mode(combo: QComboBox) -> str:
+        return str(combo.currentData() or "auto")
+
+    def _sort_output_separator(self, input_text: object | None = None) -> str:
+        source = self.input_edit.text() if input_text is None else input_text
+        return parcel_list_output_separator(
+            source, self._separator_mode(self.sort_separator_combo)
+        )
+
+    def _duplicate_output_separator(self, input_text: object | None = None) -> str:
+        source = self.duplicate_input_edit.text() if input_text is None else input_text
+        return parcel_list_output_separator(
+            source, self._separator_mode(self.duplicate_separator_combo)
+        )
+
     def _restore_state(self):
         self.input_edit.blockSignals(True)
         self.chk_remove_duplicates.blockSignals(True)
         self.duplicate_input_edit.blockSignals(True)
+        self.sort_separator_combo.blockSignals(True)
+        self.duplicate_separator_combo.blockSignals(True)
         self.tabs.blockSignals(True)
 
+        self._restore_separator_mode(
+            self.sort_separator_combo,
+            self.config.get(self.SORT_SEPARATOR_MODE_KEY, "auto"),
+        )
+        self._restore_separator_mode(
+            self.duplicate_separator_combo,
+            self.config.get(self.DUPLICATE_SEPARATOR_MODE_KEY, "auto"),
+        )
+
+        raw_saved_input = self.config.get(self.INPUT_KEY, "")
+        raw_saved_duplicate_input = self.config.get(self.DUPLICATE_INPUT_KEY, "")
         saved_input = format_parcel_list(
-            parse_parcel_list(self.config.get(self.INPUT_KEY, ""))
+            parse_parcel_list(raw_saved_input),
+            separator=self._sort_output_separator(raw_saved_input),
         )
         saved_duplicate_input = format_parcel_list(
-            parse_parcel_list(self.config.get(self.DUPLICATE_INPUT_KEY, ""))
+            parse_parcel_list(raw_saved_duplicate_input),
+            separator=self._duplicate_output_separator(raw_saved_duplicate_input),
         )
         self.input_edit.setText(saved_input)
         self.duplicate_input_edit.setText(saved_duplicate_input)
@@ -288,15 +365,26 @@ class ParcelSortingWidget(QWidget):
         self.input_edit.blockSignals(False)
         self.chk_remove_duplicates.blockSignals(False)
         self.duplicate_input_edit.blockSignals(False)
+        self.sort_separator_combo.blockSignals(False)
+        self.duplicate_separator_combo.blockSignals(False)
         self.tabs.blockSignals(False)
 
-        # Starsze konfiguracje mogły zawierać numery po jednym wierszu. Przy
-        # odczycie normalizujemy oba pola, aby kolejne zapisanie zachowało
-        # wyłącznie poziomy format z przecinkami.
+        # Zapamiętujemy oba pola w wybranym poziomym formacie. Starsze listy
+        # zapisane pionowo nadal są poprawnie odczytywane przez parse_parcel_list.
         self.config[self.INPUT_KEY] = saved_input
         self.config[self.DUPLICATE_INPUT_KEY] = saved_duplicate_input
+        self.config[self.SORT_SEPARATOR_MODE_KEY] = self._separator_mode(
+            self.sort_separator_combo
+        )
+        self.config[self.DUPLICATE_SEPARATOR_MODE_KEY] = self._separator_mode(
+            self.duplicate_separator_combo
+        )
         previous_result = parse_parcel_list(self.config.get(self.RESULT_KEY, ""))
-        self._set_result_values(previous_result, persist=True)
+        self._set_result_values(
+            previous_result,
+            persist=True,
+            separator=self._sort_output_separator(saved_input),
+        )
 
         previous_duplicate_result = parse_parcel_list(
             self.config.get(self.DUPLICATE_RESULT_KEY, "")
@@ -308,6 +396,7 @@ class ParcelSortingWidget(QWidget):
                 input_count=len(duplicate_values),
                 duplicate_groups=find_duplicate_parcel_numbers(duplicate_values),
                 persist=True,
+                separator=self._duplicate_output_separator(saved_duplicate_input),
             )
         else:
             self._set_duplicate_result_values(
@@ -328,6 +417,27 @@ class ParcelSortingWidget(QWidget):
 
     def _on_tab_changed(self, index: int):
         self.config[self.ACTIVE_TAB_KEY] = index
+
+    def _on_sort_separator_mode_changed(self):
+        self.config[self.SORT_SEPARATOR_MODE_KEY] = self._separator_mode(
+            self.sort_separator_combo
+        )
+        if self._result_values:
+            self._set_result_values(self._result_values, persist=True)
+
+    def _on_duplicate_separator_mode_changed(self):
+        self.config[self.DUPLICATE_SEPARATOR_MODE_KEY] = self._separator_mode(
+            self.duplicate_separator_combo
+        )
+        if self._duplicate_result_values:
+            self._set_duplicate_result_values(
+                self._duplicate_result_values,
+                input_count=len(parse_parcel_list(self.duplicate_input_edit.text())),
+                duplicate_groups=find_duplicate_parcel_numbers(
+                    parse_parcel_list(self.duplicate_input_edit.text())
+                ),
+                persist=True,
+            )
 
     def _on_input_changed(self):
         self.config[self.INPUT_KEY] = self.input_edit.text()
@@ -356,7 +466,9 @@ class ParcelSortingWidget(QWidget):
         if not values:
             return
 
-        pasted_text = format_parcel_list(values)
+        pasted_text = format_parcel_list(
+            values, separator=parcel_list_output_separator(clipboard_text)
+        )
         current_text = edit.text()
         if (
             current_text.strip()
@@ -366,7 +478,7 @@ class ParcelSortingWidget(QWidget):
                 or current_text.rstrip().endswith((",", ";"))
             )
         ):
-            pasted_text = ", " + pasted_text
+            pasted_text = parcel_list_output_separator(current_text) + pasted_text
         edit.insert(pasted_text)
         edit.setFocus()
 
@@ -423,9 +535,11 @@ class ParcelSortingWidget(QWidget):
         )
 
     def _sort_ascending(self):
-        values = parse_parcel_list(self.input_edit.text())
+        input_text = self.input_edit.text()
+        values = parse_parcel_list(input_text)
+        separator = self._sort_output_separator(input_text)
         if not values:
-            self._set_result_values([], persist=True)
+            self._set_result_values([], persist=True, separator=separator)
             QMessageBox.information(
                 self,
                 "Brak numerów",
@@ -433,22 +547,28 @@ class ParcelSortingWidget(QWidget):
             )
             return
 
-        # Zapis wejścia również normalizujemy do poziomego formatu, bez
-        # zmieniania kolejności podanej przez użytkownika przed sortowaniem.
-        formatted_input = format_parcel_list(values)
-        if self.input_edit.text() != formatted_input:
+        # Zapis wejścia również normalizujemy do poziomego formatu, lecz
+        # zachowujemy wybrany przez użytkownika separator wyniku.
+        formatted_input = format_parcel_list(values, separator=separator)
+        if input_text != formatted_input:
             self.input_edit.setText(formatted_input)
 
         result = sort_parcel_numbers(
             values, unique=self.chk_remove_duplicates.isChecked()
         )
-        self._set_result_values(result, persist=True)
+        self._set_result_values(result, persist=True, separator=separator)
 
     def _remove_duplicates(self):
-        values = parse_parcel_list(self.duplicate_input_edit.text())
+        input_text = self.duplicate_input_edit.text()
+        values = parse_parcel_list(input_text)
+        separator = self._duplicate_output_separator(input_text)
         if not values:
             self._set_duplicate_result_values(
-                [], input_count=0, duplicate_groups=[], persist=True
+                [],
+                input_count=0,
+                duplicate_groups=[],
+                persist=True,
+                separator=separator,
             )
             QMessageBox.information(
                 self,
@@ -457,8 +577,8 @@ class ParcelSortingWidget(QWidget):
             )
             return
 
-        formatted_input = format_parcel_list(values)
-        if self.duplicate_input_edit.text() != formatted_input:
+        formatted_input = format_parcel_list(values, separator=separator)
+        if input_text != formatted_input:
             self.duplicate_input_edit.setText(formatted_input)
 
         duplicate_groups = find_duplicate_parcel_numbers(values)
@@ -468,11 +588,21 @@ class ParcelSortingWidget(QWidget):
             input_count=len(values),
             duplicate_groups=duplicate_groups,
             persist=True,
+            separator=separator,
         )
 
-    def _set_result_values(self, values: list[str], *, persist: bool):
+    def _set_result_values(
+        self,
+        values: list[str],
+        *,
+        persist: bool,
+        separator: str | None = None,
+    ):
         self._result_values = list(values)
-        text = format_parcel_list(self._result_values)
+        text = format_parcel_list(
+            self._result_values,
+            separator=separator or self._sort_output_separator(),
+        )
         self.result_edit.setText(text)
         self.lbl_count.setText(f"Działek: {len(self._result_values)}")
         if persist:
@@ -485,9 +615,13 @@ class ParcelSortingWidget(QWidget):
         input_count: int,
         duplicate_groups: list[tuple[str, int]],
         persist: bool,
+        separator: str | None = None,
     ):
         self._duplicate_result_values = list(values)
-        text = format_parcel_list(self._duplicate_result_values)
+        text = format_parcel_list(
+            self._duplicate_result_values,
+            separator=separator or self._duplicate_output_separator(),
+        )
         self.duplicate_result_edit.setText(text)
         removed_count = max(0, input_count - len(self._duplicate_result_values))
         self.lbl_duplicate_count.setText(

@@ -5,6 +5,7 @@ import unittest
 from utils.parcel_sorting import (
     find_duplicate_parcel_numbers,
     format_parcel_list,
+    parcel_list_output_separator,
     parse_parcel_list,
     remove_duplicate_parcel_numbers,
     sort_parcel_numbers,
@@ -33,6 +34,15 @@ class ParcelSortingTests(unittest.TestCase):
             format_parcel_list(parse_parcel_list(old_saved_value)),
             "12/10, 2, 12/3, 1",
         )
+
+    def test_result_separator_can_follow_or_override_input_style(self):
+        values = ["1/2", "1/3"]
+
+        self.assertEqual(parcel_list_output_separator("1/2 1/3"), " ")
+        self.assertEqual(parcel_list_output_separator("1/2, 1/3"), ", ")
+        self.assertEqual(parcel_list_output_separator("1/2 1/3", "comma"), ", ")
+        self.assertEqual(parcel_list_output_separator("1/2, 1/3", "space"), " ")
+        self.assertEqual(format_parcel_list(values, separator=" "), "1/2 1/3")
 
     def test_unique_sort_keeps_first_spelling(self):
         result = sort_parcel_numbers(["1 / 2", "1/2", "1/10"], unique=True)
