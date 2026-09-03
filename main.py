@@ -1,5 +1,5 @@
 """
-main.py – Główny punkt wejściowy aplikacji Pysilde 6.
+main.py – Główny punkt wejściowy aplikacji EnergoDok.
 
 Wersja z dwurzędowym paskiem modułów. Zakładki można ręcznie
 przeciągać między pozycjami, a ich kolejność jest zapisywana w konfiguracji.
@@ -53,8 +53,14 @@ def _bundled_asset_candidates(folder_name: str) -> list[Path]:
     ]
 
 
-APP_ICON_NAME = "pysilde6.ico"
-APP_ICON_PNG_NAME = "pysilde6.png"
+# Nazwa programu w jednym miejscu — pasek okna, ikona, plik EXE.
+APP_NAME = "EnergoDok"
+APP_SLUG = "EnergoDok"
+
+APP_ICON_NAME = f"{APP_SLUG.lower()}.ico"
+APP_ICON_PNG_NAME = f"{APP_SLUG.lower()}.png"
+# Starsze wydania nosiły inną nazwę — ikona z nich nadal się wczyta.
+LEGACY_ICON_NAMES = ("pysilde6.ico", "pysilde6.png")
 
 
 def app_icon_path() -> Path | None:
@@ -67,6 +73,10 @@ def app_icon_path() -> Path | None:
     for folder in _bundled_asset_candidates("assets"):
         candidates.append(folder / APP_ICON_NAME)
         candidates.append(folder / APP_ICON_PNG_NAME)
+    for legacy in LEGACY_ICON_NAMES:
+        candidates.append(app_dir / "assets" / legacy)
+        for folder in _bundled_asset_candidates("assets"):
+            candidates.append(folder / legacy)
     for candidate in candidates:
         try:
             if candidate.is_file():
@@ -122,7 +132,7 @@ def setup_easyocr_models() -> None:
     for path in _bundled_asset_candidates("easyocr-data"):
         model_path = path / "model"
         if model_path.is_dir():
-            os.environ["PYSILDE6_EASYOCR_MODEL_DIR"] = str(model_path)
+            os.environ["ENERGODOK_EASYOCR_MODEL_DIR"] = str(model_path)
             break
 
 
@@ -169,7 +179,7 @@ class NoComboWheelFilter(QObject):
         return super().eventFilter(obj, event)
 
 
-TAB_MIME_TYPE = "application/x-pysilde-module-tab"
+TAB_MIME_TYPE = "application/x-energodok-module-tab"
 KW2_TAB_NAME = "📖 KW2"
 # Starsze nazwy karty. Dzięki temu zapisana kolejność modułów nie gubi się po
 # powrocie z nazwy "eKW" do "KW2".
@@ -509,9 +519,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle(
-            "Pysilde 6 – Zarządzanie Inwestycjami Elektroenergetycznymi"
-        )
+        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(load_app_icon())
         self.setMinimumSize(1200, 800)
 
@@ -900,7 +908,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Aktywny projekt: {project_name} ({project.get('path')})"
             )
-            self.setWindowTitle(f"Pysilde 6 – [Projekt: {project_name}]")
+            self.setWindowTitle(f"{APP_NAME} – [Projekt: {project_name}]")
 
             self.config["last_project_path"] = project.get("path")
             self.config["last_project_symbol"] = project.get("symbol", "")
@@ -1250,6 +1258,33 @@ class MainWindow(QMainWindow):
                 border: 1px solid #3a5268;
                 border-radius: 9px;
             }
+            QLabel#info_banner {
+                background-color: #1b2a3a;
+                color: #d5e3ef;
+                border-left: 4px solid #2b78c5;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QLabel#muted_hint {
+                color: #9fb3c5;
+            }
+            QScrollArea#preview_area {
+                border: 2px dashed #46586a;
+                background: #2b3a47;
+            }
+            QGroupBox#druczki_field_group {
+                font-weight: bold;
+                border: 1px solid #3a5268;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 12px;
+                background: #1e2b38;
+            }
+            QGroupBox#druczki_field_group::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                color: #8ab4f8;
+            }
             QLabel#naming_preview {
                 background-color: #1e2b38;
                 color: #e7f1f9;
@@ -1553,6 +1588,33 @@ class MainWindow(QMainWindow):
                 border: 1px solid #c8d8e8;
                 border-radius: 9px;
             }
+            QLabel#info_banner {
+                background-color: #eaf4ff;
+                color: #45647c;
+                border-left: 4px solid #2b78c5;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QLabel#muted_hint {
+                color: #6b7a88;
+            }
+            QScrollArea#preview_area {
+                border: 2px dashed #a4b0be;
+                background: #e0e0e0;
+            }
+            QGroupBox#druczki_field_group {
+                font-weight: bold;
+                border: 1px solid #d1d8e0;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 12px;
+                background: #f8f9fa;
+            }
+            QGroupBox#druczki_field_group::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                color: #3b3b98;
+            }
             QLabel#naming_preview {
                 background-color: #f4f6f8;
                 color: #000000;
@@ -1666,7 +1728,7 @@ if __name__ == "__main__":
             import ctypes
 
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "Pysilde6.Aplikacja"
+                f"{APP_SLUG}.Aplikacja"
             )
         except Exception:
             pass

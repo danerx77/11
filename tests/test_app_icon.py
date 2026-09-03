@@ -14,16 +14,16 @@ except Exception:  # pragma: no cover - Pillow zawsze jest w wymaganiach
     Image = None
 
 ROOT = Path(__file__).resolve().parent.parent
-ICON_ICO = ROOT / 'assets' / 'pysilde6.ico'
-ICON_PNG = ROOT / 'assets' / 'pysilde6.png'
+ICON_ICO = ROOT / 'assets' / 'energodok.ico'
+ICON_PNG = ROOT / 'assets' / 'energodok.png'
 
 
 class AppIconFileTests(unittest.TestCase):
     def test_icon_file_exists(self):
-        self.assertTrue(ICON_ICO.is_file(), 'Brak pliku assets/pysilde6.ico')
+        self.assertTrue(ICON_ICO.is_file(), 'Brak pliku assets/energodok.ico')
 
     def test_png_preview_exists(self):
-        self.assertTrue(ICON_PNG.is_file(), 'Brak podglądu assets/pysilde6.png')
+        self.assertTrue(ICON_PNG.is_file(), 'Brak podglądu assets/energodok.png')
 
     def test_generator_script_exists(self):
         self.assertTrue((ROOT / 'tools' / 'make_app_icon.py').is_file())
@@ -75,6 +75,44 @@ class AppIconWiringTests(unittest.TestCase):
         raw = (ROOT / 'build_windows.ps1').read_bytes()
         self.assertTrue(raw.startswith(b'\xef\xbb\xbf'), 'Brak znacznika BOM')
         self.assertTrue(all(byte < 128 for byte in raw[3:]))
+
+
+class AppNameTests(unittest.TestCase):
+    """Nazwa programu ma być krótka i spójna w oknie, w EXE i w ikonie."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.main_source = (ROOT / 'main.py').read_text(encoding='utf-8')
+        cls.build_source = (ROOT / 'build_windows.ps1').read_text(
+            encoding='utf-8-sig'
+        )
+
+    def test_app_name_constant_exists(self):
+        self.assertIn('APP_NAME = "EnergoDok"', self.main_source)
+
+    def test_window_title_uses_the_constant(self):
+        self.assertIn('self.setWindowTitle(APP_NAME)', self.main_source)
+
+    def test_old_name_is_gone_from_the_app(self):
+        """Stara nazwa nie może zostać nigdzie w interfejsie."""
+        lowered = self.main_source.lower()
+        self.assertNotIn('pysilde 6', lowered)
+        self.assertNotIn('zarządzanie inwestycjami', lowered)
+
+    def test_old_name_only_survives_as_icon_fallback(self):
+        """Jedyne dopuszczalne wystąpienie to zgodność ze starą ikoną."""
+        for line in self.main_source.splitlines():
+            if 'pysilde6' in line.lower():
+                self.assertIn('LEGACY_ICON_NAMES', line)
+
+    def test_exe_is_built_under_the_new_name(self):
+        self.assertIn('$AppName = "EnergoDok"', self.build_source)
+        self.assertNotIn('Pysilde6', self.build_source)
+
+    def test_project_title_keeps_the_new_name(self):
+        self.assertIn(
+            'f"{APP_NAME} – [Projekt: {project_name}]"', self.main_source
+        )
 
 
 if __name__ == '__main__':

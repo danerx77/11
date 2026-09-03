@@ -14,7 +14,12 @@ def _easyocr_reader_options() -> dict:
     tylko-do-odczytu katalogu programu; przy niekompletnej paczce nastąpi
     kontrolowane przejście do awaryjnego OCR Tesseract.
     """
-    bundled_model_dir = os.environ.get("PYSILDE6_EASYOCR_MODEL_DIR", "").strip()
+    bundled_model_dir = os.environ.get("ENERGODOK_EASYOCR_MODEL_DIR", "").strip()
+    if not bundled_model_dir:
+        # Zgodność ze starszym wydaniem programu.
+        bundled_model_dir = os.environ.get(
+            "PYSILDE6_EASYOCR_MODEL_DIR", ""
+        ).strip()
     if bundled_model_dir:
         return {
             "model_storage_directory": bundled_model_dir,

@@ -115,7 +115,7 @@ class DruczekSettingsDialog(QDialog):
         layout.addWidget(btn_box)
         
         self.scroll_area = QScrollArea()
-        self.scroll_area.setStyleSheet("QScrollArea { border: 2px dashed #a4b0be; background: #e0e0e0; }")
+        self.scroll_area.setObjectName("preview_area")
         self.lbl_preview = QLabel("Generowanie podglądu...")
         self.lbl_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.scroll_area.setWidget(self.lbl_preview)
@@ -147,10 +147,7 @@ class DruczekSettingsDialog(QDialog):
 
     def _build_field_group(self, title, pfx):
         gb = QGroupBox(title)
-        gb.setStyleSheet("""
-            QGroupBox { font-weight: bold; border: 1px solid #d1d8e0; border-radius: 5px; margin-top: 10px; padding-top: 12px; background: #f8f9fa; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #3b3b98; }
-        """)
+        gb.setObjectName("druczki_field_group")
         ly = QFormLayout(gb)
         ly.addRow("Pozycja (X, Y):", self._row_widgets(self._mk_w(f'{pfx}_x', 0, 1000), self._mk_w(f'{pfx}_y', 0, 1000)))
         ly.addRow("Rozmiar (Szer, Wys):", self._row_widgets(self._mk_w(f'{pfx}_w', 10, 500), self._mk_w(f'{pfx}_h', 10, 200)))

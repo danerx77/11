@@ -305,10 +305,7 @@ class KW2ManualWidget(QWidget):
             "widocznego Chrome dla jednego zaznaczonego numeru i wybranych działów PDF."
         )
         info.setWordWrap(True)
-        info.setStyleSheet(
-            "color: #45647c; background: #eaf4ff; border-left: 4px solid #2b78c5; "
-            "padding: 8px; border-radius: 4px;"
-        )
+        info.setObjectName("info_banner")
         layout.addWidget(info)
 
         chrome_box = QGroupBox("Pobierz jedną zaznaczoną KW przez Chrome")

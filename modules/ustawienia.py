@@ -1,5 +1,5 @@
 """
-settings_tab.py – Zakładka ustawień aplikacji Pysilde 6.
+settings_tab.py – Zakładka ustawień aplikacji EnergoDok.
 
 Obsługuje również wybór wyglądu głównej nawigacji:
 - modern: dwa rzędy przeciąganych zakładek,
@@ -551,10 +551,7 @@ class SettingsTabWidget(QWidget):
             "można nadal świadomie wymusić z poziomu modułu Pisma."
         )
         cover_rules_info.setWordWrap(True)
-        cover_rules_info.setStyleSheet(
-            "color:#607d8b; background:#edf7fb; border-left:3px solid #2196f3; "
-            "padding:8px; border-radius:4px;"
-        )
+        cover_rules_info.setObjectName("info_banner")
         cover_rules_layout.addWidget(cover_rules_info)
 
         cover_type_box = QGroupBox("Typ właściciela — nie generuj pisma dla")

@@ -88,7 +88,7 @@ class IndicatorImportDialog(QDialog):
             "Wiersze zaczynające się od # są pomijane."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
+        hint.setObjectName("muted_hint")
         layout.addWidget(hint)
 
         self.text_edit = QPlainTextEdit()
@@ -163,10 +163,7 @@ class ParcelIndicatorWidget(QWidget):
             "albo pobrać z listy działek i wypisów."
         )
         info.setWordWrap(True)
-        info.setStyleSheet(
-            "color: #45647c; background: #eaf4ff; border-left: 4px solid #2b78c5; "
-            "padding: 8px; border-radius: 4px;"
-        )
+        info.setObjectName("info_banner")
         layout.addWidget(info)
 
         layout.addWidget(self._build_source_box())

@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    Builds the Windows onedir release in dist\Pysilde6.
+    Builds the Windows onedir release in dist\EnergoDok.
 
 .DESCRIPTION
     Run this file on 64-bit Windows from an activated Python virtual environment.
@@ -27,7 +27,7 @@ param(
     # Do not bundle EasyOCR/Tesseract Python dependencies and EasyOCR models.
     [switch]$SkipOcr,
 
-    # Keep previous build files instead of deleting build and dist\Pysilde6 first.
+    # Keep previous build files instead of deleting build and dist\EnergoDok first.
     [switch]$KeepBuildFiles,
 
     # Skip compileall and unit tests before PyInstaller starts.
@@ -147,10 +147,10 @@ if ((-not $SkipOcr) -and (-not (Get-Command "tesseract.exe" -ErrorAction Silentl
     Write-Warning "tesseract.exe was not found. The packaged pytesseract wrapper needs a separate Tesseract OCR installation with the pol language on the target PC."
 }
 
-$AppName = "Pysilde6"
-$AppIconPath = Join-Path $ProjectRoot "assets\pysilde6.ico"
+$AppName = "EnergoDok"
+$AppIconPath = Join-Path $ProjectRoot "assets\energodok.ico"
 if (-not (Test-Path -LiteralPath $AppIconPath)) {
-    Write-Host "Application icon not found. Generating assets\pysilde6.ico..." -ForegroundColor Cyan
+    Write-Host "Application icon not found. Generating assets\energodok.ico..." -ForegroundColor Cyan
     & $PythonExe (Join-Path $ProjectRoot "tools\make_app_icon.py")
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Icon generation failed. The EXE will use the default PyInstaller icon."

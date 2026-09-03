@@ -9,7 +9,7 @@ Poniżej opis dziewięciu zgłoszonych punktów. Wszystko jest już w gałęzi
 
 Program ma teraz własną ikonę aplikacji, a nie tylko ikonkę na zakładce.
 
-* `assets/pysilde6.ico` — rozmiary 16, 20, 24, 32, 40, 48, 64, 96, 128, 256 px
+* `assets/energodok.ico` — rozmiary 16, 20, 24, 32, 40, 48, 64, 96, 128, 256 px
   (Windows sam dobiera właściwy do paska zadań, Alt+Tab i podglądu pliku).
 * `tools/make_app_icon.py` — generator ikony. Korzysta wyłącznie z Pillow,
   które jest już w `requirements-windows.txt`. Aby wygenerować ponownie:
@@ -17,10 +17,10 @@ Program ma teraz własną ikonę aplikacji, a nie tylko ikonkę na zakładce.
 * Ikona jest ustawiana w trzech miejscach:
   * `QApplication.setWindowIcon(...)` — pasek zadań i okna dialogowe,
   * `MainWindow.setWindowIcon(...)` — belka okna,
-  * `--icon assets/pysilde6.ico` w PyInstallerze — sam plik EXE.
+  * `--icon assets/energodok.ico` w PyInstallerze — sam plik EXE.
 * Dodatkowo ustawiany jest `AppUserModelID`. Bez tego Windows pokazywałby na
   pasku zadań ikonę Pythona zamiast ikony programu.
-* Aby użyć własnej grafiki, wystarczy podmienić `assets/pysilde6.ico` —
+* Aby użyć własnej grafiki, wystarczy podmienić `assets/energodok.ico` —
   skrypt budujący nie nadpisuje istniejącego pliku.
 
 ## 2. Powrót nazwy `eKW` na `KW2`
@@ -154,6 +154,32 @@ obrębu do poszczególnych działek.
   **„Odmieniaj tag <Miejscowość działki:> (np. Gdańsk → Gdańsku,
   Sopot → Sopocie)”**, a informacja o zapisie bez dwukropka i bez polskich
   znaków przeniosła się do dymka.
+
+---
+
+# Trzecia tura poprawek
+
+## 15. Nowa nazwa programu — EnergoDok
+
+* Pasek okna pokazuje teraz po prostu **„EnergoDok”** (wcześniej „Pysilde 6 –
+  Zarządzanie Inwestycjami Elektroenergetycznymi”). Po wybraniu projektu:
+  **„EnergoDok – [Projekt: OBI/123/2026]”**.
+* Plik programu nazywa się **`EnergoDok.exe`** i powstaje w katalogu
+  **`dist\EnergoDok`**. Ikona to `assets/energodok.ico` (litera **E** pasuje
+  do nowej nazwy).
+* Nazwa siedzi w **jednym miejscu** w kodzie (`APP_NAME` w `main.py`), więc
+  przy kolejnej zmianie nie trzeba jej poprawiać w kilkunastu plikach.
+* Program nadal wczyta ikonę ze starego wydania, jeśli gdzieś zostanie —
+  nic się nie wysypie po aktualizacji.
+
+## 16. Ramka „Zestawienie działek” w trybie nocnym
+
+* Niebieska ramka z opisem na górze modułu **Wskaźnik** była na sztywno
+  biało-kremowa i w trybie nocnym raziła w oczy. Teraz ma ciemne tło i jasny
+  tekst, a w trybie dziennym wygląda jak dotąd.
+* Ta sama poprawka objęła **wszystkie takie ramki w programie**, nie tylko
+  jedną: opis w module **KW2**, ramkę reguł pism w **Ustawieniach** oraz
+  podgląd druczka i grupy pól w **Druczkach** — one też świeciły na biało.
 
 ---
 

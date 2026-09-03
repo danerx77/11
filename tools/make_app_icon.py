@@ -1,4 +1,4 @@
-"""Generuje ikonę aplikacji: assets/pysilde6.ico oraz assets/pysilde6.png.
+"""Generuje ikonę aplikacji: assets/energodok.ico oraz assets/energodok.png.
 
 Ikona jest rysowana w dużej rozdzielczości i pomniejszana z wygładzaniem,
 dzięki czemu każdy rozmiar zapisany w pliku ICO pozostaje czytelny — również
@@ -30,6 +30,8 @@ BACKGROUND_TOP = (43, 139, 239)
 BACKGROUND_BOTTOM = (13, 79, 158)
 BORDER_COLOR = (8, 53, 108)
 LETTER_COLOR = (255, 255, 255)
+# Litera na ikonie — pierwsza litera nazwy programu (EnergoDok).
+APP_LETTER = "E"
 BOLT_COLOR = (255, 211, 77)
 BOLT_EDGE = (181, 124, 0)
 
@@ -106,10 +108,10 @@ def render_master() -> Image.Image:
     # Litera E – znak rozpoznawczy programu. Jest lekko przesunięta w lewo,
     # aby odznaka z błyskawicą w prawym dolnym rogu jej nie zasłaniała.
     font = _load_font(round(size * 0.60))
-    letter_box = draw.textbbox((0, 0), "E", font=font)
+    letter_box = draw.textbbox((0, 0), APP_LETTER, font=font)
     letter_x = (size - (letter_box[2] - letter_box[0])) / 2 - letter_box[0] - size * 0.085
     letter_y = (size - (letter_box[3] - letter_box[1])) / 2 - letter_box[1] - size * 0.055
-    draw.text((letter_x, letter_y), "E", font=font, fill=LETTER_COLOR + (255,))
+    draw.text((letter_x, letter_y), APP_LETTER, font=font, fill=LETTER_COLOR + (255,))
 
     # Błyskawica jako osobna odznaka: czytelny znak inwestycji
     # elektroenergetycznych, który nie nachodzi na literę.
@@ -165,10 +167,10 @@ def render_small_master() -> Image.Image:
     )
 
     font = _load_font(round(size * 0.70))
-    letter_box = draw.textbbox((0, 0), "E", font=font)
+    letter_box = draw.textbbox((0, 0), APP_LETTER, font=font)
     letter_x = (size - (letter_box[2] - letter_box[0])) / 2 - letter_box[0]
     letter_y = (size - (letter_box[3] - letter_box[1])) / 2 - letter_box[1]
-    draw.text((letter_x, letter_y), "E", font=font, fill=LETTER_COLOR + (255,))
+    draw.text((letter_x, letter_y), APP_LETTER, font=font, fill=LETTER_COLOR + (255,))
     return image
 
 
@@ -189,8 +191,8 @@ def main() -> int:
     images = build_images()
     largest = images[-1]
 
-    ico_path = assets_dir / "pysilde6.ico"
-    png_path = assets_dir / "pysilde6.png"
+    ico_path = assets_dir / "energodok.ico"
+    png_path = assets_dir / "energodok.png"
 
     largest.save(
         ico_path,
