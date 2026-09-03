@@ -146,8 +146,9 @@ def document_naming_defaults() -> dict[str, Any]:
         # z numerem działki jest opcją, którą użytkownik włącza w Ustawieniach.
         DECLARATION_PARCEL_MODE_KEY: "none",
         COVER_PARCEL_MODE_KEY: "none",
-        DECLARATION_PARCEL_LIMIT_KEY: 3,
-        COVER_PARCEL_LIMIT_KEY: 3,
+        # Domyślnie w nazwie mieści się jeden numer działki.
+        DECLARATION_PARCEL_LIMIT_KEY: 1,
+        COVER_PARCEL_LIMIT_KEY: 1,
         DECLARATION_PARCEL_SEPARATOR_KEY: ", ",
         COVER_PARCEL_SEPARATOR_KEY: ", ",
         NAME_STYLE_KEY: "initials",
@@ -190,7 +191,7 @@ def format_parcel_suffix(
     parcels: Iterable[object],
     *,
     mode: str = "single",
-    limit: int = 3,
+    limit: int = 1,
     separator: str = ", ",
 ) -> str:
     """Buduje dopisek z numerami działek zgodnie z wybraną regułą.
@@ -345,7 +346,7 @@ def declaration_filename(
         _parcel_values(
             list(parcels),
             mode=str(config.get(DECLARATION_PARCEL_MODE_KEY, "single")),
-            limit=config.get(DECLARATION_PARCEL_LIMIT_KEY, 3),
+            limit=config.get(DECLARATION_PARCEL_LIMIT_KEY, 1),
             separator=str(config.get(DECLARATION_PARCEL_SEPARATOR_KEY, ", ")),
         )
     )
@@ -400,7 +401,7 @@ def cover_letter_filename(
         _parcel_values(
             list(parcels),
             mode=str(config.get(COVER_PARCEL_MODE_KEY, "single")),
-            limit=config.get(COVER_PARCEL_LIMIT_KEY, 3),
+            limit=config.get(COVER_PARCEL_LIMIT_KEY, 1),
             separator=str(config.get(COVER_PARCEL_SEPARATOR_KEY, ", ")),
         )
     )

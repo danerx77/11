@@ -440,11 +440,12 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", self.chk_decl_precinct_upper)
 
         self.chk_decl_location_locative = QCheckBox(
-            "Odmieniaj tagi <Miejscowość działki:> / <Miejscowość działki> "
-            "(np. Gdynia → Gdyni, Żukowo → Żukowie, Kartuzy → Kartuzach)"
+            "Odmieniaj tag <Miejscowość działki:> "
+            "(np. Gdańsk → Gdańsku, Sopot → Sopocie)"
         )
         self.chk_decl_location_locative.setToolTip(
-            "Dotyczy standardowych tagów miejscowości w Oświadczeniach i Pismach."
+            "Dotyczy standardowych tagów miejscowości w Oświadczeniach i Pismach.\n"
+            "Działa też dla zapisu bez dwukropka oraz bez polskich znaków."
         )
         decl_form.addRow("", self.chk_decl_location_locative)
 
@@ -970,11 +971,8 @@ class SettingsTabWidget(QWidget):
             "działki na końcu nazwy, wybierz w polu „numer działki” opcję "
             "„Tylko gdy właściciel ma dokładnie jedną działkę”."
         )
+        info.setObjectName("naming_hint")
         info.setWordWrap(True)
-        info.setStyleSheet(
-            "color:#607d8b; background:#edf7fb; border-left:3px solid #2196f3; "
-            "padding:6px; border-radius:3px;"
-        )
         layout.addWidget(info)
 
         form = QFormLayout()
@@ -1067,20 +1065,19 @@ class SettingsTabWidget(QWidget):
         layout.addLayout(form)
 
         self.lbl_naming_preview = QLabel()
+        # Kolory nadaje motyw (jasny/ciemny) w main.py, dzięki czemu napis
+        # jest czytelny także w trybie nocnym.
+        self.lbl_naming_preview.setObjectName("naming_preview")
         self.lbl_naming_preview.setWordWrap(True)
         self.lbl_naming_preview.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.lbl_naming_preview.setStyleSheet(
-            "background:#f4f6f8; border:1px solid #d0d7de; padding:6px; "
-            "border-radius:3px; font-family:Consolas,monospace;"
         )
         layout.addWidget(self.lbl_naming_preview)
 
         fields_text = "  •  ".join(f"{tag} – {desc}" for tag, desc in TEMPLATE_FIELDS)
         fields = QLabel("Dostępne pola: " + fields_text)
+        fields.setObjectName("naming_fields")
         fields.setWordWrap(True)
-        fields.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(fields)
 
         buttons = QHBoxLayout()
@@ -1173,8 +1170,8 @@ class SettingsTabWidget(QWidget):
                 int(values.get(COVER_PARCEL_LIMIT_KEY, defaults[COVER_PARCEL_LIMIT_KEY]))
             )
         except (TypeError, ValueError):
-            self.decl_parcel_limit.setValue(3)
-            self.cover_parcel_limit.setValue(3)
+            self.decl_parcel_limit.setValue(1)
+            self.cover_parcel_limit.setValue(1)
         _combo_select(
             self.naming_name_style, values.get(NAME_STYLE_KEY, defaults[NAME_STYLE_KEY])
         )

@@ -83,8 +83,8 @@ def load_app_icon() -> QIcon:
         icon = QIcon(str(path))
         if not icon.isNull():
             return icon
-    # Awaryjnie rysujemy prostą ikonę, aby okno nigdy nie było bez znaku.
-    return create_kw2_icon()
+    # Gdy pliku zabraknie, zwracamy pustą ikonę — Windows użyje domyślnej.
+    return QIcon()
 
 
 def setup_playwright_browsers() -> None:
@@ -170,11 +170,12 @@ class NoComboWheelFilter(QObject):
 
 
 TAB_MIME_TYPE = "application/x-pysilde-module-tab"
-KW2_TAB_NAME = "KW2"
+KW2_TAB_NAME = "📖 KW2"
 # Starsze nazwy karty. Dzięki temu zapisana kolejność modułów nie gubi się po
 # powrocie z nazwy "eKW" do "KW2".
 LEGACY_KW2_TAB_NAMES = {
     "eKW": KW2_TAB_NAME,
+    "KW2": KW2_TAB_NAME,
     "📖 KW 2 — ręcznie": KW2_TAB_NAME,
     "📖 KW 2 — ręczne przeglądanie": KW2_TAB_NAME,
     "KW 2": KW2_TAB_NAME,
@@ -183,33 +184,6 @@ LEGACY_KW2_TAB_NAMES = {
 # Zgodność wstecz dla kodu, który mógł importować starą nazwę stałej.
 EKW_TAB_NAME = KW2_TAB_NAME
 LEGACY_EKW_TAB_NAMES = LEGACY_KW2_TAB_NAMES
-
-
-def create_kw2_icon() -> QIcon:
-    """Tworzy czytelną niebieską ikonę z opisem KW2 dla karty modułu."""
-    pixmap = QPixmap(30, 30)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#1677D2"))
-    painter.drawRoundedRect(1, 1, 28, 28, 7, 7)
-
-    font = QFont()
-    font.setBold(True)
-    # Trzy znaki muszą się zmieścić w kwadracie 30x30.
-    font.setPixelSize(13)
-    painter.setFont(font)
-    painter.setPen(QColor("#FFFFFF"))
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "KW2")
-    painter.end()
-
-    return QIcon(pixmap)
-
-
-# Zgodność wstecz ze starą nazwą funkcji.
-create_ekw_icon = create_kw2_icon
 
 
 def tab_name_matches_saved_name(current_name: str, saved_name: str) -> bool:
@@ -561,6 +535,48 @@ class MainWindow(QMainWindow):
             "Aplikacja uruchomiona. Wybierz lub utwórz projekt, aby rozpocząć pracę."
         )
 
+    #: Zakładki pomocnicze przeniesione na koniec, tuż przed Ustawienia.
+    HELPER_TAB_KEYWORDS = ("Sortuj działki", "Sortowanie Działek", "Wskaźnik")
+    HELPER_TABS_MIGRATION_KEY = "helper_tabs_moved_before_settings"
+
+    def _migrate_helper_tabs_position(self):
+        """Przesuwa Sortuj działki i Wskaźnik przed Ustawienia w zapisanym układzie.
+
+        Kolejność zakładek jest pamiętana w app_config.json, więc bez tej
+        jednorazowej migracji stary zapis przywracałby poprzednie miejsca
+        obu modułów i zmiana kolejności byłaby niewidoczna.
+        """
+        if self.config.get(self.HELPER_TABS_MIGRATION_KEY):
+            return
+
+        for key in ("module_tab_order", "module_tab_order_classic"):
+            order = self.config.get(key)
+            if not isinstance(order, list) or not order:
+                continue
+
+            helpers = [
+                name
+                for name in order
+                if any(word in str(name) for word in self.HELPER_TAB_KEYWORDS)
+            ]
+            if not helpers:
+                continue
+
+            rest = [name for name in order if name not in helpers]
+            settings_index = next(
+                (
+                    index
+                    for index, name in enumerate(rest)
+                    if "Ustawienia" in str(name)
+                ),
+                len(rest),
+            )
+            self.config[key] = (
+                rest[:settings_index] + helpers + rest[settings_index:]
+            )
+
+        self.config[self.HELPER_TABS_MIGRATION_KEY] = True
+
     def load_configuration(self):
         self.data_dir = app_dir / "dane"
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -576,6 +592,8 @@ class MainWindow(QMainWindow):
                 self.config = self._get_default_config()
         else:
             self.config = self._get_default_config()
+
+        self._migrate_helper_tabs_position()
 
         # Profile wspólnych narzędzi są celowo niezależne od projektu i są
         # zapisywane od razu w katalogu dane. Wczytaj je przed utworzeniem
@@ -738,8 +756,6 @@ class MainWindow(QMainWindow):
             (self.project_tab, "📁 Projekty", "📁 Projekty"),
             (self.dashboard_tab, "📊 Status", "📊 Status"),
             (self.parcel_tab, "📋 Działki", "📋 Lista Działek"),
-            (self.parcel_sort_tab, "↕️ Sortuj działki", "↕️ Sortowanie Działek"),
-            (self.indicator_tab, "🔢 Wskaźnik", "🔢 Wskaźnik Działek"),
             (self.owners_tab, "👥 Wypisy", "👥 Wypisy"),
             (self.legal_titles_tab, "⚖️ Tytuły prawne", "⚖️ Tytuły Prawne"),
             (self.decl_tab, "📄 Oświadczenia", "📄 Oświadczenia"),
@@ -753,16 +769,18 @@ class MainWindow(QMainWindow):
             (self.kw_tab, "📚 Księgi wieczyste KW", "📚 Księgi Wieczyste KW (PDF)"),
             (self.kw2_tab, KW2_TAB_NAME, KW2_TAB_NAME),
             (self.krs_downloader_tab, "🏛️ KRS", "🏛️ Odpisy KRS"),
+            # Narzędzia pomocnicze trzymamy tuż przed Ustawieniami.
+            (self.parcel_sort_tab, "↕️ Sortuj działki", "↕️ Sortowanie Działek"),
+            (self.indicator_tab, "🔢 Wskaźnik", "🔢 Wskaźnik Działek"),
             (self.settings_tab, "⚙️ Ustawienia", "⚙️ Ustawienia"),
         ]
 
         for widget, modern_name, classic_name in modules:
             name = classic_name if self.tab_layout_mode == "classic" else modern_name
-            module_icon = create_kw2_icon() if widget is self.kw2_tab else None
+            # Żaden moduł nie ma osobnej ikony karty — rozróżnia je emoji
+            # w nazwie, dzięki czemu pasek zakładek wygląda spójnie.
             if isinstance(self.tabs, ModuleTabWidget):
-                self.tabs.addTab(widget, name, module_icon)
-            elif module_icon is not None:
-                self.tabs.addTab(widget, module_icon, name)
+                self.tabs.addTab(widget, name)
             else:
                 self.tabs.addTab(widget, name)
 
@@ -1232,6 +1250,25 @@ class MainWindow(QMainWindow):
                 border: 1px solid #3a5268;
                 border-radius: 9px;
             }
+            QLabel#naming_preview {
+                background-color: #1e2b38;
+                color: #e7f1f9;
+                border: 1px solid #3a5268;
+                border-radius: 3px;
+                padding: 6px;
+                font-family: Consolas, monospace;
+            }
+            QLabel#naming_hint {
+                background-color: #1b2a3a;
+                color: #d5e3ef;
+                border-left: 3px solid #2196f3;
+                border-radius: 3px;
+                padding: 6px;
+            }
+            QLabel#naming_fields {
+                color: #b7c7d6;
+                font-size: 11px;
+            }
             QLabel#shipment_summary_title {
                 color: #f4f9ff;
                 font-size: 18px;
@@ -1515,6 +1552,25 @@ class MainWindow(QMainWindow):
                 background-color: #ffffff;
                 border: 1px solid #c8d8e8;
                 border-radius: 9px;
+            }
+            QLabel#naming_preview {
+                background-color: #f4f6f8;
+                color: #000000;
+                border: 1px solid #d0d7de;
+                border-radius: 3px;
+                padding: 6px;
+                font-family: Consolas, monospace;
+            }
+            QLabel#naming_hint {
+                background-color: #edf7fb;
+                color: #37474f;
+                border-left: 3px solid #2196f3;
+                border-radius: 3px;
+                padding: 6px;
+            }
+            QLabel#naming_fields {
+                color: #5c6b7a;
+                font-size: 11px;
             }
             QLabel#shipment_summary_title {
                 color: #000000;

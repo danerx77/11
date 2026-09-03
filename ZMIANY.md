@@ -119,6 +119,44 @@ obrębu do poszczególnych działek.
 
 ---
 
+# Poprawki po pierwszych testach
+
+## 10. Kolejność zakładek
+
+* **„↕️ Sortuj działki”** i **„🔢 Wskaźnik”** stoją teraz tuż przed
+  **„⚙️ Ustawienia”**, na końcu paska.
+* Jeżeli masz zapisany starszy układ kart, program **jednorazowo sam go
+  poprawi** przy pierwszym uruchomieniu — nie trzeba nic przestawiać ręcznie.
+  Twoja własna kolejność pozostałych zakładek zostaje nienaruszona.
+
+## 11. Ikonka przy module KW2
+
+* Rysowana ikonka na zakładce **KW2 została usunięta**. Karta nazywa się
+  teraz **„📖 KW2”** — emotka w nazwie, dokładnie jak w pozostałych modułach.
+* Stare zapisane układy z nazwami „eKW”, „KW 2” czy „KW2” nadal są
+  rozpoznawane.
+
+## 12. Czytelność w trybie nocnym
+
+* Sekcja **„Nazewnictwo plików”** w Ustawieniach była na sztywno jasna i w
+  trybie nocnym praktycznie nie dało się jej odczytać. Podgląd nazw,
+  podpowiedź u góry i lista dostępnych pól **dopasowują się teraz do motywu** —
+  jasny tekst na ciemnym tle w nocy, ciemny na jasnym w dzień.
+
+## 13. Domyślny limit działek = 1
+
+* Ustawienie **„limit działek”** (Oświadczenia i Pisma) ma teraz domyślnie
+  **1** zamiast 3 — zarówno w Ustawieniach, jak i w samej logice nazw plików.
+
+## 14. Opis odmiany miejscowości
+
+* Pole wyboru nie powtarza już nazwy tagu. Czytasz po prostu:
+  **„Odmieniaj tag <Miejscowość działki:> (np. Gdańsk → Gdańsku,
+  Sopot → Sopocie)”**, a informacja o zapisie bez dwukropka i bez polskich
+  znaków przeniosła się do dymka.
+
+---
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
