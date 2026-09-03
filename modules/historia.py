@@ -11,17 +11,21 @@ from utils.shipment_tracking import (
     TRACKING_CATEGORY_ORDER,
     format_tracking_event,
     format_tracking_history,
+    format_tracking_history_lines,
     latest_tracking_event,
     normalize_tracking_code,
     parse_tracking_response,
+    sort_tracking_events,
     summarize_tracking_statuses,
     tracking_status_category,
+    tracking_status_color,
+    tracking_status_icon,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QGroupBox,
     QHeaderView, QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout,
-    QScrollArea, QTabWidget
+    QScrollArea, QTabWidget, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication
@@ -89,6 +93,15 @@ class ShipmentTrackerWidget(QWidget):
         )
         self.btn_fetch_status.clicked.connect(self._fetch_all_tracking_statuses)
         top_row.addWidget(self.btn_fetch_status)
+
+        self.btn_show_history = QPushButton('🕘 Pełna historia zdarzeń')
+        self.btn_show_history.setToolTip(
+            'Pokazuje wszystkie zdarzenia zaznaczonej przesyłki – '
+            'od najwcześniejszego do najnowszego.\n'
+            'To samo okno otworzy dwuklik na kolumnie „Status Poczty Polskiej”.'
+        )
+        self.btn_show_history.clicked.connect(self._show_selected_tracking_history)
+        top_row.addWidget(self.btn_show_history)
 
         self.btn_export_csv = QPushButton('💾 Eksportuj do CSV')
         self.btn_export_csv.clicked.connect(self._export_csv)
@@ -454,18 +467,138 @@ class ShipmentTrackerWidget(QWidget):
             f'Pobrano/odświeżono statusy: {updated}',
         )
 
+    def _tracking_events(self, shipment: dict) -> list:
+        """Zwraca zdarzenia przesyłki od najwcześniejszego do najnowszego."""
+        events = shipment.get("tracking_events")
+        if not isinstance(events, list):
+            return []
+        return sort_tracking_events(
+            (event for event in events if isinstance(event, dict)),
+            newest_first=False,
+        )
+
     def _tracking_tooltip(self, shipment: dict) -> str:
         checked_at = str(shipment.get("tracking_checked_at") or "").strip()
         events = shipment.get("tracking_events")
         if isinstance(events, list) and events:
+            # Historia od najwcześniejszego do najnowszego zdarzenia.
             history = format_tracking_history(
-                event for event in events if isinstance(event, dict)
+                (event for event in events if isinstance(event, dict)),
+                newest_first=False,
             )
             if history:
                 suffix = f"\n\nSprawdzono: {checked_at}" if checked_at else ""
                 return "Pełna historia zdarzeń z Poczty Polskiej:\n" + history + suffix
         status = self._current_tracking_status(shipment)
         return f"{status}\nSprawdzono: {checked_at}" if checked_at else status
+
+    def _show_tracking_history_for_row(self, row: int):
+        """Otwiera okno z pełną historią zdarzeń wybranej przesyłki."""
+        shipment = getattr(self, 'row_to_shipment', {}).get(row)
+        if not shipment:
+            return
+        self._show_tracking_history(shipment)
+
+    def _show_selected_tracking_history(self):
+        rows = {index.row() for index in self.table.selectedIndexes()}
+        if not rows:
+            return QMessageBox.information(
+                self,
+                'Historia przesyłki',
+                'Zaznacz przesyłkę na liście, aby zobaczyć pełną historię '
+                'zdarzeń z Poczty Polskiej.',
+            )
+        self._show_tracking_history_for_row(min(rows))
+
+    def _show_tracking_history(self, shipment: dict):
+        """Okno z całą historią śledzenia — od najwcześniejszego zdarzenia."""
+        events = self._tracking_events(shipment)
+        code = self._normalize_stamp_code(shipment.get('stamp_barcode', ''))
+        addressee = str(shipment.get('addressee') or '').strip() or '[brak adresata]'
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Historia przesyłki – Poczta Polska')
+        dialog.resize(900, 520)
+        layout = QVBoxLayout(dialog)
+
+        header = QLabel(
+            f'<b>{addressee}</b><br>Kod znaczka: {code or "brak"}'
+        )
+        header.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(header)
+
+        if not events:
+            info = QLabel(
+                'Brak pobranych zdarzeń dla tej przesyłki.\n'
+                'Użyj przycisku pobierania statusów, aby wczytać historię.'
+            )
+            info.setWordWrap(True)
+            layout.addWidget(info)
+        else:
+            rows = format_tracking_history_lines(events, newest_first=False)
+            table = QTableWidget(len(rows), 5)
+            table.setHorizontalHeaderLabels(
+                ['Lp.', 'Data i godzina', 'Zdarzenie', 'Placówka', 'Przyczyna']
+            )
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setSelectionBehavior(
+                QAbstractItemView.SelectionBehavior.SelectRows
+            )
+            table.setAlternatingRowColors(True)
+
+            for index, entry in enumerate(rows):
+                icon = entry.get('icon', '')
+                name = entry.get('name', '')
+                cells = [
+                    str(entry.get('step', index + 1)),
+                    entry.get('time', ''),
+                    f'{icon} {name}'.strip(),
+                    entry.get('unit', ''),
+                    entry.get('cause', ''),
+                ]
+                color = QColor(entry.get('color', '#b39ddb'))
+                for column, text in enumerate(cells):
+                    item = QTableWidgetItem(text)
+                    if column == 2:
+                        # Kolorujemy nazwę zdarzenia zgodnie z jego kategorią.
+                        item.setForeground(color)
+                        item.setFont(QFont('', -1, QFont.Weight.Bold))
+                    table.setItem(index, column, item)
+
+            table.resizeColumnsToContents()
+            table.horizontalHeader().setStretchLastSection(True)
+            layout.addWidget(table, 1)
+
+            legend = QLabel(
+                'Kolejność: od najwcześniejszego do najnowszego zdarzenia.'
+            )
+            legend.setStyleSheet('color: gray; font-size: 11px;')
+            layout.addWidget(legend)
+
+        checked_at = str(shipment.get('tracking_checked_at') or '').strip()
+        if checked_at:
+            layout.addWidget(QLabel(f'Sprawdzono: {checked_at}'))
+
+        buttons = QDialogButtonBox()
+        btn_copy = buttons.addButton(
+            '📋 Kopiuj historię', QDialogButtonBox.ButtonRole.ActionRole
+        )
+        btn_copy.clicked.connect(
+            lambda: QGuiApplication.clipboard().setText(
+                format_tracking_history(events, newest_first=False)
+            )
+        )
+        if code:
+            btn_web = buttons.addButton(
+                '🔎 Otwórz w emonitoring', QDialogButtonBox.ButtonRole.ActionRole
+            )
+            btn_web.clicked.connect(lambda: self._open_tracking(code))
+        buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        dialog.exec()
 
     def _shipment_summary_label(self, shipment: dict) -> str:
         recipient = re.sub(r"\s+", " ", str(shipment.get("addressee") or "")).strip()
@@ -679,6 +812,8 @@ class ShipmentTrackerWidget(QWidget):
 
         shown = 0
         shown_records = []
+        # Mapa wiersz -> przesyłka, potrzebna do podglądu pełnej historii.
+        self.row_to_shipment = {}
         for s in source_records:
             addr = s.get('addressee', '')
             env_type = s.get('envelope_type', s.get('env_type', ''))
@@ -717,26 +852,24 @@ class ShipmentTrackerWidget(QWidget):
             btn_track.clicked.connect(lambda _=False, c=bc: self._open_tracking(c))
             self.table.setCellWidget(row, 7, btn_track)
 
-            status_item = QTableWidgetItem(self._current_tracking_status(s))
             latest_event = s.get("tracking_latest_event")
             category = tracking_status_category(
-                latest_event if isinstance(latest_event, dict) else status_item.text()
+                latest_event
+                if isinstance(latest_event, dict)
+                else self._current_tracking_status(s)
             )
-            status_colors = {
-                "Doręczona / odebrana": "#2ecc71",
-                "W doręczeniu": "#40c4ff",
-                "W transporcie": "#00b4d8",
-                "Nadana": "#f1c40f",
-                "Awizowana": "#ff9800",
-                "Zwrot / niedoręczona": "#e74c3c",
-                "Problem z pobraniem": "#e74c3c",
-                "Nie pobrano": "#f1c40f",
-                "Inny status": "#cfd8dc",
-            }
-            status_item.setForeground(QColor(status_colors.get(category, "#cfd8dc")))
+            status_item = QTableWidgetItem(
+                f"{tracking_status_icon(category)} {self._current_tracking_status(s)}".strip()
+            )
+            # Każdy status Poczty Polskiej ma własny kolor — żaden nie zostaje szary.
+            status_color = QColor(tracking_status_color(category))
+            status_item.setForeground(status_color)
+            status_item.setFont(QFont('', -1, QFont.Weight.Bold))
+            status_item.setData(Qt.ItemDataRole.UserRole, category)
             status_item.setToolTip(self._tracking_tooltip(s))
             self.table.setItem(row, 8, status_item)
             self.table.setItem(row, 9, QTableWidgetItem(s.get('path', '')))
+            self.row_to_shipment[row] = s
             shown_records.append(s)
             shown += 1
 
@@ -777,6 +910,10 @@ class ShipmentTrackerWidget(QWidget):
 
     def _on_row_double_clicked(self, index):
         row = index.row()
+        # Dwuklik na kolumnie statusu pokazuje pełną historię z Poczty Polskiej.
+        if index.column() == 8:
+            self._show_tracking_history_for_row(row)
+            return
         path_item = self.table.item(row, 9)
         if path_item and path_item.text():
             try:

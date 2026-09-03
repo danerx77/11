@@ -621,6 +621,14 @@ class DruczekTabWidget(QWidget):
             if os.path.exists(out_path):
                 os.remove(out_path)
             shutil.move(temp_out_file, out_path)
+
+            # Gotowy druczek ma być normalnym, edytowalnym plikiem —
+            # bez atrybutu tylko-do-odczytu odziedziczonego po szablonie.
+            try:
+                os.chmod(out_path, 0o644)
+            except Exception:
+                pass
+
             
             new_used_count = used_slots + len(real_shipments)
             self._save_skips(tmpl_path, new_used_count)

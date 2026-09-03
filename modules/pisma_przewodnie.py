@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
+from utils.document_naming import cover_letter_filename
+
 from utils.generation_targets import cover_generation_exclusion_reason
 
 # Konfiguracja logera
@@ -1258,8 +1260,20 @@ class CoverLetterWidget(QWidget):
             phrase = phrases.get(key, "których są Państwo współwłaścicielami,")
             
             short_name = self._get_short_name(o.get('first_name', ''), o.get('last_name', ''))
-            fname = f"Pismo przewodnie {short_name}{addr_suffix}.docx".replace('  ', ' ')
-            fname = re.sub(r'[<>:"/\\|?*]', '', fname)
+            # Nazwa pliku wg schematu z Ustawień; domyślny wariant zachowuje
+            # dotychczasową nazwę "Pismo przewodnie J.Kowalski".
+            fname = cover_letter_filename(
+                self.config,
+                first_name=o.get('first_name', ''),
+                last_name=o.get('last_name', ''),
+                full_name=name_line,
+                parcels=o_nums,
+                address_suffix=addr_suffix,
+                date_str=self.date_edit.text(),
+                location=self.sender_place_edit.text(),
+                precinct=o.get('precinct', ''),
+                municipality=o.get('municipality', ''),
+            )
             out_path = str(Path(out_dir) / fname)
             
             ulice_dz_list = []

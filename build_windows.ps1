@@ -148,6 +148,15 @@ if ((-not $SkipOcr) -and (-not (Get-Command "tesseract.exe" -ErrorAction Silentl
 }
 
 $AppName = "Pysilde6"
+$AppIconPath = Join-Path $ProjectRoot "assets\pysilde6.ico"
+if (-not (Test-Path -LiteralPath $AppIconPath)) {
+    Write-Host "Application icon not found. Generating assets\pysilde6.ico..." -ForegroundColor Cyan
+    & $PythonExe (Join-Path $ProjectRoot "tools\make_app_icon.py")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Icon generation failed. The EXE will use the default PyInstaller icon."
+    }
+}
+
 $DistRoot = Join-Path $ProjectRoot "dist"
 $OutputDir = Join-Path $DistRoot $AppName
 $BuildDir = Join-Path $ProjectRoot "build"
@@ -215,6 +224,13 @@ $pyInstallerArgs = @(
     "--workpath", $BuildDir,
     "--specpath", $SpecDir
 )
+
+if (Test-Path -LiteralPath $AppIconPath) {
+    # Gives the EXE, taskbar entry and window their own program icon.
+    $pyInstallerArgs += @("--icon", $AppIconPath)
+    $AssetsDir = Join-Path $ProjectRoot "assets"
+    $pyInstallerArgs += @("--add-data", "$AssetsDir;assets")
+}
 
 if ($Console) {
     $pyInstallerArgs += "--console"

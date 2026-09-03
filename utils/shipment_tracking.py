@@ -27,6 +27,56 @@ TRACKING_CATEGORY_ORDER = (
     "Inny status",
 )
 
+# Kolory statusów są wspólne dla tabeli, kart podsumowania i pełnej historii.
+# Dobrano je tak, aby były czytelne w motywie ciemnym i jasnym.
+TRACKING_STATUS_COLORS = {
+    "Doręczona / odebrana": "#2ecc71",
+    "W doręczeniu": "#40c4ff",
+    "W transporcie": "#00b4d8",
+    "Nadana": "#f1c40f",
+    "Awizowana": "#ff9800",
+    "Zwrot / niedoręczona": "#e74c3c",
+    "Nie pobrano": "#9e9e9e",
+    "Problem z pobraniem": "#e74c3c",
+    "Inny status": "#b39ddb",
+}
+DEFAULT_TRACKING_COLOR = "#b39ddb"
+
+# Ikona ułatwia rozpoznanie statusu również przy wydruku i kopiowaniu tekstu.
+TRACKING_STATUS_ICONS = {
+    "Doręczona / odebrana": "✅",
+    "W doręczeniu": "🚚",
+    "W transporcie": "📦",
+    "Nadana": "📮",
+    "Awizowana": "📭",
+    "Zwrot / niedoręczona": "↩️",
+    "Nie pobrano": "⏳",
+    "Problem z pobraniem": "⚠️",
+    "Inny status": "ℹ️",
+}
+
+
+def tracking_status_color(status_or_event: object) -> str:
+    """Zwraca kolor HTML dla statusu albo zdarzenia Poczty Polskiej."""
+
+    category = (
+        status_or_event
+        if isinstance(status_or_event, str) and status_or_event in TRACKING_STATUS_COLORS
+        else tracking_status_category(status_or_event)
+    )
+    return TRACKING_STATUS_COLORS.get(category, DEFAULT_TRACKING_COLOR)
+
+
+def tracking_status_icon(status_or_event: object) -> str:
+    """Zwraca ikonę statusu używaną w tabeli i w oknie pełnej historii."""
+
+    category = (
+        status_or_event
+        if isinstance(status_or_event, str) and status_or_event in TRACKING_STATUS_ICONS
+        else tracking_status_category(status_or_event)
+    )
+    return TRACKING_STATUS_ICONS.get(category, "ℹ️")
+
 
 def normalize_tracking_code(code: object) -> str:
     """Usuwa spacje, nawiasy i separatory z kodu przesyłki."""
@@ -195,18 +245,79 @@ def format_tracking_event(event: Mapping[str, Any] | None) -> str:
     return " | ".join(parts)[:500]
 
 
-def format_tracking_history(events: Iterable[Mapping[str, Any]]) -> str:
-    """Zwraca pełną, chronologiczną historię zdarzeń do podpowiedzi w tabeli."""
-    indexed_events = list(enumerate(events))
-    indexed_events.sort(
+def sort_tracking_events(
+    events: Iterable[Mapping[str, Any]], *, newest_first: bool = False
+) -> list[dict[str, str]]:
+    """Porządkuje zdarzenia chronologicznie.
+
+    Domyślnie od najwcześniejszego do najnowszego — tak, jak przesyłka
+    faktycznie wędrowała: nadanie, transport, doręczenie. Zdarzenia bez
+    czytelnej daty trafiają na koniec listy w oryginalnej kolejności, aby nic
+    z odpowiedzi Poczty Polskiej nie zniknęło.
+    """
+
+    indexed = [
+        (index, {str(key): str(value or "") for key, value in event.items()})
+        for index, event in enumerate(events)
+        if isinstance(event, Mapping)
+    ]
+    indexed.sort(
         key=lambda item: (
-            _parsed_event_time(item[1].get("time")) is not None,
-            _parsed_event_time(item[1].get("time")) or datetime.min,
+            _parsed_event_time(item[1].get("time")) is None,
+            _parsed_event_time(item[1].get("time")) or datetime.max,
             item[0],
-        ),
-        reverse=True,
+        )
     )
-    return "\n".join(format_tracking_event(event) for _index, event in indexed_events)
+    ordered = [event for _index, event in indexed]
+    if newest_first:
+        ordered.reverse()
+    return ordered
+
+
+def format_tracking_history(
+    events: Iterable[Mapping[str, Any]], *, newest_first: bool = False
+) -> str:
+    """Zwraca pełną historię zdarzeń, domyślnie od najwcześniejszego.
+
+    Kolejność odpowiada rzeczywistej drodze przesyłki, dzięki czemu pierwsza
+    linia to nadanie, a ostatnia — najnowszy status.
+    """
+
+    ordered = sort_tracking_events(events, newest_first=newest_first)
+    return "\n".join(format_tracking_event(event) for event in ordered)
+
+
+def format_tracking_history_lines(
+    events: Iterable[Mapping[str, Any]], *, newest_first: bool = False
+) -> list[dict[str, str]]:
+    """Buduje gotowe wiersze pełnej historii dla widoku Qt.
+
+    Każdy wiersz zawiera numer kroku, oryginalną nazwę zdarzenia, datę,
+    placówkę, przyczynę, kod, a także kategorię, kolor i ikonę, aby historia
+    była kolorowa i czytelna zamiast jednolicie szarej.
+    """
+
+    ordered = sort_tracking_events(events, newest_first=newest_first)
+    total = len(ordered)
+    rows: list[dict[str, str]] = []
+    for position, event in enumerate(ordered):
+        category = tracking_status_category(event)
+        step = total - position if newest_first else position + 1
+        rows.append(
+            {
+                "step": str(step),
+                "time": str(event.get("time") or ""),
+                "name": str(event.get("name") or event.get("status") or "Zdarzenie bez nazwy"),
+                "unit": str(event.get("unit") or ""),
+                "cause": str(event.get("cause") or ""),
+                "code": str(event.get("code") or ""),
+                "category": category,
+                "color": tracking_status_color(category),
+                "icon": tracking_status_icon(category),
+                "summary": format_tracking_event(event),
+            }
+        )
+    return rows
 
 
 def _fold_polish(value: object) -> str:
@@ -227,6 +338,13 @@ def tracking_status_category(status_or_event: object) -> str:
     else:
         source = status_or_event
     text = _fold_polish(source)
+
+    # Poczta Polska po doręczeniu udostępnia skan podpisu odbiorcy. To zdarzenie
+    # jest potwierdzeniem odbioru, dlatego nie może trafiać do "Innego statusu".
+    if "podpis" in text and any(
+        phrase in text for phrase in ("udostepnion", "udostepni", "odbior", "odbioru")
+    ):
+        return "Doręczona / odebrana"
 
     if not text or text.strip() == "nie pobrano" or "brak kodu" in text:
         return "Nie pobrano"
@@ -263,7 +381,16 @@ def tracking_status_category(status_or_event: object) -> str:
         return "W doręczeniu"
     if any(
         phrase in text
-        for phrase in ("doreczono", "doreczona", "doreczenie", "odebran", "wydano odbiorcy")
+        for phrase in (
+            "doreczono",
+            "doreczona",
+            "doreczenie",
+            "odebran",
+            "wydano odbiorcy",
+            "wydano adresatowi",
+            "wydano przesylke adresatowi",
+            "potwierdzenie odbioru",
+        )
     ):
         return "Doręczona / odebrana"
     if any(

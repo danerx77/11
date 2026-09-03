@@ -53,6 +53,40 @@ def _bundled_asset_candidates(folder_name: str) -> list[Path]:
     ]
 
 
+APP_ICON_NAME = "pysilde6.ico"
+APP_ICON_PNG_NAME = "pysilde6.png"
+
+
+def app_icon_path() -> Path | None:
+    """Znajduje plik ikony programu w repozytorium i w wydaniu PyInstaller."""
+    candidates: list[Path] = [
+        app_dir / "assets" / APP_ICON_NAME,
+        app_dir / "assets" / APP_ICON_PNG_NAME,
+        app_dir / APP_ICON_NAME,
+    ]
+    for folder in _bundled_asset_candidates("assets"):
+        candidates.append(folder / APP_ICON_NAME)
+        candidates.append(folder / APP_ICON_PNG_NAME)
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def load_app_icon() -> QIcon:
+    """Zwraca ikonę programu (pasek zadań, okno, plik EXE)."""
+    path = app_icon_path()
+    if path is not None:
+        icon = QIcon(str(path))
+        if not icon.isNull():
+            return icon
+    # Awaryjnie rysujemy prostą ikonę, aby okno nigdy nie było bez znaku.
+    return create_kw2_icon()
+
+
 def setup_playwright_browsers() -> None:
     """Ustawia ścieżkę do przeglądarek Playwright po zbudowaniu PyInstallerem.
 
@@ -115,6 +149,7 @@ from modules.drukuj import PrintManagerWidget
 from modules.tytuly_prawne import LegalTitlesWidget
 from modules.wydziel_pdf import ExtractPdfWidget
 from modules.statystyki_dzialek import ParcelOwnersStatsWidget
+from modules.wskaznik import ParcelIndicatorWidget
 from modules.kw import KWDownloaderWidget
 from modules.kw_2 import KW2ManualWidget
 from modules.krs import KrsDownloaderWidget
@@ -135,15 +170,23 @@ class NoComboWheelFilter(QObject):
 
 
 TAB_MIME_TYPE = "application/x-pysilde-module-tab"
-EKW_TAB_NAME = "eKW"
-LEGACY_EKW_TAB_NAMES = {
-    "📖 KW 2 — ręcznie": EKW_TAB_NAME,
-    "📖 KW 2 — ręczne przeglądanie": EKW_TAB_NAME,
+KW2_TAB_NAME = "KW2"
+# Starsze nazwy karty. Dzięki temu zapisana kolejność modułów nie gubi się po
+# powrocie z nazwy "eKW" do "KW2".
+LEGACY_KW2_TAB_NAMES = {
+    "eKW": KW2_TAB_NAME,
+    "📖 KW 2 — ręcznie": KW2_TAB_NAME,
+    "📖 KW 2 — ręczne przeglądanie": KW2_TAB_NAME,
+    "KW 2": KW2_TAB_NAME,
 }
 
+# Zgodność wstecz dla kodu, który mógł importować starą nazwę stałej.
+EKW_TAB_NAME = KW2_TAB_NAME
+LEGACY_EKW_TAB_NAMES = LEGACY_KW2_TAB_NAMES
 
-def create_ekw_icon() -> QIcon:
-    """Tworzy czytelną niebieską ikonę z literą E dla zakładki eKW."""
+
+def create_kw2_icon() -> QIcon:
+    """Tworzy czytelną niebieską ikonę z opisem KW2 dla karty modułu."""
     pixmap = QPixmap(30, 30)
     pixmap.fill(Qt.GlobalColor.transparent)
 
@@ -155,18 +198,23 @@ def create_ekw_icon() -> QIcon:
 
     font = QFont()
     font.setBold(True)
-    font.setPixelSize(18)
+    # Trzy znaki muszą się zmieścić w kwadracie 30x30.
+    font.setPixelSize(13)
     painter.setFont(font)
     painter.setPen(QColor("#FFFFFF"))
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "E")
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "KW2")
     painter.end()
 
     return QIcon(pixmap)
 
 
+# Zgodność wstecz ze starą nazwą funkcji.
+create_ekw_icon = create_kw2_icon
+
+
 def tab_name_matches_saved_name(current_name: str, saved_name: str) -> bool:
-    """Zachowuje kolejność kart po zmianie nazwy KW 2 na eKW."""
-    return current_name == saved_name or LEGACY_EKW_TAB_NAMES.get(saved_name) == current_name
+    """Rozpoznaje kartę zapisaną pod poprzednią nazwą (np. "eKW" -> "KW2")."""
+    return current_name == saved_name or LEGACY_KW2_TAB_NAMES.get(saved_name) == current_name
 
 
 class DraggableTabButton(QToolButton):
@@ -274,7 +322,7 @@ class ModuleTabWidget(QWidget):
     """
     Dwurzędowy zamiennik QTabWidget.
 
-    Przy 17 modułach i columns=9 powstają nadal tylko dwa rzędy.
+    Przy 19 modułach i columns=10 powstają nadal tylko dwa rzędy.
     Zakładki można przeciągać pomiędzy wszystkimi pozycjami.
     """
 
@@ -490,6 +538,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             "Pysilde 6 – Zarządzanie Inwestycjami Elektroenergetycznymi"
         )
+        self.setWindowIcon(load_app_icon())
         self.setMinimumSize(1200, 800)
 
         self._is_switching_project = False
@@ -655,7 +704,7 @@ class MainWindow(QMainWindow):
             self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         else:
             self.tab_layout_mode = "modern"
-            self.tabs = ModuleTabWidget(columns=9)
+            self.tabs = ModuleTabWidget(columns=10)
 
         self.project_tab = ProjectManagerWidget(self.config)
         self.dashboard_tab = DashboardTabWidget(self.config)
@@ -683,12 +732,14 @@ class MainWindow(QMainWindow):
             self.config, self.save_configuration
         )
         self.stats_tab = ParcelOwnersStatsWidget(self)
+        self.indicator_tab = ParcelIndicatorWidget(self.config)
 
         modules = [
             (self.project_tab, "📁 Projekty", "📁 Projekty"),
             (self.dashboard_tab, "📊 Status", "📊 Status"),
             (self.parcel_tab, "📋 Działki", "📋 Lista Działek"),
             (self.parcel_sort_tab, "↕️ Sortuj działki", "↕️ Sortowanie Działek"),
+            (self.indicator_tab, "🔢 Wskaźnik", "🔢 Wskaźnik Działek"),
             (self.owners_tab, "👥 Wypisy", "👥 Wypisy"),
             (self.legal_titles_tab, "⚖️ Tytuły prawne", "⚖️ Tytuły Prawne"),
             (self.decl_tab, "📄 Oświadczenia", "📄 Oświadczenia"),
@@ -700,14 +751,14 @@ class MainWindow(QMainWindow):
             (self.extract_pdf_tab, "✂️ Wydziel PDF", "✂️ Wydzielanie PDF"),
             (self.stats_tab, "📈 Statystyki", "📈 Statystyki Działek"),
             (self.kw_tab, "📚 Księgi wieczyste KW", "📚 Księgi Wieczyste KW (PDF)"),
-            (self.kw2_tab, EKW_TAB_NAME, EKW_TAB_NAME),
+            (self.kw2_tab, KW2_TAB_NAME, KW2_TAB_NAME),
             (self.krs_downloader_tab, "🏛️ KRS", "🏛️ Odpisy KRS"),
             (self.settings_tab, "⚙️ Ustawienia", "⚙️ Ustawienia"),
         ]
 
         for widget, modern_name, classic_name in modules:
             name = classic_name if self.tab_layout_mode == "classic" else modern_name
-            module_icon = create_ekw_icon() if widget is self.kw2_tab else None
+            module_icon = create_kw2_icon() if widget is self.kw2_tab else None
             if isinstance(self.tabs, ModuleTabWidget):
                 self.tabs.addTab(widget, name, module_icon)
             elif module_icon is not None:
@@ -869,9 +920,11 @@ class MainWindow(QMainWindow):
             self.print_tab.set_project(project)
             self.legal_titles_tab.set_project(project)
             self.krs_downloader_tab.set_project(project)
+            self.indicator_tab.set_project(project)
 
             fresh_owners = self.owners_tab.get_owners()
             self.dashboard_tab.set_owners(fresh_owners)
+            self.indicator_tab.set_owners(fresh_owners)
             self.stats_tab.set_owners(fresh_owners)
             self.decl_tab.set_owners(fresh_owners)
             self.cover_tab.set_owners(fresh_owners)
@@ -885,6 +938,7 @@ class MainWindow(QMainWindow):
 
             fresh_parcels = self.parcel_tab.get_parcels()
             self.parcel_sort_tab.set_parcels(fresh_parcels)
+            self.indicator_tab.set_parcels(fresh_parcels)
             self.decl_tab.set_parcels(fresh_parcels)
             self.cover_tab.set_parcels(fresh_parcels)
             self.legal_titles_tab.set_parcels(fresh_parcels)
@@ -911,6 +965,7 @@ class MainWindow(QMainWindow):
         self.print_tab.set_owners(owners)
         self.legal_titles_tab.set_owners(owners)
         self.krs_downloader_tab.set_owners(owners)
+        self.indicator_tab.set_owners(owners)
         self.owners_tab._save_to_project_state()
 
     def _on_parcels_changed(self, parcels: list):
@@ -918,6 +973,7 @@ class MainWindow(QMainWindow):
             return
 
         self.parcel_sort_tab.set_parcels(parcels)
+        self.indicator_tab.set_parcels(parcels)
         self.decl_tab.set_parcels(parcels)
         self.cover_tab.set_parcels(parcels)
         self.legal_titles_tab.set_parcels(parcels)
@@ -935,6 +991,7 @@ class MainWindow(QMainWindow):
         self.owners_tab._save_to_project_state()
         self.parcel_tab._save_to_project_state()
         self.kw2_tab.save_state()
+        self.indicator_tab.save_state()
 
         QMessageBox.information(
             self,
@@ -1544,6 +1601,19 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Ikona aplikacji: pasek zadań Windows, Alt+Tab i okna dialogowe.
+    app.setWindowIcon(load_app_icon())
+    if sys.platform.startswith("win"):
+        # Bez własnego AppUserModelID Windows pokazuje ikonę Pythona
+        # zamiast ikony programu na pasku zadań.
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Pysilde6.Aplikacja"
+            )
+        except Exception:
+            pass
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

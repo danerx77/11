@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
 
+from utils.document_naming import declaration_filename
+
 class NoWheelComboBox(QComboBox):
     def wheelEvent(self, e): e.ignore()
 
@@ -325,27 +327,50 @@ class DeclGeneratorWidget(QWidget):
         device_box = QGroupBox('Postać urządzenia elektroenergetycznego')
         device_layout = QFormLayout(device_box)
 
+        device_hint = QLabel(
+            'Wybór z listy od razu wpisuje pełną treść do pola obok. '
+            'Możesz ją potem swobodnie poprawić.'
+        )
+        device_hint.setStyleSheet('color: gray; font-size: 11px;')
+        device_layout.addRow('', device_hint)
+
         h_bud = QHBoxLayout()
         self.device_budowa_combo = NoWheelComboBox()
-        self.device_budowa_combo.currentTextChanged.connect(lambda t: self.device_budowa_edit.setText(t) if t else None)
+        self.device_budowa_combo.setToolTip(
+            'Wybierz gotową postać urządzenia. Treść zostanie natychmiast '
+            'wpisana do pola obok, także przy ponownym wyborze tej samej pozycji.'
+        )
         h_bud.addWidget(self.device_budowa_combo, 1)
         btn_manage_bud = QPushButton('✏ Przykłady')
         btn_manage_bud.clicked.connect(lambda: self._manage_device_examples('budowa'))
         h_bud.addWidget(btn_manage_bud)
         self.device_budowa_edit = QLineEdit()
+        self.device_budowa_edit.setPlaceholderText(
+            'Postać urządzenia dla budowy — wybierz z listy albo wpisz ręcznie'
+        )
         h_bud.addWidget(self.device_budowa_edit, 2)
         device_layout.addRow('Budowa:', h_bud)
 
         h_dem = QHBoxLayout()
         self.device_demontaz_combo = NoWheelComboBox()
-        self.device_demontaz_combo.currentTextChanged.connect(lambda t: self.device_demontaz_edit.setText(t) if t else None)
+        self.device_demontaz_combo.setToolTip(
+            'Wybierz gotową postać urządzenia. Treść zostanie natychmiast '
+            'wpisana do pola obok, także przy ponownym wyborze tej samej pozycji.'
+        )
         h_dem.addWidget(self.device_demontaz_combo, 1)
         btn_manage_dem = QPushButton('✏ Przykłady')
         btn_manage_dem.clicked.connect(lambda: self._manage_device_examples('demontaz'))
         h_dem.addWidget(btn_manage_dem)
         self.device_demontaz_edit = QLineEdit()
+        self.device_demontaz_edit.setPlaceholderText(
+            'Postać urządzenia dla demontażu — wybierz z listy albo wpisz ręcznie'
+        )
         h_dem.addWidget(self.device_demontaz_edit, 2)
         device_layout.addRow('Demontaż:', h_dem)
+
+        # Sygnały podłączamy dopiero teraz, gdy oba pola tekstowe już istnieją.
+        self._bind_example_combo(self.device_budowa_combo, self.device_budowa_edit)
+        self._bind_example_combo(self.device_demontaz_combo, self.device_demontaz_edit)
 
         self._update_device_examples()
         main_v.addWidget(device_box)
@@ -428,13 +453,58 @@ class DeclGeneratorWidget(QWidget):
             self.owners[idx]['nip'] = self.nip_edit.text().strip()
             self.owners_changed.emit(self.owners)
 
+    def _bind_example_combo(self, combo, edit):
+        """Łączy listę przykładów z polem tekstowym.
+
+        Używamy sygnału ``activated``, ponieważ ``currentTextChanged`` nie
+        zgłasza ponownego wyboru tej samej pozycji. Wcześniej powodowało to
+        opisany błąd: po wybraniu z listy pole nie wypełniało się, dopóki
+        użytkownik nie przeklikał innej pozycji.
+        """
+
+        def apply_selection(index: int):
+            if index < 0:
+                return
+            # Wartość bierzemy z danych pozycji, a nie z jej etykiety —
+            # pozycja zachęty („wybierz…”) ma dane puste i nic nie wpisuje.
+            text = str(combo.itemData(index) or "").strip()
+            if not text:
+                return
+            edit.setText(text)
+            # Kursor na końcu, aby od razu można było dopisać szczegóły.
+            edit.setCursorPosition(len(text))
+
+        combo.activated.connect(apply_selection)
+        # Zmiana z klawiatury (strzałki) też ma natychmiast wypełnić pole.
+        combo.currentIndexChanged.connect(
+            lambda index: apply_selection(index) if combo.hasFocus() else None
+        )
+
+    def _refill_example_combo(self, combo, examples, placeholder: str):
+        """Odświeża pozycje listy, zachowując dotychczasowy wybór."""
+        previous = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        # Pozycja zachęty ma puste dane, więc jej wybór nie nadpisuje pola.
+        combo.addItem(placeholder, "")
+        for example in examples or []:
+            combo.addItem(example, example)
+        if previous:
+            index = combo.findText(previous)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def _update_device_examples(self):
-        self.device_budowa_combo.clear()
-        self.device_budowa_combo.addItem('')
-        for ex in self.examples.get('device_types_budowa', []): self.device_budowa_combo.addItem(ex)
-        self.device_demontaz_combo.clear()
-        self.device_demontaz_combo.addItem('')
-        for ex in self.examples.get('device_types_demontaz', []): self.device_demontaz_combo.addItem(ex)
+        self._refill_example_combo(
+            self.device_budowa_combo,
+            self.examples.get('device_types_budowa', []),
+            '— wybierz postać urządzenia (budowa) —',
+        )
+        self._refill_example_combo(
+            self.device_demontaz_combo,
+            self.examples.get('device_types_demontaz', []),
+            '— wybierz postać urządzenia (demontaż) —',
+        )
 
     def _manage_device_examples(self, dev_type: str):
         key = 'device_types_budowa' if dev_type == 'budowa' else 'device_types_demontaz'
@@ -494,14 +564,26 @@ class DeclGeneratorWidget(QWidget):
     def _owner_parcels(self, owner):
         return {str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in owner.get('parcels', [])}
 
+    def _sync_combo_to_text(self, combo, text: str):
+        """Ustawia listę na pozycję odpowiadającą treści pola tekstowego."""
+        combo.blockSignals(True)
+        index = combo.findText(text) if text else -1
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def _set_group_fields(self, group: dict | None):
         """Ustawia pola urządzeń dla wybranej grupy. Dla 'Wszystkie działki' czyści pola."""
+        budowa = (group or {}).get('budowa', '') or ''
+        demontaz = (group or {}).get('demontaz', '') or ''
         if not group:
-            self.device_budowa_edit.clear()
-            self.device_demontaz_edit.clear()
-            return
-        self.device_budowa_edit.setText(group.get('budowa', '') or '')
-        self.device_demontaz_edit.setText(group.get('demontaz', '') or '')
+            budowa = ''
+            demontaz = ''
+        self.device_budowa_edit.setText(budowa)
+        self.device_demontaz_edit.setText(demontaz)
+        # Lista ma pokazywać to samo, co pole tekstowe, aby ponowny wybór
+        # tej samej pozycji nadal działał.
+        self._sync_combo_to_text(self.device_budowa_combo, budowa)
+        self._sync_combo_to_text(self.device_demontaz_combo, demontaz)
 
     def _on_group_changed(self, *_args):
         name = self.group_combo.currentText() if hasattr(self, 'group_combo') else ''
@@ -1158,7 +1240,31 @@ class DeclGeneratorWidget(QWidget):
             ln = parts[-1] if parts else ""
             short = self._get_short_name(fn, ln)
             
-            fname = f"Oświadczenie woli {t} {short}.docx"
+            manual_parcels = [
+                value.strip()
+                for value in re.split(
+                    r'[,;]+',
+                    (
+                        self.parcels_budowa_edit.text()
+                        if t == 'budowa'
+                        else self.parcels_demontaz_edit.text()
+                    ),
+                )
+                if value.strip()
+            ]
+            fname = declaration_filename(
+                self.config,
+                declaration_type=t,
+                first_name=fn,
+                last_name=ln,
+                full_name=self.owner_name_edit.text(),
+                parcels=manual_parcels,
+                project_number=self.project_num_edit.text(),
+                date_str=self.date_edit.text(),
+                location=self.place_edit.text(),
+                precinct=self.precinct_edit.text() if hasattr(self, 'precinct_edit') else '',
+                municipality=self.municipality_edit.text() if hasattr(self, 'municipality_edit') else '',
+            )
             out_path = str(Path(out_dir) / fname)
             
             from utils.docx_utils import generate_declaration
@@ -1432,8 +1538,22 @@ class DeclGeneratorWidget(QWidget):
                     errors.append(f"{display_name} ({t}: brak poprawnego szablonu)")
                     continue
 
-                fname = f"Oświadczenie woli {t} {short_name}{addr_suffix}.docx".replace('  ', ' ')
-                fname = re.sub(r'[<>:"/\\|?*]', '', fname)
+                # Nazwa pliku powstaje wg schematu wybranego w Ustawieniach.
+                # Domyślny schemat odtwarza dotychczasową nazwę bez zmian.
+                fname = declaration_filename(
+                    self.config,
+                    declaration_type=t,
+                    first_name=o.get('first_name', ''),
+                    last_name=o.get('last_name', ''),
+                    full_name=display_name,
+                    parcels=sorted(current_valid_nums),
+                    address_suffix=addr_suffix,
+                    project_number=p.get('project_number', ''),
+                    date_str=p.get('date_str', ''),
+                    location=p.get('place', ''),
+                    precinct=precinct_str,
+                    municipality=m_str,
+                )
                 out_path = str(Path(out_dir) / fname)
                 
                 street_field = ", ".join(street_dz_list) if street_dz_list else p['street']

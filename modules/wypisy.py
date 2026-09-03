@@ -947,26 +947,126 @@ class OwnersListWidget(QWidget):
         self._save_to_project_state()
         QMessageBox.information(self, 'Wczytano', f'Wczytano {len(files)} plików, dodano {total_added} właścicieli.')
 
-    def _apply_wypis_file_meta_to_current_owners(self, file_meta: dict):
-        """Wymusza metadane odczytane bezpośrednio z importowanego PDF na obecnej liście.
-        To nie jest zgadywanie z działek – wartości pochodzą z nagłówka wypisu.
+    META_KEYS = ('voivodeship', 'county', 'municipality', 'precinct', 'precinct_number')
+
+    def _apply_wypis_file_meta_to_current_owners(
+        self, file_meta: dict, parcel_meta: dict | None = None
+    ):
+        """Wpisuje metadane odczytane z importowanego PDF na obecnej liście.
+
+        Wypis może obejmować kilka obrębów, gmin, a nawet powiatów. Dlatego
+        każda działka dostaje wartość z własnej sekcji dokumentu
+        (``parcel_meta``), a właściciel — zestawienie wartości wszystkich
+        swoich działek. Wcześniej program brał tylko pierwszą znalezioną
+        wartość i nadpisywał nią wszystko.
         """
-        if not file_meta or not any(file_meta.values()):
+        if not file_meta or not any(
+            file_meta.get(key) for key in self.META_KEYS
+        ):
             return
-        bad_values = {'', 'owe w', 'w', 'powiatowe w'}
+
+        parcel_meta = parcel_meta or {}
+
         for owner in self.owners:
-            for meta_key in ['voivodeship', 'county', 'municipality', 'precinct', 'precinct_number']:
-                meta_val = str(file_meta.get(meta_key, '') or '').strip()
-                if not meta_val:
+            owner_values = {key: [] for key in self.META_KEYS}
+
+            for parcel in owner.get('parcels', []):
+                if not isinstance(parcel, dict):
                     continue
-                current = str(owner.get(meta_key, '') or '').strip().lower()
-                # Metadane z nagłówka importowanego PDF mają być wpisane wprost.
-                # Nie zgadujemy z działek i nie zostawiamy starych/pustych wartości.
-                owner[meta_key] = meta_val
-                for parcel in owner.get('parcels', []):
-                    if isinstance(parcel, dict):
-                        pcur = str(parcel.get(meta_key, '') or '').strip().lower()
-                        parcel[meta_key] = meta_val
+                number = str(parcel.get('number', '')).replace(' ', '')
+                specific = parcel_meta.get(number, {})
+                for meta_key in self.META_KEYS:
+                    value = str(
+                        specific.get(meta_key)
+                        or file_meta.get(meta_key, '')
+                        or ''
+                    ).strip()
+                    if not value:
+                        continue
+                    parcel[meta_key] = value
+                    if value not in owner_values[meta_key]:
+                        owner_values[meta_key].append(value)
+
+            for meta_key in self.META_KEYS:
+                if owner_values[meta_key]:
+                    # Kilka obrębów jednego właściciela wypisujemy po przecinku.
+                    owner[meta_key] = ', '.join(owner_values[meta_key])
+                    continue
+                fallback = str(file_meta.get(meta_key, '') or '').strip()
+                if fallback:
+                    owner[meta_key] = fallback
+
+    def _apply_meta_to_imported_owners(
+        self, owners: list, file_meta: dict, parcel_meta: dict | None = None
+    ):
+        """Wpisuje metadane w świeżo zaimportowanych właścicielach.
+
+        Każda działka dostaje wartości ze swojej sekcji wypisu, a właściciel
+        listę wszystkich wartości swoich działek. Dzięki temu osoba mająca
+        działki w dwóch obrębach ma w polu Obręb obie nazwy.
+        """
+        parcel_meta = parcel_meta or {}
+
+        for owner in owners:
+            owner_values = {key: [] for key in self.META_KEYS}
+            for parcel in owner.get('parcels', []):
+                if not isinstance(parcel, dict):
+                    continue
+                number = str(parcel.get('number', '')).replace(' ', '')
+                specific = parcel_meta.get(number, {})
+                for meta_key in self.META_KEYS:
+                    value = str(
+                        specific.get(meta_key)
+                        or parcel.get(meta_key)
+                        or file_meta.get(meta_key, '')
+                        or ''
+                    ).strip()
+                    if not value:
+                        continue
+                    parcel[meta_key] = value
+                    if value not in owner_values[meta_key]:
+                        owner_values[meta_key].append(value)
+
+            for meta_key in self.META_KEYS:
+                if owner_values[meta_key]:
+                    owner[meta_key] = ', '.join(owner_values[meta_key])
+                elif file_meta.get(meta_key):
+                    owner[meta_key] = str(file_meta[meta_key]).strip()
+
+    def _format_meta_report(self, file_meta: dict, parcel_meta: dict | None = None) -> str:
+        """Buduje czytelny raport metadanych z importowanego wypisu."""
+        labels = [
+            ('voivodeship', 'Województwo'),
+            ('county', 'Powiat'),
+            ('municipality', 'Jedn. Ewid./Gmina'),
+            ('precinct', 'Obręb'),
+            ('precinct_number', 'Nr Obrębu'),
+        ]
+        lines = ['Metadane odczytane z PDF:']
+        for key, label in labels:
+            values = file_meta.get(f'{key}_values') or []
+            text = ', '.join(values) if values else str(file_meta.get(key, '') or '')
+            suffix = f'   (różnych wartości: {len(values)})' if len(values) > 1 else ''
+            lines.append(f'{label}: {text}{suffix}')
+
+        if parcel_meta:
+            distinct_precincts = {
+                str(entry.get('precinct', '')).strip()
+                for entry in parcel_meta.values()
+                if str(entry.get('precinct', '')).strip()
+            }
+            if len(distinct_precincts) > 1:
+                lines.append('')
+                lines.append('Obręb przypisany do poszczególnych działek:')
+                for number in sorted(parcel_meta, key=parcel_number_sort_key):
+                    entry = parcel_meta[number]
+                    precinct = str(entry.get('precinct', '') or '').strip()
+                    precinct_number = str(entry.get('precinct_number', '') or '').strip()
+                    if not precinct and not precinct_number:
+                        continue
+                    detail = ' '.join(part for part in (precinct_number, precinct) if part)
+                    lines.append(f'  • {number}: {detail}')
+        return '\n'.join(lines)
 
     def _load_wypis_file(self, filepath: str, silent: bool = False) -> int:
         active_nums = [p['number'].replace(' ', '') for p in getattr(self, 'active_parcels', [])]
@@ -980,21 +1080,23 @@ class OwnersListWidget(QWidget):
         
         try:
             if ext == '.pdf':
-                from utils.pdf_utils import parse_wypis_pdf, extract_wypis_metadata_file
+                from utils.pdf_utils import (
+                    extract_wypis_metadata_file,
+                    extract_wypis_parcel_metadata_file,
+                    parse_wypis_pdf,
+                )
                 owners = parse_wypis_pdf(filepath)
                 file_meta = extract_wypis_metadata_file(filepath)
-                # Metadane wypisu mają być brane bezpośrednio z PDF, nie zgadywane z działek.
+                # Wypis potrafi obejmować działki z kilku obrębów, gmin,
+                # a nawet powiatów. Odczytujemy metadane osobno dla każdej
+                # działki, zamiast brać wyłącznie pierwszą wartość z pliku.
+                parcel_meta = extract_wypis_parcel_metadata_file(filepath)
                 # Najpierw popraw obecnych właścicieli projektu (stare wpisy po wcześniejszym imporcie).
-                self._apply_wypis_file_meta_to_current_owners(file_meta)
-                if any(file_meta.values()):
+                self._apply_wypis_file_meta_to_current_owners(file_meta, parcel_meta)
+                if any(file_meta.get(key) for key in self.META_KEYS):
                     try:
                         self.ocr_output.setText(
-                            'Metadane odczytane z PDF:\n'
-                            f"Województwo: {file_meta.get('voivodeship','')}\n"
-                            f"Powiat: {file_meta.get('county','')}\n"
-                            f"Jedn. Ewid./Gmina: {file_meta.get('municipality','')}\n"
-                            f"Obręb: {file_meta.get('precinct','')}\n"
-                            f"Nr Obrębu: {file_meta.get('precinct_number','')}"
+                            self._format_meta_report(file_meta, parcel_meta)
                         )
                     except Exception:
                         pass
@@ -1002,14 +1104,8 @@ class OwnersListWidget(QWidget):
                     # nawet gdy później filtr działek odrzuci importowane osoby.
                     self._refresh_table(self.search_edit.text())
                     self._save_to_project_state()
-                # Wymuszamy je też na każdym właścicielu i działce z tego importu.
-                for owner_meta_target in owners:
-                    for meta_key, meta_val in file_meta.items():
-                        if meta_val:
-                            owner_meta_target[meta_key] = meta_val
-                            for parcel_meta_target in owner_meta_target.get('parcels', []):
-                                if isinstance(parcel_meta_target, dict):
-                                    parcel_meta_target[meta_key] = meta_val
+                # Te same zasady stosujemy do właścicieli z bieżącego importu.
+                self._apply_meta_to_imported_owners(owners, file_meta, parcel_meta)
             else:
                 from utils.ocr_utils import parse_wypis_from_image
                 owners, raw_text = parse_wypis_from_image(filepath)
@@ -1018,7 +1114,11 @@ class OwnersListWidget(QWidget):
             # Jeśli importowany PDF ma metadane (woj/pow/gmina/obręb), uzupełnij także
             # istniejących właścicieli po numerach działek. To naprawia stare wpisy, które
             # miały np. błędny Powiat = 'owe w' albo pusty Obręb/Nr Obrębu.
-            if ext == '.pdf' and 'file_meta' in locals() and any(file_meta.values()):
+            if (
+                ext == '.pdf'
+                and 'file_meta' in locals()
+                and any(file_meta.get(key) for key in self.META_KEYS)
+            ):
                 imported_nums = set()
                 for imp_owner in owners:
                     for imp_parcel in imp_owner.get('parcels', []):
@@ -1028,12 +1128,9 @@ class OwnersListWidget(QWidget):
                     for existing_owner in self.owners:
                         owner_nums = {str(p.get('number', p)).replace(' ', '') for p in existing_owner.get('parcels', [])}
                         if owner_nums & imported_nums:
-                            for meta_key, meta_val in file_meta.items():
-                                if meta_val:
-                                    existing_owner[meta_key] = meta_val
-                                    for ex_parcel in existing_owner.get('parcels', []):
-                                        if isinstance(ex_parcel, dict) and str(ex_parcel.get('number', '')).replace(' ', '') in imported_nums:
-                                            ex_parcel[meta_key] = meta_val
+                            self._apply_meta_to_imported_owners(
+                                [existing_owner], file_meta, parcel_meta
+                            )
 
             existing_names = {o.get('full_name', '').lower() for o in self.owners}
             rejected_owners = []
@@ -1109,8 +1206,12 @@ class OwnersListWidget(QWidget):
                     self._save_to_project_state()
                     if added > 0: QMessageBox.information(self, 'Wczytano', f'Dopasowano i dodano {added} właścicieli powiązanych z Twoją listą działek.')
                     else: QMessageBox.information(self, 'Wczytano', 'Nie znaleziono nowych właścicieli.')
-            if ext == '.pdf' and 'file_meta' in locals() and any(file_meta.values()):
-                self._apply_wypis_file_meta_to_current_owners(file_meta)
+            if (
+                ext == '.pdf'
+                and 'file_meta' in locals()
+                and any(file_meta.get(key) for key in self.META_KEYS)
+            ):
+                self._apply_wypis_file_meta_to_current_owners(file_meta, parcel_meta)
                 self._refresh_table(self.search_edit.text())
                 self._save_to_project_state()
         except Exception as e:

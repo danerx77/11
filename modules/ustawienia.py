@@ -16,6 +16,28 @@ from utils.generation_targets import (
     COVER_GENERATION_RULES,
     cover_generation_rule_defaults,
 )
+from utils.document_naming import (
+    ASCII_KEY,
+    COVER_PARCEL_LIMIT_KEY,
+    COVER_PARCEL_MODE_KEY,
+    COVER_PARCEL_SEPARATOR_KEY,
+    COVER_TEMPLATE_KEY,
+    COVER_TEMPLATE_PRESETS,
+    DECLARATION_PARCEL_LIMIT_KEY,
+    DECLARATION_PARCEL_MODE_KEY,
+    DECLARATION_PARCEL_SEPARATOR_KEY,
+    DECLARATION_TEMPLATE_KEY,
+    DECLARATION_TEMPLATE_PRESETS,
+    NAME_STYLE_KEY,
+    NAME_STYLES,
+    PARCEL_SUFFIX_MODES,
+    SPACE_KEY,
+    SPACE_REPLACEMENTS,
+    TEMPLATE_FIELDS,
+    document_naming_defaults,
+    preview_cover_filename,
+    preview_declaration_filename,
+)
 from utils.global_settings import save_global_stamp_settings
 
 from PySide6.QtWidgets import (
@@ -515,6 +537,8 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", button_default_decl)
         main_layout.addWidget(decl_box)
 
+        main_layout.addWidget(self._build_naming_box())
+
         # PISMA PRZEWODNIE — REGUŁY SERII
         cover_rules_box = QGroupBox(
             "Pisma przewodnie — reguły seryjnego generowania"
@@ -931,7 +955,249 @@ class SettingsTabWidget(QWidget):
         if row >= 0:
             table.removeRow(row)
 
+    # ──────────────────────────────────────────────────────────────
+    # Nazewnictwo generowanych plików
+    # ──────────────────────────────────────────────────────────────
+    def _build_naming_box(self) -> QGroupBox:
+        """Sekcja wyboru schematu nazw dla Oświadczeń i Pism przewodnich."""
+        box = QGroupBox("Nazewnictwo plików — Oświadczenia i Pisma (PSM)")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Ustawienia domyślne odtwarzają dotychczasowe nazwy plików — bez "
+            "zmian możesz pracować dalej tak jak do tej pory. Możesz wybrać "
+            "gotowy wariant z listy albo wpisać własny wzór. Aby dopisać numer "
+            "działki na końcu nazwy, wybierz w polu „numer działki” opcję "
+            "„Tylko gdy właściciel ma dokładnie jedną działkę”."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet(
+            "color:#607d8b; background:#edf7fb; border-left:3px solid #2196f3; "
+            "padding:6px; border-radius:3px;"
+        )
+        layout.addWidget(info)
+
+        form = QFormLayout()
+
+        # ── Oświadczenia ──
+        self.decl_naming_preset = QComboBox()
+        for template, description in DECLARATION_TEMPLATE_PRESETS:
+            self.decl_naming_preset.addItem(description, template)
+        self.decl_naming_preset.addItem("Własny wzór (wpisz poniżej)", "")
+        self.decl_naming_preset.activated.connect(
+            lambda index: self._apply_naming_preset(
+                self.decl_naming_preset, self.decl_naming_template, index
+            )
+        )
+        form.addRow("Oświadczenia — wariant:", self.decl_naming_preset)
+
+        self.decl_naming_template = QLineEdit()
+        self.decl_naming_template.setPlaceholderText(
+            "Oświadczenie woli {typ} {nazwisko}{adres}{dzialki}"
+        )
+        self.decl_naming_template.textChanged.connect(self._update_naming_preview)
+        form.addRow("Oświadczenia — wzór:", self.decl_naming_template)
+
+        self.decl_parcel_mode = QComboBox()
+        for mode, description in PARCEL_SUFFIX_MODES:
+            self.decl_parcel_mode.addItem(description, mode)
+        self.decl_parcel_mode.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Oświadczenia — numer działki:", self.decl_parcel_mode)
+
+        self.decl_parcel_limit = QSpinBox()
+        self.decl_parcel_limit.setRange(1, 20)
+        self.decl_parcel_limit.setToolTip(
+            "Ile numerów działek zmieścić w nazwie przy wariancie z limitem."
+        )
+        self.decl_parcel_limit.valueChanged.connect(self._update_naming_preview)
+        form.addRow("Oświadczenia — limit działek:", self.decl_parcel_limit)
+
+        # ── Pisma przewodnie ──
+        self.cover_naming_preset = QComboBox()
+        for template, description in COVER_TEMPLATE_PRESETS:
+            self.cover_naming_preset.addItem(description, template)
+        self.cover_naming_preset.addItem("Własny wzór (wpisz poniżej)", "")
+        self.cover_naming_preset.activated.connect(
+            lambda index: self._apply_naming_preset(
+                self.cover_naming_preset, self.cover_naming_template, index
+            )
+        )
+        form.addRow("Pisma (PSM) — wariant:", self.cover_naming_preset)
+
+        self.cover_naming_template = QLineEdit()
+        self.cover_naming_template.setPlaceholderText(
+            "Pismo przewodnie {nazwisko}{adres}{dzialki}"
+        )
+        self.cover_naming_template.textChanged.connect(self._update_naming_preview)
+        form.addRow("Pisma (PSM) — wzór:", self.cover_naming_template)
+
+        self.cover_parcel_mode = QComboBox()
+        for mode, description in PARCEL_SUFFIX_MODES:
+            self.cover_parcel_mode.addItem(description, mode)
+        self.cover_parcel_mode.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Pisma (PSM) — numer działki:", self.cover_parcel_mode)
+
+        self.cover_parcel_limit = QSpinBox()
+        self.cover_parcel_limit.setRange(1, 20)
+        self.cover_parcel_limit.valueChanged.connect(self._update_naming_preview)
+        form.addRow("Pisma (PSM) — limit działek:", self.cover_parcel_limit)
+
+        # ── Wspólne ──
+        self.naming_name_style = QComboBox()
+        for style, description in NAME_STYLES:
+            self.naming_name_style.addItem(description, style)
+        self.naming_name_style.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Zapis nazwiska:", self.naming_name_style)
+
+        self.naming_space_mode = QComboBox()
+        for value, description in SPACE_REPLACEMENTS:
+            self.naming_space_mode.addItem(description, value)
+        self.naming_space_mode.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Spacje w nazwie:", self.naming_space_mode)
+
+        self.chk_naming_ascii = QCheckBox(
+            "Usuwaj polskie znaki z nazw plików (Oświadczenie → Oswiadczenie)"
+        )
+        self.chk_naming_ascii.setToolTip(
+            "Przydatne przy wysyłce na systemy, które nie radzą sobie z ogonkami."
+        )
+        self.chk_naming_ascii.toggled.connect(self._update_naming_preview)
+        form.addRow("", self.chk_naming_ascii)
+
+        layout.addLayout(form)
+
+        self.lbl_naming_preview = QLabel()
+        self.lbl_naming_preview.setWordWrap(True)
+        self.lbl_naming_preview.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.lbl_naming_preview.setStyleSheet(
+            "background:#f4f6f8; border:1px solid #d0d7de; padding:6px; "
+            "border-radius:3px; font-family:Consolas,monospace;"
+        )
+        layout.addWidget(self.lbl_naming_preview)
+
+        fields_text = "  •  ".join(f"{tag} – {desc}" for tag, desc in TEMPLATE_FIELDS)
+        fields = QLabel("Dostępne pola: " + fields_text)
+        fields.setWordWrap(True)
+        fields.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(fields)
+
+        buttons = QHBoxLayout()
+        btn_defaults = QPushButton("↩ Przywróć dotychczasowe nazwy")
+        btn_defaults.setToolTip(
+            "Ustawia wzory dokładnie takie, jakie program stosował do tej pory."
+        )
+        btn_defaults.clicked.connect(self._reset_naming_defaults)
+        buttons.addWidget(btn_defaults)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+        return box
+
+    def _apply_naming_preset(self, combo: QComboBox, edit: QLineEdit, index: int):
+        """Wybór z listy natychmiast wpisuje wzór do pola tekstowego."""
+        template = combo.itemData(index)
+        if template:
+            edit.setText(template)
+        self._update_naming_preview()
+
+    def _naming_settings(self) -> dict:
+        """Buduje słownik ustawień na podstawie stanu formularza."""
+        return {
+            DECLARATION_TEMPLATE_KEY: self.decl_naming_template.text(),
+            COVER_TEMPLATE_KEY: self.cover_naming_template.text(),
+            DECLARATION_PARCEL_MODE_KEY: self.decl_parcel_mode.currentData(),
+            COVER_PARCEL_MODE_KEY: self.cover_parcel_mode.currentData(),
+            DECLARATION_PARCEL_LIMIT_KEY: self.decl_parcel_limit.value(),
+            COVER_PARCEL_LIMIT_KEY: self.cover_parcel_limit.value(),
+            NAME_STYLE_KEY: self.naming_name_style.currentData(),
+            SPACE_KEY: self.naming_space_mode.currentData(),
+            ASCII_KEY: self.chk_naming_ascii.isChecked(),
+            DECLARATION_PARCEL_SEPARATOR_KEY: self.config.get(
+                DECLARATION_PARCEL_SEPARATOR_KEY, ", "
+            ),
+            COVER_PARCEL_SEPARATOR_KEY: self.config.get(
+                COVER_PARCEL_SEPARATOR_KEY, ", "
+            ),
+        }
+
+    def _update_naming_preview(self, *_):
+        if not hasattr(self, "lbl_naming_preview"):
+            return
+        settings = self._naming_settings()
+        try:
+            declaration = preview_declaration_filename(settings)
+            cover = preview_cover_filename(settings)
+        except Exception as exc:  # pragma: no cover - zabezpieczenie UI
+            self.lbl_naming_preview.setText(f"Nie można zbudować podglądu: {exc}")
+            return
+        self.lbl_naming_preview.setText(
+            "Podgląd nazw (Jan Kowalski, projekt OBI/123/2026):\n"
+            f"  Oświadczenie (1 działka 123/4):  {declaration}\n"
+            f"  Pismo przewodnie (2 działki):    {cover}"
+        )
+
+    def _reset_naming_defaults(self):
+        defaults = document_naming_defaults()
+        self._apply_naming_values(defaults)
+        self._update_naming_preview()
+
+    def _apply_naming_values(self, values: dict):
+        """Ustawia kontrolki zgodnie z podanym słownikiem ustawień."""
+        defaults = document_naming_defaults()
+
+        def _combo_select(combo: QComboBox, value):
+            index = combo.findData(value)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+
+        self.decl_naming_template.setText(
+            str(values.get(DECLARATION_TEMPLATE_KEY, defaults[DECLARATION_TEMPLATE_KEY]))
+        )
+        self.cover_naming_template.setText(
+            str(values.get(COVER_TEMPLATE_KEY, defaults[COVER_TEMPLATE_KEY]))
+        )
+        _combo_select(
+            self.decl_parcel_mode,
+            values.get(DECLARATION_PARCEL_MODE_KEY, defaults[DECLARATION_PARCEL_MODE_KEY]),
+        )
+        _combo_select(
+            self.cover_parcel_mode,
+            values.get(COVER_PARCEL_MODE_KEY, defaults[COVER_PARCEL_MODE_KEY]),
+        )
+        try:
+            self.decl_parcel_limit.setValue(
+                int(values.get(DECLARATION_PARCEL_LIMIT_KEY, defaults[DECLARATION_PARCEL_LIMIT_KEY]))
+            )
+            self.cover_parcel_limit.setValue(
+                int(values.get(COVER_PARCEL_LIMIT_KEY, defaults[COVER_PARCEL_LIMIT_KEY]))
+            )
+        except (TypeError, ValueError):
+            self.decl_parcel_limit.setValue(3)
+            self.cover_parcel_limit.setValue(3)
+        _combo_select(
+            self.naming_name_style, values.get(NAME_STYLE_KEY, defaults[NAME_STYLE_KEY])
+        )
+        _combo_select(self.naming_space_mode, values.get(SPACE_KEY, defaults[SPACE_KEY]))
+        self.chk_naming_ascii.setChecked(bool(values.get(ASCII_KEY, defaults[ASCII_KEY])))
+
+        # Lista wariantów ma pokazywać pozycję zgodną z aktualnym wzorem.
+        for combo, edit in (
+            (self.decl_naming_preset, self.decl_naming_template),
+            (self.cover_naming_preset, self.cover_naming_template),
+        ):
+            index = combo.findData(edit.text())
+            combo.setCurrentIndex(index if index >= 0 else combo.count() - 1)
+
     def _load_values(self):
+        # Nazewnictwo plików Oświadczeń i Pism.
+        naming = document_naming_defaults()
+        for key in list(naming):
+            if key in self.config:
+                naming[key] = self.config[key]
+        self._apply_naming_values(naming)
+        self._update_naming_preview()
+
         # Wygląd zakładek.
         tab_layout_mode = self.config.get("tab_layout_mode", "modern")
         tab_layout_index = self.tab_layout_combo.findData(tab_layout_mode)
@@ -1189,6 +1455,10 @@ class SettingsTabWidget(QWidget):
         return result
 
     def _save(self):
+        # Nazewnictwo plików — zapisujemy komplet kluczy.
+        for key, value in self._naming_settings().items():
+            self.config[key] = value
+
         selected_tab_layout = self.tab_layout_combo.currentData() or "modern"
         tab_layout_changed = selected_tab_layout != getattr(
             self,

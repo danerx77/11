@@ -112,6 +112,8 @@ py -m PyInstaller `
   --hidden-import pywintypes `
   --add-data "$env:LOCALAPPDATA\ms-playwright;ms-playwright" `
   --add-data "$env:USERPROFILE\.EasyOCR;easyocr-data" `
+  --icon assets\pysilde6.ico `
+  --add-data "assets;assets" `
   main.py
 ```
 
@@ -119,6 +121,27 @@ Zalecany jest jednak skrypt `build_windows.ps1`, ponieważ przerywa budowanie,
 gdy brakuje biblioteki, przeglądarek albo modeli OCR. Powyższa ręczna komenda
 zakłada standardowy cache `%USERPROFILE%\.EasyOCR`; gdy ustawiono własne
 `EASYOCR_MODULE_PATH`, użyj tego folderu zamiast niego.
+
+## Ikona programu
+
+Plik `assets/pysilde6.ico` jest ikoną aplikacji: trafia do pliku EXE
+(`--icon`), na pasek zadań Windows oraz na belkę każdego okna. Skrypt
+`build_windows.ps1` dokłada ją automatycznie i sam generuje, jeśli jej brakuje.
+
+Ikonę można wygenerować ponownie w dowolnej chwili:
+
+```powershell
+python tools\make_app_icon.py
+```
+
+Generator korzysta wyłącznie z biblioteki Pillow, która jest już wymieniona w
+`requirements-windows.txt`. Powstają dwa pliki: `assets/pysilde6.ico` (rozmiary
+od 16 do 256 pikseli, wymagane przez Windows) oraz `assets/pysilde6.png`
+(podgląd). Aby użyć własnej grafiki, wystarczy podmienić `assets/pysilde6.ico`
+— skrypt budujący nie nadpisuje istniejącego pliku.
+
+Jeżeli po aktualizacji Windows nadal pokazuje starą ikonę, wyczyść jej pamięć
+podręczną poleceniem `ie4uinit.exe -show` albo wyloguj się i zaloguj ponownie.
 
 ## Co musi być dostępne na drugim komputerze
 
@@ -130,7 +153,7 @@ powinien ukrycie zastępować:
 | --- | --- |
 | Zwykła praca programu, PDF, listy Excel oraz generowanie DOCX | cały katalog `dist\Pysilde6` |
 | KW i KRS przez Playwright | folder `ms-playwright` dołączony przez skrypt; dostęp do Internetu |
-| **KW 2** przez Selenium | zainstalowany zwykły Google Chrome / Chrome zgodny z Selenium; dostęp do Internetu |
+| **KW2** przez Selenium | zainstalowany zwykły Google Chrome / Chrome zgodny z Selenium; dostęp do Internetu |
 | Łączenie/dobieranie dokumentów oraz druk/konwersja DOCX przez automatykę | Microsoft Word, gdy wybierany jest ten tryb; łączenie ma też wariant bez Worda |
 | Eksport Tytułów prawnych do szablonu Excel przez COM | Microsoft Excel — sama biblioteka `openpyxl` nie zastępuje programu Excel dla tego eksportu |
 | Awaryjny OCR Tesseract | osobno zainstalowany Tesseract OCR z językiem polskim (`pol`) |
@@ -151,7 +174,7 @@ na nowym komputerze.
    duplikaty, generowanie przykładowego dokumentu/koperty, eksport PDF/Excel,
    Historię oraz zapisywanie ustawień po ponownym uruchomieniu.
 5. Sprawdź osobno funkcje internetowe: status Poczty Polskiej, KRS i KW.
-6. Jeśli korzystasz z OCR lub KW 2, sprawdź odpowiednio OCR/Tesseract oraz
+6. Jeśli korzystasz z OCR lub KW2, sprawdź odpowiednio OCR/Tesseract oraz
    uruchomienie widocznego Chrome.
 
 Jeśli wersja z `-Console` pokaże błąd, zachowaj treść komunikatu — będzie

@@ -1,4 +1,4 @@
-"""KW 2 – osobny moduł pracy z Elektronicznymi Księgami Wieczystymi.
+"""KW2 – osobny moduł pracy z Elektronicznymi Księgami Wieczystymi.
 
 Zawiera ręczny przepływ pracy w zwykłej przeglądarce oraz osobny, widoczny
 tryb Chrome dla pojedynczo wybranego numeru KW. Nie stosuje proxy,
@@ -102,7 +102,7 @@ class KW2ChromeWorker(QThread):
             except Exception:
                 pass
 
-            self.log_message.emit("🌐 Otwieram eKW w widocznym oknie Chrome...")
+            self.log_message.emit("🌐 Otwieram portal eKW w widocznym oknie Chrome...")
             driver.get(EKW_CHROME_URL)
             self._fill_search_form(
                 driver,
@@ -279,12 +279,12 @@ class KW2ManualWidget(QWidget):
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("eKW — przeglądanie ksiąg wieczystych")
+        title = QLabel("KW2 — przeglądanie ksiąg wieczystych")
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
         header.addWidget(title)
         header.addStretch()
 
-        self.btn_open_ekw = QPushButton("🌐 Otwórz eKW")
+        self.btn_open_ekw = QPushButton("🌐 Otwórz portal eKW")
         self.btn_open_ekw.setToolTip(
             "Otwiera https://ekw.ms.gov.pl/ w domyślnej, zwykłej przeglądarce."
         )
@@ -300,7 +300,7 @@ class KW2ManualWidget(QWidget):
         layout.addLayout(header)
 
         info = QLabel(
-            "<b>eKW:</b> przyciski kopiowania otwierają wyłącznie oficjalną "
+            "<b>KW2:</b> przyciski kopiowania otwierają wyłącznie oficjalną "
             "stronę w Twojej normalnej przeglądarce. Niżej jest też osobny tryb "
             "widocznego Chrome dla jednego zaznaczonego numeru i wybranych działów PDF."
         )
@@ -421,7 +421,7 @@ class KW2ManualWidget(QWidget):
         self.btn_copy = QPushButton("📋 Kopiuj zaznaczone")
         self.btn_copy.clicked.connect(self._copy_selected_numbers)
         table_actions.addWidget(self.btn_copy)
-        self.btn_copy_open = QPushButton("📋🌐 Kopiuj i otwórz eKW")
+        self.btn_copy_open = QPushButton("📋🌐 Kopiuj i otwórz portal eKW")
         self.btn_copy_open.setObjectName("btn_primary")
         self.btn_copy_open.clicked.connect(self._copy_and_open_ekw)
         table_actions.addWidget(self.btn_copy_open)
@@ -480,7 +480,7 @@ class KW2ManualWidget(QWidget):
             )
             temporary.replace(state_file)
         except OSError as exc:
-            self._set_status(f"Nie udało się zapisać stanu eKW: {exc}")
+            self._set_status(f"Nie udało się zapisać stanu KW2: {exc}")
 
     def _state_file(self) -> Path | None:
         if not self.project_path:
@@ -663,7 +663,7 @@ class KW2ManualWidget(QWidget):
             QMessageBox.information(
                 self,
                 "Wybierz jedną księgę",
-                "Dla bezpieczeństwa eKW pobiera tylko jeden zaznaczony numer naraz.",
+                "Dla bezpieczeństwa KW2 pobiera tylko jeden zaznaczony numer naraz.",
             )
             return
 
@@ -754,7 +754,7 @@ class KW2ManualWidget(QWidget):
     def _open_ekw(self) -> None:
         opened = QDesktopServices.openUrl(QUrl(EKW_HOME_URL))
         if opened:
-            self._set_status("Otwarto eKW w domyślnej przeglądarce.")
+            self._set_status("Otwarto portal eKW w domyślnej przeglądarce.")
         else:
             QMessageBox.warning(
                 self,
