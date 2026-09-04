@@ -16,6 +16,14 @@ from utils.generation_targets import (
     COVER_GENERATION_RULES,
     cover_generation_rule_defaults,
 )
+from utils.output_paths import (
+    DEFAULT_PROJECTS_SUBFOLDER,
+    OUTPUT_TARGETS,
+    auto_key,
+    folder_key,
+    folder_name,
+    is_auto_enabled,
+)
 from utils.project_naming import (
     DATE_FORMAT_CHOICES,
     DATE_FORMAT_KEY,
@@ -559,6 +567,7 @@ class SettingsTabWidget(QWidget):
         main_layout.addWidget(self._build_naming_box())
 
         main_layout.addWidget(self._build_project_folder_box())
+        main_layout.addWidget(self._build_output_folders_box())
         main_layout.addWidget(self._build_wypis_box())
 
         # PISMA PRZEWODNIE — REGUŁY SERII
@@ -977,6 +986,60 @@ class SettingsTabWidget(QWidget):
     # ──────────────────────────────────────────────────────────────
     # Nazewnictwo generowanych plików
     # ──────────────────────────────────────────────────────────────
+    def _build_output_folders_box(self) -> QGroupBox:
+        """Sekcja: gdzie zapisywać wygenerowane dokumenty."""
+        box = QGroupBox("Foldery na gotowe dokumenty (w folderze projektu)")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Zaznaczone moduły zapisują gotowe pliki od razu do podfolderu "
+            "aktywnego projektu — bez pytania o folder. Nazwę podfolderu "
+            "możesz zmienić w polu obok. Po odznaczeniu moduł znów zapyta, "
+            "gdzie zapisać pliki (jak dotychczas)."
+        )
+        info.setObjectName("naming_hint")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        self.output_auto_checks = {}
+        self.output_folder_edits = {}
+
+        for target, label, default_folder in OUTPUT_TARGETS:
+            row = QHBoxLayout()
+            check = QCheckBox("Zapisuj automatycznie do:")
+            check.setToolTip(
+                f"{label}: gdy zaznaczone, pliki trafiają do podfolderu "
+                "projektu. Gdy odznaczone — program pyta o folder."
+            )
+            edit = QLineEdit()
+            edit.setPlaceholderText(default_folder)
+            edit.setToolTip(
+                "Nazwa podfolderu tworzonego w folderze projektu."
+            )
+            check.toggled.connect(edit.setEnabled)
+            row.addWidget(check)
+            row.addWidget(edit, 1)
+
+            self.output_auto_checks[target] = check
+            self.output_folder_edits[target] = edit
+            form.addRow(f"{label}:", row)
+
+        layout.addLayout(form)
+
+        self.lbl_projects_root_hint = QLabel()
+        self.lbl_projects_root_hint.setObjectName("muted_hint")
+        self.lbl_projects_root_hint.setWordWrap(True)
+        self.lbl_projects_root_hint.setText(
+            "Nowe projekty powstają w folderze wskazanym wyżej jako „Folder "
+            f"Główny dla NOWYCH projektów”. Gdy pole jest puste, program "
+            f"tworzy podfolder „{DEFAULT_PROJECTS_SUBFOLDER}” obok pliku "
+            "programu, zamiast zapisywać projekty w jego katalogu głównym."
+        )
+        layout.addWidget(self.lbl_projects_root_hint)
+
+        return box
+
     def _build_project_folder_box(self) -> QGroupBox:
         """Sekcja wyboru schematu nazwy folderu projektu."""
         box = QGroupBox("Projekty — nazwa folderu nowego projektu")
@@ -1432,6 +1495,13 @@ class SettingsTabWidget(QWidget):
         self.default_proj_edit.setText(
             self.config.get("default_project_root", "")
         )
+        for target, _label, _default in OUTPUT_TARGETS:
+            enabled = is_auto_enabled(self.config, target)
+            self.output_auto_checks[target].setChecked(enabled)
+            self.output_folder_edits[target].setText(
+                folder_name(self.config, target)
+            )
+            self.output_folder_edits[target].setEnabled(enabled)
         self.path_przyklady_edit.setText(
             self.config.get("path_przyklady", "")
         )
@@ -1704,6 +1774,12 @@ class SettingsTabWidget(QWidget):
         self.config["default_project_root"] = (
             self.default_proj_edit.text().strip()
         )
+        for target, _label, default_folder in OUTPUT_TARGETS:
+            self.config[auto_key(target)] = (
+                self.output_auto_checks[target].isChecked()
+            )
+            chosen = self.output_folder_edits[target].text().strip()
+            self.config[folder_key(target)] = chosen or default_folder
         self.config["path_przyklady"] = (
             self.path_przyklady_edit.text().strip()
         )

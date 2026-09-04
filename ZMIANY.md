@@ -310,6 +310,90 @@ a powtórki są usuwane.
 
 ---
 
+## 29. Projekty — nowe projekty w folderze „Projekty”
+
+Nowy projekt nie zaśmieca już katalogu głównego programu. Domyślnie
+powstaje w podfolderze **`Projekty`** obok pliku programu.
+
+Miejsce wybierasz w **Ustawieniach**, w polu *„Folder Główny dla NOWYCH
+projektów”* — gdy je wypełnisz, projekty trafiają dokładnie tam. Gdy
+zostawisz je puste, program sam utworzy folder `Projekty`. Wskazana
+ścieżka podpowiada się w oknie „Nowy projekt”, gdzie nadal możesz ją
+zmienić dla pojedynczego projektu.
+
+## 30. Projekty — osobne usuwanie z listy i z dysku
+
+Zamiast jednego przycisku są teraz dwa:
+
+- **🗑️ Usuń projekt z listy (Delete)** — znika tylko wpis w programie,
+  folder z dokumentami zostaje nietknięty na dysku.
+- **💣 Usuń projekt z listy i dysku** — kasuje też folder projektu wraz z
+  całą zawartością.
+
+Drugi przycisk jest czerwony i przed usunięciem pokazuje listę folderów
+do skasowania wraz z ostrzeżeniem, że operacji nie da się cofnąć. Po
+zakończeniu dostajesz podsumowanie: ile folderów usunięto, których nie
+było i których nie udało się skasować (np. gdy plik jest otwarty).
+
+## 31. Gotowe dokumenty zapisują się same w folderze projektu
+
+Program nie pyta już o folder przy każdym generowaniu. Pliki trafiają do
+podfolderów aktywnego projektu:
+
+| Moduł | Podfolder |
+| --- | --- |
+| Oświadczenia woli | `Oswiadczenia` |
+| Pisma przewodnie | `Pisma` |
+| Druczki pocztowe | `Druczki` |
+| Wydziel działki (PDF) | `Wydzielone dzialki` |
+| Tytuły prawne | `Tytuly prawne` |
+
+Folder tworzy się sam przy pierwszym zapisie. W **Ustawieniach**, w
+sekcji *„Foldery na gotowe dokumenty (w folderze projektu)”*, każdy moduł
+ma własny przełącznik i własne pole z nazwą podfolderu:
+
+- **zaznaczony** — zapis automatyczny (ustawienie domyślne),
+- **odznaczony** — program pyta o folder, dokładnie jak dotychczas.
+
+Nazwę podfolderu możesz zmienić na dowolną. Gdy żaden projekt nie jest
+otwarty, program i tak zapyta o folder, więc nic nie ginie.
+
+## 32. Historia — szczegóły statusu pokazują wszystkie osoby
+
+W zakładce *Podsumowanie statusów* kolumna szczegółów wymieniała tylko
+czterech pierwszych adresatów i dopisek „… i 7 kolejnych”. Teraz
+wypisuje **wszystkie osoby** z danym statusem.
+
+Po wybraniu konkretnego statusu z listy każda osoba jest w osobnej,
+ponumerowanej linii — łatwo policzyć i przeczytać, kogo dotyczy np.
+status „Awizowana”. Nagłówek kolumny zmienił się z „Przykładowe
+przesyłki” na „Adresaci (wszyscy)”.
+
+## 33. Tytuły prawne — Tabela 4 widoczna w mniejszym oknie
+
+Przy mniejszym oknie programu pola do wpisywania w *Tabeli 4 — Metryka*
+(TABELA, TEMAT, NR OBI, PROJEKTANT, LOKALIZACJA, INWESTOR) były ucinane
+i nie dało się do nich dostać.
+
+Cała zakładka ma teraz pionowe przewijanie, sama Metryka też, a obszar
+zakładek nie kurczy się już poniżej użytecznej wysokości. Panele
+„Dane z bazy” i „Eksport” nie odbierają miejsca tabelom. Sprawdzone przy
+szerokości okna 560 px — wszystkie sześć pól jest dostępnych.
+
+## 34. Wypisy — kolumna „Identyfikator działki” już nie znika
+
+Przy większej liczbie działek kolumna *Identyfikator działki* potrafiła
+zniknąć z tabeli. Powód: program odtwarzał układ nagłówka zapisany przez
+starszą wersję, która miała o jedną kolumnę mniej — nowa kolumna zostawała
+ukryta albo o zerowej szerokości.
+
+Program zapamiętuje teraz, dla ilu kolumn zapisano układ. Gdy zapis nie
+pasuje do obecnej tabeli, buduje układ od nowa zamiast go odtwarzać. Poza
+tym po każdym starcie sprawdza, czy któraś kolumna nie jest ukryta lub
+za wąska, i przywraca jej sensowną szerokość — kolumny z długą treścią
+(Działki, Identyfikator działki) dostają więcej miejsca. Twoje własne
+szerokości i kolejność kolumn pozostają zachowane.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

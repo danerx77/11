@@ -263,7 +263,7 @@ class ShipmentTrackerWidget(QWidget):
         self.status_summary_table = QTableWidget(0, 3)
         self.status_summary_table.setObjectName('shipment_status_summary_table')
         self.status_summary_table.setHorizontalHeaderLabels([
-            'Status', 'Liczba', 'Przykładowe przesyłki'
+            'Status', 'Liczba', 'Adresaci (wszyscy)'
         ])
         self.status_summary_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
@@ -684,9 +684,9 @@ class ShipmentTrackerWidget(QWidget):
             if selected_status and category != selected_status:
                 continue
             displayed_statuses += 1
-            labels = [self._shipment_summary_label(entry) for entry in entries[:4]]
-            if len(entries) > len(labels):
-                labels.append(f'… i {len(entries) - len(labels)} kolejne')
+            # Zestawienie ma pokazywać WSZYSTKIE osoby z danym statusem,
+            # a nie tylko kilka pierwszych przykładów.
+            labels = [self._shipment_summary_label(entry) for entry in entries]
 
             row = self.status_summary_table.rowCount()
             self.status_summary_table.insertRow(row)
@@ -696,9 +696,16 @@ class ShipmentTrackerWidget(QWidget):
                 Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
             )
             count_item.setFont(QFont('', -1, QFont.Weight.Bold))
-            example_item = QTableWidgetItem('; '.join(labels))
+            if selected_status:
+                # Widok szczegółów jednego statusu — każda osoba w nowej linii.
+                people_text = '\n'.join(
+                    f'{index}. {label}' for index, label in enumerate(labels, 1)
+                )
+            else:
+                people_text = '; '.join(labels)
+            example_item = QTableWidgetItem(people_text)
             example_item.setToolTip(
-                'Przykładowi adresaci / kody z tej grupy statusów.'
+                f'Wszyscy adresaci ({len(labels)}) z tej grupy statusów.'
             )
             self.status_summary_table.setItem(row, 0, category_item)
             self.status_summary_table.setItem(row, 1, count_item)

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
+from utils.output_paths import project_output_dir
 from utils.document_naming import cover_letter_filename
 
 from utils.generation_targets import cover_generation_exclusion_reason
@@ -905,6 +906,17 @@ class CoverLetterWidget(QWidget):
         self._refresh_owners_table()
 
     def set_parcels(self, parcels: list): self.parcels = parcels
+    def _resolve_output_dir(self, title: str) -> str:
+        """Folder docelowy pism: automatycznie w projekcie albo ręcznie."""
+        auto_dir = project_output_dir(
+            self.config,
+            'cover_letters',
+            self.active_project_path or self.config.get('last_project_path', ''),
+        )
+        if auto_dir is not None:
+            return str(auto_dir)
+        return QFileDialog.getExistingDirectory(self, title) or ''
+
     def set_project(self, project: dict):
         self.active_project_path = project.get('path', '')
         self._load_groups()
@@ -1124,7 +1136,16 @@ class CoverLetterWidget(QWidget):
             )
             return
 
-        out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz pismo', 'Pismo przewodnie.docx', 'Word (*.docx)')
+        auto_dir = self._resolve_output_dir('Folder wyjściowy')
+        if auto_dir and project_output_dir(
+            self.config,
+            'cover_letters',
+            self.active_project_path or self.config.get('last_project_path', ''),
+            create=False,
+        ) is not None:
+            out_path = str(Path(auto_dir) / 'Pismo przewodnie.docx')
+        else:
+            out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz pismo', 'Pismo przewodnie.docx', 'Word (*.docx)')
         if not out_path: return
         
         from utils.docx_utils import generate_cover_letter
@@ -1249,7 +1270,7 @@ class CoverLetterWidget(QWidget):
                 'Wybierz poprawny plik szablonu Word dla pism przewodnich.',
             )
 
-        out_dir = QFileDialog.getExistingDirectory(self, 'Folder wyjściowy')
+        out_dir = self._resolve_output_dir('Folder wyjściowy')
         if not out_dir:
             return
 

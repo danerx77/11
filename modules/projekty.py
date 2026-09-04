@@ -6,6 +6,7 @@ import os
 import shutil
 import re
 
+from utils.output_paths import projects_root
 from utils.project_naming import (
     DATE_FORMAT_KEY,
     SYMBOL_SEPARATOR_CHOICES,
@@ -69,9 +70,12 @@ class NewProjectDialog(QDialog):
         if not default_dir or not Path(default_dir).exists():
             import sys
             if getattr(sys, 'frozen', False):
-                default_dir = str(Path(sys.executable).parent.resolve())
+                app_dir = str(Path(sys.executable).parent.resolve())
             else:
-                default_dir = str(Path(__file__).parent.parent.resolve())
+                app_dir = str(Path(__file__).parent.parent.resolve())
+            # Nowe projekty trafiają do podfolderu „Projekty”, a nie do
+            # katalogu głównego programu.
+            default_dir = str(projects_root(self.config, app_dir, create=True))
         self.folder_edit.setText(default_dir)
         
         btn_browse = QPushButton('📂 Przeglądaj...')
@@ -344,11 +348,24 @@ class ProjectManagerWidget(QWidget):
         self.btn_open_folder.setEnabled(False)
         actions_layout.addWidget(self.btn_open_folder)
 
-        self.btn_delete = QPushButton('🗑️ Usuń zaznaczone projekty z listy (Delete)')
-        self.btn_delete.setObjectName('btn_danger')
+        self.btn_delete = QPushButton('🗑️ Usuń projekt z listy (Delete)')
+        self.btn_delete.setToolTip(
+            'Usuwa projekt tylko z listy w programie.\n'
+            'Folder z dokumentami zostaje nietknięty na dysku.'
+        )
         self.btn_delete.clicked.connect(self._remove_project)
         self.btn_delete.setEnabled(False)
         actions_layout.addWidget(self.btn_delete)
+
+        self.btn_delete_with_files = QPushButton('💣 Usuń projekt z listy i dysku')
+        self.btn_delete_with_files.setObjectName('btn_danger')
+        self.btn_delete_with_files.setToolTip(
+            'Usuwa projekt z listy ORAZ kasuje jego folder wraz z całą\n'
+            'zawartością. Tej operacji nie można cofnąć.'
+        )
+        self.btn_delete_with_files.clicked.connect(self._remove_project_with_files)
+        self.btn_delete_with_files.setEnabled(False)
+        actions_layout.addWidget(self.btn_delete_with_files)
 
         right_layout.addWidget(actions_box)
         right_layout.addStretch()
@@ -391,7 +408,8 @@ class ProjectManagerWidget(QWidget):
         if path.exists(): self.lbl_status.setText('✅ Folder istnieje')
         else: self.lbl_status.setText('⚠️ Folder nie istnieje')
 
-        for btn in [self.btn_select, self.btn_rename, self.btn_open_folder, self.btn_delete]:
+        for btn in [self.btn_select, self.btn_rename, self.btn_open_folder,
+                    self.btn_delete, self.btn_delete_with_files]:
             btn.setEnabled(True)
 
     def _on_item_clicked(self, item, column):
@@ -745,7 +763,9 @@ class ProjectManagerWidget(QWidget):
         if not selected_items: return
         
         # ZMIANA: Usuwanie wielu zaznaczonych projektów
-        msg = f"Usunąć zaznaczone projekty ({len(selected_items)}) z listy?\n(Foldery NIE zostaną usunięte)"
+        msg = (f"Usunąć zaznaczone projekty ({len(selected_items)}) z listy?\n"
+               "Foldery i pliki na dysku pozostaną nietknięte.\n"
+               "Aby skasować także pliki, użyj przycisku „Usuń projekt z listy i dysku”.")
         reply = QMessageBox.question(self, 'Usuń projekt(y)', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         
         if reply == QMessageBox.StandardButton.Yes:
@@ -757,3 +777,82 @@ class ProjectManagerWidget(QWidget):
             self.current_project = None
             self.config['projects'] = self.projects
             self._refresh_tree()
+
+    def _remove_project_with_files(self):
+        """Usuwa projekty z listy i kasuje ich foldery z dysku."""
+        selected_items = self.tree.selectedItems()
+        if not selected_items:
+            return
+
+        entries = []
+        for item in selected_items:
+            project = item.data(0, Qt.ItemDataRole.UserRole)
+            if project is None:
+                continue
+            raw_path = str(project.get('path', '') or '').strip()
+            entries.append((project, Path(raw_path) if raw_path else None))
+
+        if not entries:
+            return
+
+        listing = '\n'.join(
+            f"• {project.get('name', 'Projekt')} — "
+            + (str(folder) if folder else 'brak zapisanej ścieżki')
+            for project, folder in entries[:10]
+        )
+        if len(entries) > 10:
+            listing += f"\n… i {len(entries) - 10} kolejnych"
+
+        msg = (
+            f'Usunąć zaznaczone projekty ({len(entries)}) z listy '
+            'ORAZ skasować ich foldery z dysku?\n\n'
+            f'{listing}\n\n'
+            'UWAGA: wszystkie pliki w tych folderach zostaną trwale usunięte. '
+            'Tej operacji nie można cofnąć.'
+        )
+        reply = QMessageBox.warning(
+            self,
+            'Usuń projekt(y) z dysku',
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        removed, failed, missing = [], [], []
+        for project, folder in entries:
+            name = project.get('name', 'Projekt')
+            if folder is None:
+                missing.append(name)
+            elif not folder.exists():
+                missing.append(name)
+            elif self._remove_dir_retry(folder):
+                removed.append(name)
+            else:
+                failed.append(f'{name} ({folder})')
+
+            if project in self.projects:
+                self.projects.remove(project)
+
+        self.current_project = None
+        self.config['projects'] = self.projects
+        self._refresh_tree()
+
+        report = [f'Usunięto z listy: {len(entries)}.']
+        if removed:
+            report.append(f'Skasowano foldery: {len(removed)}.')
+        if missing:
+            report.append(
+                'Folder nie istniał (usunięto tylko wpis): ' + ', '.join(missing) + '.'
+            )
+        if failed:
+            report.append(
+                'NIE udało się skasować folderu (plik może być otwarty): '
+                + ', '.join(failed) + '.'
+            )
+
+        if failed:
+            QMessageBox.warning(self, 'Usuwanie zakończone', '\n'.join(report))
+        else:
+            QMessageBox.information(self, 'Usuwanie zakończone', '\n'.join(report))

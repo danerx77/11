@@ -7,6 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from utils.output_paths import project_output_dir
 from utils.global_settings import (
     load_global_druczek_profile,
     save_global_druczek_profile,
@@ -606,7 +607,11 @@ class DruczekTabWidget(QWidget):
         padded_shipments = [{}] * used_slots + real_shipments
         
         default_name = f"Wydruk_{Path(tmpl_path).name}"
-        out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz gotowy PDF do druku jako:', default_name, 'PDF (*.pdf)')
+        auto_dir = project_output_dir(self.config, 'druczki', self.active_project_path)
+        if auto_dir is not None:
+            out_path = str(auto_dir / default_name)
+        else:
+            out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz gotowy PDF do druku jako:', default_name, 'PDF (*.pdf)')
         if not out_path: return
         
         sender_data = self.config.get('sender', {'name': '', 'street': '', 'city': ''})

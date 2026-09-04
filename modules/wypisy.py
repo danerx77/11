@@ -15,6 +15,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
 
 from utils.parcel_sorting import parcel_sort_key as parcel_number_sort_key
+from utils.table_layout import (
+    apply_minimum_widths,
+    ensure_columns_visible,
+    remember_column_count,
+    state_matches_columns,
+)
 from utils.wypis_fields import (
     format_municipality_for_config,
     format_ownership,
@@ -281,32 +287,43 @@ class OwnersListWidget(QWidget):
 
         self.table.horizontalHeader().setSectionsMovable(True)
         table_state_owners_hex = self.config.get('table_state_owners', '')
-        restored_table_state = False
-        if table_state_owners_hex:
+        # Układ zapisany dla innej liczby kolumn (np. sprzed dodania
+        # „Identyfikatora działki”) potrafił ukryć nowe kolumny. Taki zapis
+        # pomijamy i budujemy układ od nowa.
+        state_is_current = state_matches_columns(
+            self.config, 'table_state_owners', self.table.columnCount()
+        )
+        if table_state_owners_hex and state_is_current:
             from PySide6.QtCore import QByteArray
-            restored_table_state = self.table.horizontalHeader().restoreState(
+            self.table.horizontalHeader().restoreState(
                 QByteArray.fromHex(str(table_state_owners_hex).encode())
             )
 
-        # Stary zapis stanu nagłówka mógł ukryć dodane kolumny lub pozostawić
-        # im szerokość zero. Zachowujemy kolejność i szerokości użytkownika,
-        # ale każda kolumna z danymi pozostaje dostępna na pasku poziomym.
-        if restored_table_state:
-            for column in range(self.table.columnCount()):
-                if self.table.isColumnHidden(column):
-                    self.table.setColumnHidden(column, False)
-                if self.table.columnWidth(column) <= 1:
-                    self.table.setColumnWidth(column, 120)
+        # Żadna kolumna z danymi nie może pozostać ukryta ani zerowej
+        # szerokości — inaczej znika z tabeli mimo poziomego przewijania.
+        ensure_columns_visible(
+            self.table,
+            wide_columns={3: 200, 23: 220},
+        )
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         for i in [5, 6, 7, 8]:
             self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-            if self.table.columnWidth(i) < 150: self.table.setColumnWidth(i, 200)
+        # Kolumny z długą treścią: działki oraz identyfikatory działek.
+        self.table.horizontalHeader().setSectionResizeMode(
+            23, QHeaderView.ResizeMode.Interactive
+        )
+        apply_minimum_widths(
+            self.table,
+            {5: 200, 6: 200, 7: 200, 8: 200, 3: 200, 23: 220},
+        )
 
-        if restored_table_state:
-            self.config['table_state_owners'] = (
-                self.table.horizontalHeader().saveState().toHex().data().decode()
-            )
+        remember_column_count(
+            self.config, 'table_state_owners', self.table.columnCount()
+        )
+        self.config['table_state_owners'] = (
+            self.table.horizontalHeader().saveState().toHex().data().decode()
+        )
             
         self.table.horizontalHeader().sectionResized.connect(lambda *args: self.config.update({'table_state_owners': self.table.horizontalHeader().saveState().toHex().data().decode()}))
         self.table.horizontalHeader().sectionMoved.connect(lambda *args: self.config.update({'table_state_owners': self.table.horizontalHeader().saveState().toHex().data().decode()}))

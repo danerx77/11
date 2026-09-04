@@ -750,7 +750,7 @@ class MainWindow(QMainWindow):
         self.druczek_tab = DruczekTabWidget(self.config)
         self.tracker_tab = ShipmentTrackerWidget(self.config)
         self.print_tab = PrintManagerWidget(self.config)
-        self.extract_pdf_tab = ExtractPdfWidget(self)
+        self.extract_pdf_tab = ExtractPdfWidget(self, self.config)
         self.kw_tab = KWDownloaderWidget(self.config)
         self.kw2_tab = KW2ManualWidget(self.config)
         self.krs_downloader_tab = KrsDownloaderWidget(self.config)
@@ -945,6 +945,7 @@ class MainWindow(QMainWindow):
             self.tracker_tab.set_project(project)
             self.print_tab.set_project(project)
             self.legal_titles_tab.set_project(project)
+            self.extract_pdf_tab.set_project(project)
             self.krs_downloader_tab.set_project(project)
             self.indicator_tab.set_project(project)
 

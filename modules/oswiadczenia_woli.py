@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
 
+from utils.output_paths import project_output_dir
 from utils.document_naming import declaration_filename
 
 class NoWheelComboBox(QComboBox):
@@ -1167,6 +1168,17 @@ class DeclGeneratorWidget(QWidget):
         self.template_budowa_edit.setText(budowa_tmpl)
         self.template_demontaz_edit.setText(demontaz_tmpl)
 
+    def _resolve_output_dir(self, target: str, title: str) -> str:
+        """Folder docelowy: automatycznie w projekcie albo wskazany ręcznie."""
+        auto_dir = project_output_dir(
+            self.config,
+            target,
+            self.active_project_path or self.config.get('last_project_path', ''),
+        )
+        if auto_dir is not None:
+            return str(auto_dir)
+        return QFileDialog.getExistingDirectory(self, title) or ''
+
     def _get_params(self) -> dict:
         date_str = self.date_edit.text().strip()
         decl_type_idx = self.type_combo.currentIndex()
@@ -1267,7 +1279,7 @@ class DeclGeneratorWidget(QWidget):
 
         b_tmpl = p['template_path_budowa']
         d_tmpl = p['template_path_demontaz']
-        out_dir = QFileDialog.getExistingDirectory(self, 'Folder wyjściowy')
+        out_dir = self._resolve_output_dir('declarations', 'Folder wyjściowy')
         if not out_dir: return
 
         for t in types:
@@ -1508,7 +1520,7 @@ class DeclGeneratorWidget(QWidget):
                 'Wybierz co najmniej jeden poprawny szablon Word (Budowa lub Demontaż).',
             )
 
-        out_dir = QFileDialog.getExistingDirectory(self, 'Wybierz folder wyjściowy')
+        out_dir = self._resolve_output_dir('declarations', 'Wybierz folder wyjściowy')
         if not out_dir:
             return
 

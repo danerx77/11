@@ -10,11 +10,14 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QRadioButton, QScrollArea, QSplitter, QStyledItemDelegate, QTableWidget,
+    QRadioButton, QScrollArea, QSizePolicy, QSplitter, QStyledItemDelegate,
+    QTableWidget,
     QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QGuiApplication, QShortcut
+
+from utils.output_paths import project_output_dir
 
 from modules.legal_titles_dialogs import OddzialEditorDialog, ComboBoxDelegate
 from modules.legal_titles_excel import LegalTitlesExcelExporter
@@ -1378,7 +1381,20 @@ class LegalTitlesWidget(QWidget):
         self._sync_with_owners(show_info=False)
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        # Cała zakładka jest przewijana — dzięki temu przy mniejszym oknie
+        # programu żadna sekcja (a zwłaszcza pola Metryki) nie znika.
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        page_scroll = QScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        page = QWidget()
+        page_scroll.setWidget(page)
+        outer_layout.addWidget(page_scroll)
+
+        layout = QVBoxLayout(page)
         layout.setSpacing(10)
         self.multi_line_delegate = MultiLineTextDelegate(self)
 
@@ -1387,6 +1403,9 @@ class LegalTitlesWidget(QWidget):
         layout.addWidget(hdr)
 
         sync_box = QGroupBox('Dane z bazy i Ustawienia Generatora')
+        sync_box.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         sync_layout = QVBoxLayout(sync_box)
 
         row1 = QHBoxLayout()
@@ -1573,8 +1592,23 @@ class LegalTitlesWidget(QWidget):
         ly2.addWidget(self.table_2)
         self.tabs.addTab(tab3, "Tabela 3 - Wykaz szczegółowy (Szablon 2)")
 
+        # Metryka w oknie przewijanym — przy mniejszym oknie programu pola
+        # do wpisywania pozostają dostępne (pionowy pasek przewijania).
         tab4 = QWidget()
-        ly_4 = QFormLayout(tab4)
+        tab4_outer = QVBoxLayout(tab4)
+        tab4_outer.setContentsMargins(0, 0, 0, 0)
+        tab4_scroll = QScrollArea()
+        tab4_scroll.setWidgetResizable(True)
+        tab4_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        tab4_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        tab4_inner = QWidget()
+        ly_4 = QFormLayout(tab4_inner)
+        ly_4.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        ly_4.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        ly_4.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        tab4_scroll.setWidget(tab4_inner)
+        tab4_scroll.setMinimumHeight(160)
+        tab4_outer.addWidget(tab4_scroll)
         self.t4_tabela = QLineEdit()
         ly_4.addRow("TABELA:", self.t4_tabela)
         self.t4_temat = QLineEdit()
@@ -1587,6 +1621,15 @@ class LegalTitlesWidget(QWidget):
         ly_4.addRow("LOKALIZACJA:", self.t4_lokalizacja)
         self.t4_inwestor = QLineEdit()
         ly_4.addRow("INWESTOR:", self.t4_inwestor)
+        for field in (
+            self.t4_tabela, self.t4_temat, self.t4_nr_obi,
+            self.t4_projektant, self.t4_lokalizacja, self.t4_inwestor,
+        ):
+            field.setMinimumWidth(180)
+            field.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+
         btn_save_defaults = QPushButton("💾 Zapisz aktualnie wpisane dane jako DOMYŚLNE dla nowych projektów")
         btn_save_defaults.setStyleSheet("margin-top: 20px; padding: 5px; background-color: #e9ecef;")
         btn_save_defaults.clicked.connect(self._save_global_defaults)
@@ -1643,9 +1686,13 @@ class LegalTitlesWidget(QWidget):
         ly_5.addWidget(self.table_3)
         self.tabs.addTab(tab5, "Tabela 5 - Wykaz końcowy (Szablon 3)")
 
-        layout.addWidget(self.tabs)
+        self.tabs.setMinimumHeight(320)
+        layout.addWidget(self.tabs, 1)
 
         export_box = QGroupBox('Eksport do Twoich szablonów Excel (.xlsm / .xlsx)')
+        export_box.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         export_layout = QVBoxLayout(export_box)
 
         paths_layout = QFormLayout()
@@ -2590,10 +2637,30 @@ class LegalTitlesWidget(QWidget):
         if show_info:
             QMessageBox.information(self, "Zakończono", f"Zaktualizowano / Dodano {added} powiązań do tabel.")
 
+    def _auto_export_dir(self):
+        """Podfolder projektu na tytuły prawne (albo ``None`` = pytaj)."""
+        return project_output_dir(
+            self.config, 'legal_titles', self.active_project.get('path', '')
+        )
+
+    def _ask_export_path(self, title: str, default_path: str):
+        """Zwraca ścieżkę zapisu — automatyczną albo wskazaną w oknie."""
+        auto_dir = self._auto_export_dir()
+        if auto_dir is not None:
+            return str(auto_dir / Path(default_path).name)
+        path, _ = QFileDialog.getSaveFileName(
+            self, title, default_path, 'Excel (*.xlsx)'
+        )
+        return path
+
     def _get_default_export_path(self, config_key: str, default_pattern: str):
-        last_dir = self.config.get('last_legal_export_dir', '')
-        if not last_dir or not Path(last_dir).exists():
-            last_dir = self.active_project.get('path', '')
+        auto_dir = self._auto_export_dir()
+        if auto_dir is not None:
+            last_dir = str(auto_dir)
+        else:
+            last_dir = self.config.get('last_legal_export_dir', '')
+            if not last_dir or not Path(last_dir).exists():
+                last_dir = self.active_project.get('path', '')
 
         symbol = self.active_project.get('symbol', 'PROJEKT')
         city = self.active_project.get('city', 'Miejscowosc')
@@ -2620,7 +2687,7 @@ class LegalTitlesWidget(QWidget):
             return QMessageBox.warning(self, 'Brak Szablonu', 'Wybierz najpierw istniejący szablon programu Excel.')
 
         default_path = self._get_default_export_path('legal_name_1', 'Wykaz_dzialek_podmiotow_{symbol}.xlsx')
-        path, _ = QFileDialog.getSaveFileName(self, 'Zapisz jako (Zawsze format .xlsx)', default_path, 'Excel (*.xlsx)')
+        path = self._ask_export_path('Zapisz jako (Zawsze format .xlsx)', default_path)
         if not path: return
         if not path.endswith('.xlsx'): path += '.xlsx'
 
@@ -2652,7 +2719,7 @@ class LegalTitlesWidget(QWidget):
             return QMessageBox.warning(self, 'Brak Szablonu', 'Wybierz najpierw istniejący szablon programu Excel.')
 
         default_path = self._get_default_export_path('legal_name_2', 'Wykaz_szczegolowy_{symbol}.xlsx')
-        path, _ = QFileDialog.getSaveFileName(self, 'Zapisz jako (Zawsze .xlsx)', default_path, 'Excel (*.xlsx)')
+        path = self._ask_export_path('Zapisz jako (Zawsze .xlsx)', default_path)
         if not path: return
         if not path.endswith('.xlsx'): path += '.xlsx'
 
@@ -2676,7 +2743,7 @@ class LegalTitlesWidget(QWidget):
             return QMessageBox.warning(self, 'Brak Szablonu', 'Wybierz najpierw istniejący szablon programu Excel.')
 
         default_path = self._get_default_export_path('legal_name_3', 'Tabela_koncowa_{symbol}.xlsx')
-        path, _ = QFileDialog.getSaveFileName(self, 'Zapisz jako (Zawsze .xlsx)', default_path, 'Excel (*.xlsx)')
+        path = self._ask_export_path('Zapisz jako (Zawsze .xlsx)', default_path)
         if not path: return
         if not path.endswith('.xlsx'): path += '.xlsx'
 

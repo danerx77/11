@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
 
 # Używamy gotowych funkcji z utils do czytania list
+from utils.output_paths import project_output_dir
 from utils.pdf_utils import parse_parcel_list_file, parse_parcel_list_text
 
 
@@ -120,15 +121,21 @@ class PdfExtractorThread(QThread):
 
 
 class ExtractPdfWidget(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, config=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self.config = config if config is not None else {}
+        self.active_project_path = ''
         
         # Słownik: { 'nr_działki': {'source': '...', 'status': 'Oczekuje', 'color': '#7f8c8d'} }
         self.target_parcels = {} 
         self.global_parcels_cache = []
         self.pdf_path = ""
         self._build_ui()
+
+    def set_project(self, project: dict):
+        """Zapamiętuje otwarty projekt, by zapisywać PDF-y w jego folderze."""
+        self.active_project_path = (project or {}).get('path', '')
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -395,7 +402,13 @@ class ExtractPdfWidget(QWidget):
             QMessageBox.information(self, "Informacja", "Wszystkie działki widoczne na liście zostały już poprawnie wydzielone (mają status TAK).\n\nAby ponowić, usuń je z listy i dodaj ponownie.")
             return
             
-        output_dir = QFileDialog.getExistingDirectory(self, "Wybierz folder do zapisu WYDZIELONYCH plików PDF")
+        auto_dir = project_output_dir(
+            self.config, 'split_pdf', self.active_project_path
+        )
+        if auto_dir is not None:
+            output_dir = str(auto_dir)
+        else:
+            output_dir = QFileDialog.getExistingDirectory(self, "Wybierz folder do zapisu WYDZIELONYCH plików PDF")
         if not output_dir:
             return
             
