@@ -394,6 +394,81 @@ za wąska, i przywraca jej sensowną szerokość — kolumny z długą treścią
 (Działki, Identyfikator działki) dostają więcej miejsca. Twoje własne
 szerokości i kolejność kolumn pozostają zachowane.
 
+## 35. Wypisy — miejscowość i ulica działki rozdzielane automatycznie
+
+Wypis zapisuje położenie działki w jednej linii, np. `MAKI, WYBICKIEGO
+J. 50`. Program rozbija je teraz na dwa osobne pola:
+
+| Zapis w wypisie | Miejscowośc działki | Ulica Działki |
+| --- | --- | --- |
+| `MAKI, WYBICKIEGO J. 50` | Maki | Wybickiego J. 50 |
+| `Maki, ul. Górna 42` | Maki | ul. Górna 42 |
+| `Maki ul. Górna 42` | Maki | ul. Górna 42 |
+| `ul. Górna 42` | *(puste)* | ul. Górna 42 |
+| `MAKI` | Maki | *(puste)* |
+| `MAKI, GÓRNA 12A` | Maki | Górna 12A |
+
+Rozpoznawane są przedrostki `ul.`, `al.`, `os.`, `pl.`, `rondo`, `skwer`
+i podobne, a także adresy bez przedrostka zakończone numerem domu
+(`Górna 42`, `Górna 12/3`). Zapis WERSALIKAMI jest zamieniany na normalny
+(`MAKI` → `Maki`), przy czym numery domów zachowują wielką literę
+(`12A`), a inicjały kropkę (`J.`).
+
+Zasada jest zachowawcza — gdy nie da się bezpiecznie orzec, gdzie kończy
+się miejscowość, tekst zostaje w polu ulicy zamiast być błędnie rozcięty.
+`Maki, gmina Żukowo` daje samą miejscowość, bo „gmina Żukowo” nie wygląda
+na ulicę. To, co wpiszesz ręcznie, nigdy nie jest nadpisywane.
+
+**Przy okazji naprawiony błąd:** kolumna „Miejscowośc działki” była
+zapisywana dwa razy — najpierw miejscowością, zaraz potem ulicą — przez
+co miejscowość znikała, a kolumna „Ulica Działki” zostawała pusta.
+
+## 36. Tytuły prawne — źródło miejscowości dla Tabeli 5
+
+Obok istniejącego *„Źródło ulicy T5”* doszło **„Źródło miejscowości T5”**
+z trzema wariantami:
+
+1. **Miejscowość z projektu (domyślnie)** — z danych wpisanego projektu.
+2. **Miejscowośc działki z wypisu** — z kolumny „Miejscowośc działki”.
+3. **Adres właściciela – miejscowość** — z adresu korespondencyjnego.
+
+Gdy wybrane źródło jest puste, program sięga po miejscowość projektu,
+więc kolumna nie zostaje pusta przez przypadek.
+
+W pasku edytora Tytułów prawnych, obok *„Zaciągaj ulicę do T5”*, jest
+teraz **„Zaciągaj miejscowość do T5”**. Oba przełączniki działają tak
+samo i są zsynchronizowane z oknem Ustawień w obie strony. Podgląd
+Tabeli 5 w Ustawieniach od razu pokazuje efekt wyboru.
+
+Poprawiona została też opcja *„Ulica działki z wypisu”*: skoro wypis
+trzyma miejscowość i ulicę razem, do kolumny Ulica trafia teraz sama
+ulica (`Wybickiego J. 50`), a nie całe `MAKI, WYBICKIEGO J. 50`.
+
+## 37. Drukuj — lista z zaznaczaniem dokumentów
+
+Lista drukowania została przebudowana. **Każdy dokument ma pole wyboru**,
+więc wprost decydujesz, co ma pójść na drukarkę. Kliknięcie właściciela
+zaznacza lub odznacza wszystkie jego pliki naraz, a pole właściciela
+pokazuje stan pośredni, gdy wybrana jest tylko część.
+
+Doszły kolumny **Typ** (Budowa / Demontaż / Pismo / Koperta / Inny) oraz
+**Rozmiar**, a pod listą licznik: *„Do druku zaznaczono 7 z 12 widocznych
+dokumentów”*.
+
+Nad listą znajdziesz przyciski **✅ Wszystko**, **⬜ Nic**, **🔄 Odwróć**
+oraz wybór rodzaju z przyciskiem **Zaznacz** — jednym kliknięciem
+zaznaczysz np. same Pisma. Pasek „Pokaż” rozdziela teraz Oświadczenia,
+Pisma, Koperty i Inne dokumenty, doszło też **pole wyszukiwania** po
+nazwisku lub nazwie pliku.
+
+Dodatkowo: **spacja** przełącza zaznaczenie podświetlonych pozycji, prawy
+przycisk myszy otwiera menu podręczne, a odznaczenia **przetrwają zmianę
+filtra** — po wyszukaniu i wyczyszczeniu pola Twój wybór jest zachowany.
+
+Przyciski druku rozróżniają teraz dwa tryby: *„Drukuj podświetlone”*
+(zaznaczone myszą) i *„Drukuj zaznaczone ✅”* (z pól wyboru). Przy
+wydruku ponad 20 dokumentów program prosi o potwierdzenie.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

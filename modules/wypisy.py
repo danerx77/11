@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
 
 from utils.parcel_sorting import parcel_sort_key as parcel_number_sort_key
+from utils.parcel_location import split_many, split_parcel_location
 from utils.table_layout import (
     apply_minimum_widths,
     ensure_columns_visible,
@@ -535,6 +536,39 @@ class OwnersListWidget(QWidget):
                 values.append(parcel_value)
         return ', '.join(values)
 
+    def _parcel_location_values(self, owner: dict) -> tuple:
+        """Zwraca (miejscowość, ulica) dla kolumn „…działki”.
+
+        Wypisy zapisują położenie w jednej linii, np. „MAKI, WYBICKIEGO
+        J. 50”. Rozdzielamy je na dwa pola, ale nie nadpisujemy tego, co
+        użytkownik wpisał ręcznie.
+        """
+        # „city” to w tej zakładce miejscowość DZIAŁKI (tak samo nazywa je
+        # okno edycji właściciela i mapowanie kolumn tabeli).
+        own_city = str(
+            owner.get('city', '') or owner.get('parcel_city', '') or ''
+        ).strip()
+        own_street = str(owner.get('parcel_street', '') or '').strip()
+
+        raw_values = []
+        for parcel in owner.get('parcels', []):
+            if not isinstance(parcel, dict):
+                continue
+            value = str(parcel.get('parcel_address', '') or '').strip()
+            if value and value not in raw_values:
+                raw_values.append(value)
+
+        parsed = split_many(raw_values)
+
+        # Ręczny wpis ma pierwszeństwo; gdy sam zawiera miejscowość i
+        # ulicę razem, też go rozdzielamy.
+        if own_street and not own_city:
+            manual = split_parcel_location(own_street)
+            if manual.city and manual.street:
+                return manual.city, manual.street
+
+        return own_city or parsed.city, own_street or parsed.street
+
     def _refresh_table(self, filter_text: str = ''):
         self.table.blockSignals(True) 
         self.table.setRowCount(0)
@@ -622,18 +656,9 @@ class OwnersListWidget(QWidget):
                 ),
             )
             
-            self.table.setItem(
-                row, 14, QTableWidgetItem(self._owner_table_value(o, 'city'))
-            )
-            self.table.setItem(
-                row,
-                14,
-                QTableWidgetItem(
-                    self._owner_table_value(
-                        o, 'parcel_street', parcel_key='parcel_address'
-                    )
-                ),
-            )
+            parcel_city, parcel_street = self._parcel_location_values(o)
+            self.table.setItem(row, 14, QTableWidgetItem(parcel_city))
+            self.table.setItem(row, 15, QTableWidgetItem(parcel_street))
 
             self.table.setItem(row, 16, QTableWidgetItem(o.get('pesel', '')))
             self.table.setItem(row, 17, QTableWidgetItem(o.get('nip', '')))
@@ -770,7 +795,8 @@ class OwnersListWidget(QWidget):
                 else:
                     parcels_info.append(f"  - działka nr {p}")
                     
-            final_street_dz = o.get('parcel_street', ", ".join(ulice_dz_list))
+            detail_city, detail_street = self._parcel_location_values(o)
+            final_street_dz = detail_street or o.get('parcel_street', ", ".join(ulice_dz_list))
             
             lines = [
                 f"=== {typ_info} ===",
@@ -783,7 +809,7 @@ class OwnersListWidget(QWidget):
                 f"Pełna nazwa (Osobno): {o.get('name_separate', '')}",
                 f"Adres: {o.get('address', '')}",
                 f"Adres 2: {o.get('address_2', '')}" if o.get('address_2') else "",
-                f"Miejscowość działki: {o.get('city', '')}",
+                f"Miejscowość działki: {detail_city}",
                 f"Identyfikator działki: {', '.join([str(p.get('identifier', '')) for p in o.get('parcels', []) if isinstance(p, dict) and p.get('identifier')])}",
                 f"Ulica działki: {final_street_dz}",
                 f"PESEL: {o.get('pesel', '')}",
@@ -1183,6 +1209,15 @@ class OwnersListWidget(QWidget):
 
             for o in owners:
                 auto_classify_and_clean_owner(o)
+
+                # Wypis zapisuje położenie działki w jednej linii, np.
+                # „MAKI, WYBICKIEGO J. 50”. Rozdzielamy je na miejscowość
+                # i ulicę, żeby obie kolumny były od razu wypełnione.
+                imported_city, imported_street = self._parcel_location_values(o)
+                if imported_city:
+                    o['city'] = imported_city
+                if imported_street:
+                    o['parcel_street'] = imported_street
 
                 if not o.get('city'): o['city'] = self.current_project_city
                 o['status_sprawy'] = 'Do zrobienia'

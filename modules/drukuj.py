@@ -7,10 +7,11 @@ import contextlib
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox, QAbstractItemView, QCheckBox, QGroupBox, QComboBox
+    QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox, QAbstractItemView,
+    QCheckBox, QGroupBox, QComboBox, QLineEdit, QHeaderView, QMenu
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtGui import QShortcut, QKeySequence, QFont
 
 try:
     import win32print
@@ -27,6 +28,7 @@ class PrintManagerWidget(QWidget):
         self.files_to_print = []
         self.all_found_files = [] 
         self.owners = []
+        self._unchecked_paths = set()
         self.active_project_path = None
         self._build_ui()
 
@@ -55,27 +57,96 @@ class PrintManagerWidget(QWidget):
         top_row.addStretch()
         main_layout.addLayout(top_row)
         
-        # Opcje filtrowania drzewa
+        # ── Co pokazać na liście ──
         filter_row = QHBoxLayout()
-        self.chk_show_envelopes = QCheckBox('Pokaż koperty')
+        filter_row.addWidget(QLabel('Pokaż:'))
+
+        self.chk_show_declarations = QCheckBox('Oświadczenia')
+        self.chk_show_declarations.setChecked(True)
+        self.chk_show_declarations.stateChanged.connect(self._refresh_tree)
+        filter_row.addWidget(self.chk_show_declarations)
+
+        self.chk_show_letters = QCheckBox('Pisma')
+        self.chk_show_letters.setChecked(True)
+        self.chk_show_letters.stateChanged.connect(self._refresh_tree)
+        filter_row.addWidget(self.chk_show_letters)
+
+        self.chk_show_envelopes = QCheckBox('Koperty')
         self.chk_show_envelopes.stateChanged.connect(self._refresh_tree)
         filter_row.addWidget(self.chk_show_envelopes)
-        
-        self.chk_show_other = QCheckBox('Pokaż Inne dokumenty')
+
+        self.chk_show_other = QCheckBox('Inne dokumenty')
         self.chk_show_other.stateChanged.connect(self._refresh_tree)
         filter_row.addWidget(self.chk_show_other)
-        filter_row.addStretch()
+
+        filter_row.addWidget(QLabel(' | Szukaj:'))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText('nazwisko lub fragment nazwy pliku…')
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._refresh_tree)
+        filter_row.addWidget(self.search_edit, 1)
         main_layout.addLayout(filter_row)
-        
-        # Drzewo plików
+
+        # ── Szybkie zaznaczanie ──
+        select_row = QHBoxLayout()
+        select_row.addWidget(QLabel('Zaznacz do druku:'))
+
+        for label, handler, tip in (
+            ('✅ Wszystko', self._check_all,
+             'Zaznacza wszystkie widoczne dokumenty.'),
+            ('⬜ Nic', self._uncheck_all,
+             'Odznacza wszystko — nic nie zostanie wydrukowane.'),
+            ('🔄 Odwróć', self._invert_check,
+             'Zamienia zaznaczone z niezaznaczonymi.'),
+        ):
+            btn = QPushButton(label)
+            btn.setToolTip(tip)
+            btn.clicked.connect(handler)
+            select_row.addWidget(btn)
+
+        select_row.addWidget(QLabel(' | Tylko typ:'))
+        self.combo_check_kind = QComboBox()
+        self.combo_check_kind.addItems([
+            'Oświadczenia — Budowa', 'Oświadczenia — Demontaż',
+            'Pisma', 'Koperty', 'Inne dokumenty',
+        ])
+        self.combo_check_kind.setToolTip(
+            'Wybierz rodzaj dokumentu i kliknij „Zaznacz”, aby zaznaczyć '
+            'wyłącznie takie pliki.'
+        )
+        select_row.addWidget(self.combo_check_kind)
+
+        btn_check_kind = QPushButton('Zaznacz')
+        btn_check_kind.clicked.connect(self._check_by_kind)
+        select_row.addWidget(btn_check_kind)
+
+        select_row.addStretch()
+        main_layout.addLayout(select_row)
+
+        # ── Drzewo plików z polami wyboru ──
         self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderLabels(["Właściciel / Dokument"])
+        self.tree_widget.setHeaderLabels(['Właściciel / Dokument', 'Typ', 'Rozmiar'])
         self.tree_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        
+        self.tree_widget.setAlternatingRowColors(True)
+        self.tree_widget.setRootIsDecorated(True)
+        self.tree_widget.setUniformRowHeights(True)
+        header = self.tree_widget.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree_widget.itemChanged.connect(self._on_item_checked)
+        self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree_widget.customContextMenuRequested.connect(self._show_tree_menu)
+
         # Podpięcie klawisza Delete do usuwania z listy
         QShortcut(QKeySequence("Delete"), self.tree_widget).activated.connect(self._delete_selected_items)
-        
-        main_layout.addWidget(self.tree_widget)
+        QShortcut(QKeySequence("Space"), self.tree_widget).activated.connect(self._toggle_selected_checks)
+
+        main_layout.addWidget(self.tree_widget, 1)
+
+        self.lbl_selection = QLabel('Brak plików na liście.')
+        self.lbl_selection.setObjectName('muted_hint')
+        main_layout.addWidget(self.lbl_selection)
 
         # ── Sekcja przycisków akcji ──
         actions_box = QGroupBox("Działania Drukowania / PDF")
@@ -83,12 +154,18 @@ class PrintManagerWidget(QWidget):
 
         # Wiersz: Tryb WORD
         row_word = QHBoxLayout()
-        self.btn_print_word_sel = QPushButton('🖨️ Drukuj zaznaczone (WORD)')
+        self.btn_print_word_sel = QPushButton('🖨️ Drukuj podświetlone (WORD)')
+        self.btn_print_word_sel.setToolTip(
+            'Drukuje pozycje podświetlone myszą, niezależnie od pól wyboru.'
+        )
         self.btn_print_word_sel.setObjectName('btn_primary')
         self.btn_print_word_sel.clicked.connect(lambda: self._print_selected(mode="word"))
         row_word.addWidget(self.btn_print_word_sel)
 
-        self.btn_print_word_all = QPushButton('🖨️ Drukuj wszystkie widoczne (WORD)')
+        self.btn_print_word_all = QPushButton('🖨️ Drukuj zaznaczone ✅ (WORD)')
+        self.btn_print_word_all.setToolTip(
+            'Drukuje wszystkie dokumenty z zaznaczonym polem wyboru.'
+        )
         self.btn_print_word_all.setObjectName('btn_primary')
         self.btn_print_word_all.clicked.connect(lambda: self._print_all(mode="word"))
         row_word.addWidget(self.btn_print_word_all)
@@ -97,12 +174,12 @@ class PrintManagerWidget(QWidget):
 
         # Wiersz: Tryb PDF
         row_pdf = QHBoxLayout()
-        self.btn_print_pdf_sel = QPushButton('📄 Konwertuj na PDF i drukuj zaznaczone')
+        self.btn_print_pdf_sel = QPushButton('📄 PDF: podświetlone')
         self.btn_print_pdf_sel.setObjectName('btn_accent')
         self.btn_print_pdf_sel.clicked.connect(lambda: self._print_selected(mode="pdf"))
         row_pdf.addWidget(self.btn_print_pdf_sel)
 
-        self.btn_print_pdf_all = QPushButton('📄 Konwertuj na PDF i drukuj wszystkie')
+        self.btn_print_pdf_all = QPushButton('📄 PDF: zaznaczone ✅')
         self.btn_print_pdf_all.setObjectName('btn_accent')
         self.btn_print_pdf_all.clicked.connect(lambda: self._print_all(mode="pdf"))
         row_pdf.addWidget(self.btn_print_pdf_all)
@@ -308,54 +385,267 @@ class PrintManagerWidget(QWidget):
         self._refresh_tree()
         QMessageBox.information(self, 'Wczytano', f'Wczytano {len(self.all_found_files)} plików.')
 
+    # ── Rozpoznawanie rodzaju dokumentu ──
+    KIND_DEMONTAZ = 1
+    KIND_BUDOWA = 2
+    KIND_PISMO = 3
+    KIND_KOPERTA = 4
+    KIND_INNE = 5
+
+    KIND_LABELS = {
+        KIND_DEMONTAZ: 'Demontaż',
+        KIND_BUDOWA: 'Budowa',
+        KIND_PISMO: 'Pismo',
+        KIND_KOPERTA: 'Koperta',
+        KIND_INNE: 'Inny',
+    }
+
+    @staticmethod
+    def _file_kind(filepath) -> int:
+        """Rozpoznaje rodzaj dokumentu po nazwie pliku."""
+        name = Path(filepath).name.lower()
+        if 'demontaz' in name or 'demontaż' in name:
+            return PrintManagerWidget.KIND_DEMONTAZ
+        if 'budowa' in name:
+            return PrintManagerWidget.KIND_BUDOWA
+        if 'pismo' in name:
+            return PrintManagerWidget.KIND_PISMO
+        if 'kopert' in name:
+            return PrintManagerWidget.KIND_KOPERTA
+        return PrintManagerWidget.KIND_INNE
+
+    @staticmethod
+    def _human_size(filepath) -> str:
+        """Rozmiar pliku w czytelnej postaci."""
+        try:
+            size = Path(filepath).stat().st_size
+        except OSError:
+            return ''
+        if size < 1024:
+            return f'{size} B'
+        if size < 1024 * 1024:
+            return f'{size / 1024:.0f} KB'
+        return f'{size / (1024 * 1024):.1f} MB'
+
+    def _visible_kinds(self) -> set:
+        """Rodzaje dokumentów zaznaczone w pasku „Pokaż”."""
+        kinds = set()
+        if self.chk_show_declarations.isChecked():
+            kinds.update({self.KIND_BUDOWA, self.KIND_DEMONTAZ})
+        if self.chk_show_letters.isChecked():
+            kinds.add(self.KIND_PISMO)
+        if self.chk_show_envelopes.isChecked():
+            kinds.add(self.KIND_KOPERTA)
+        if self.chk_show_other.isChecked():
+            kinds.add(self.KIND_INNE)
+        return kinds
+
     def _refresh_tree(self):
+        # Zapamiętujemy, co użytkownik odznaczył, żeby filtrowanie nie
+        # kasowało jego wyboru.
+        remembered = getattr(self, '_unchecked_paths', set())
+
+        self.tree_widget.blockSignals(True)
         self.tree_widget.clear()
-        if not self.all_found_files: return
-        
-        show_env = self.chk_show_envelopes.isChecked()
-        show_oth = self.chk_show_other.isChecked()
-        
-        files = self.all_found_files
-        if not show_env:
-            files = [f for f in files if 'kopert' not in f.name.lower()]
-        
-        def sort_key(filepath):
-            name = filepath.name.lower()
-            if 'demontaz' in name or 'demontaż' in name: return 1
-            elif 'budowa' in name: return 2
-            elif 'pismo' in name: return 3
-            elif 'kopert' in name: return 4
-            else: return 5
-                
-        files.sort(key=sort_key)
+
+        if not self.all_found_files:
+            self.tree_widget.blockSignals(False)
+            self.lbl_selection.setText('Brak plików na liście.')
+            self.files_to_print = []
+            return
+
+        visible_kinds = self._visible_kinds()
+        needle = self.search_edit.text().strip().lower()
+
+        files = [f for f in self.all_found_files if self._file_kind(f) in visible_kinds]
+        if needle:
+            files = [
+                f for f in files
+                if needle in f.name.lower()
+                or needle in self._get_owner_name_for_file(f.name).lower()
+            ]
+
+        files.sort(key=lambda f: (self._file_kind(f), f.name.lower()))
         self.files_to_print = files
-        
+
         grouped = {}
         for f in files:
-            owner = self._get_owner_name_for_file(f.name)
-            if owner not in grouped: grouped[owner] = []
-            grouped[owner].append(f)
-            
+            grouped.setdefault(self._get_owner_name_for_file(f.name), []).append(f)
+
         for owner, flist in grouped.items():
-            if owner == "Inne dokumenty" and not show_oth:
-                continue
-            if owner == "Koperty Zbiorcze" and not show_env:
-                continue
-                
-            parent = QTreeWidgetItem(self.tree_widget, [owner])
-            parent.setFlags(parent.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            
+            parent = QTreeWidgetItem(self.tree_widget, [owner, '', f'{len(flist)} plik(ów)'])
+            parent.setFlags(
+                parent.flags()
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsAutoTristate
+            )
+            parent.setFont(0, QFont('', -1, QFont.Weight.Bold))
+            parent.setCheckState(0, Qt.CheckState.Checked)
+
             for f in flist:
-                item = QTreeWidgetItem(parent, [f.name])
+                kind = self._file_kind(f)
+                item = QTreeWidgetItem(
+                    parent, [f.name, self.KIND_LABELS.get(kind, ''), self._human_size(f)]
+                )
                 item.setData(0, Qt.ItemDataRole.UserRole, str(f))
-                
-                k = sort_key(f)
-                if k == 1: item.setText(0, f"[DEMONTAŻ] {f.name}")
-                elif k == 2: item.setText(0, f"[BUDOWA] {f.name}")
-                elif k == 3: item.setText(0, f"[PISMO] {f.name}")
-                elif k == 4: item.setText(0, f"[KOPERTA] {f.name}")
-                
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    0,
+                    Qt.CheckState.Unchecked
+                    if str(f) in remembered
+                    else Qt.CheckState.Checked,
+                )
+                item.setToolTip(0, str(f))
+
             parent.setExpanded(True)
+
+        self.tree_widget.blockSignals(False)
+        self._update_selection_label()
+
+    # ── Zaznaczanie do druku ──
+
+    def _iter_file_items(self):
+        """Przechodzi po wszystkich pozycjach z plikami."""
+        for i in range(self.tree_widget.topLevelItemCount()):
+            parent = self.tree_widget.topLevelItem(i)
+            for j in range(parent.childCount()):
+                yield parent.child(j)
+
+    def _set_all_checks(self, state):
+        self.tree_widget.blockSignals(True)
+        for item in self._iter_file_items():
+            item.setCheckState(0, state)
+        for i in range(self.tree_widget.topLevelItemCount()):
+            self.tree_widget.topLevelItem(i).setCheckState(0, state)
+        self.tree_widget.blockSignals(False)
+        self._remember_unchecked()
+        self._update_selection_label()
+
+    def _check_all(self):
+        self._set_all_checks(Qt.CheckState.Checked)
+
+    def _uncheck_all(self):
+        self._set_all_checks(Qt.CheckState.Unchecked)
+
+    def _invert_check(self):
+        self.tree_widget.blockSignals(True)
+        for item in self._iter_file_items():
+            item.setCheckState(
+                0,
+                Qt.CheckState.Unchecked
+                if item.checkState(0) == Qt.CheckState.Checked
+                else Qt.CheckState.Checked,
+            )
+        self.tree_widget.blockSignals(False)
+        self._remember_unchecked()
+        self._update_selection_label()
+
+    def _check_by_kind(self):
+        """Zaznacza wyłącznie dokumenty wybranego rodzaju."""
+        wanted = {
+            0: self.KIND_BUDOWA,
+            1: self.KIND_DEMONTAZ,
+            2: self.KIND_PISMO,
+            3: self.KIND_KOPERTA,
+            4: self.KIND_INNE,
+        }.get(self.combo_check_kind.currentIndex(), self.KIND_BUDOWA)
+
+        self.tree_widget.blockSignals(True)
+        found = 0
+        for item in self._iter_file_items():
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            match = path and self._file_kind(path) == wanted
+            item.setCheckState(
+                0, Qt.CheckState.Checked if match else Qt.CheckState.Unchecked
+            )
+            found += bool(match)
+        self.tree_widget.blockSignals(False)
+        self._remember_unchecked()
+        self._update_selection_label()
+
+        if not found:
+            QMessageBox.information(
+                self,
+                'Brak dokumentów',
+                'Na liście nie ma dokumentów tego rodzaju. Sprawdź, czy nie '
+                'są ukryte w pasku „Pokaż”.',
+            )
+
+    def _toggle_selected_checks(self):
+        """Spacja przełącza zaznaczenie podświetlonych pozycji."""
+        items = [i for i in self.tree_widget.selectedItems() if i.childCount() == 0]
+        if not items:
+            return
+        turn_on = any(i.checkState(0) != Qt.CheckState.Checked for i in items)
+        self.tree_widget.blockSignals(True)
+        for item in items:
+            item.setCheckState(
+                0, Qt.CheckState.Checked if turn_on else Qt.CheckState.Unchecked
+            )
+        self.tree_widget.blockSignals(False)
+        self._remember_unchecked()
+        self._update_selection_label()
+
+    def _on_item_checked(self, item, column):
+        if column != 0:
+            return
+        # Kliknięcie na właścicielu przenosi wybór na wszystkie jego pliki.
+        if item.childCount():
+            state = item.checkState(0)
+            if state != Qt.CheckState.PartiallyChecked:
+                self.tree_widget.blockSignals(True)
+                for i in range(item.childCount()):
+                    item.child(i).setCheckState(0, state)
+                self.tree_widget.blockSignals(False)
+        self._remember_unchecked()
+        self._update_selection_label()
+
+    def _remember_unchecked(self):
+        """Zapamiętuje odznaczone pliki, by przetrwały zmianę filtra."""
+        remembered = set(getattr(self, '_unchecked_paths', set()))
+        for item in self._iter_file_items():
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            if not path:
+                continue
+            if item.checkState(0) == Qt.CheckState.Checked:
+                remembered.discard(path)
+            else:
+                remembered.add(path)
+        self._unchecked_paths = remembered
+
+    def _checked_files(self) -> list:
+        """Pliki zaznaczone do druku."""
+        files = []
+        for item in self._iter_file_items():
+            if item.checkState(0) == Qt.CheckState.Checked:
+                path = item.data(0, Qt.ItemDataRole.UserRole)
+                if path:
+                    files.append(path)
+        return list(dict.fromkeys(files))
+
+    def _update_selection_label(self):
+        total = sum(1 for _ in self._iter_file_items())
+        chosen = len(self._checked_files())
+        if not total:
+            self.lbl_selection.setText(
+                'Brak plików spełniających filtry — zmień ustawienia w pasku „Pokaż”.'
+            )
+            return
+        hidden = len(self.all_found_files) - total
+        hidden_note = f' • ukrytych przez filtry: {hidden}' if hidden > 0 else ''
+        self.lbl_selection.setText(
+            f'Do druku zaznaczono {chosen} z {total} widocznych dokumentów{hidden_note}.'
+        )
+
+    def _show_tree_menu(self, position):
+        """Menu podręczne pod prawym przyciskiem myszy."""
+        menu = QMenu(self)
+        menu.addAction('✅ Zaznacz wszystko', self._check_all)
+        menu.addAction('⬜ Odznacz wszystko', self._uncheck_all)
+        menu.addAction('🔄 Odwróć zaznaczenie', self._invert_check)
+        menu.addSeparator()
+        menu.addAction('🗑️ Usuń zaznaczone z listy', self._delete_selected_items)
+        menu.exec(self.tree_widget.viewport().mapToGlobal(position))
 
     def _delete_selected_items(self):
         items = self.tree_widget.selectedItems()
@@ -374,6 +664,10 @@ class PrintManagerWidget(QWidget):
         if not paths_to_remove: return
         
         self.all_found_files = [f for f in self.all_found_files if str(f) not in paths_to_remove]
+        self._unchecked_paths = {
+            p for p in getattr(self, '_unchecked_paths', set())
+            if p not in paths_to_remove
+        }
         self._refresh_tree()
 
     def _open_print_settings_win(self):
@@ -481,7 +775,13 @@ class PrintManagerWidget(QWidget):
                     
         unique_files = list(dict.fromkeys(files))
         if not unique_files:
-            QMessageBox.warning(self, 'Brak', 'Zaznacz pliki w drzewie (możesz zaznaczyć całego właściciela).')
+            QMessageBox.warning(
+                self,
+                'Brak',
+                'Podświetl pliki na liście (możesz kliknąć całego właściciela).\n\n'
+                'Aby wydrukować pozycje z zaznaczonymi polami wyboru, '
+                'użyj przycisku „Drukuj zaznaczone ✅”.',
+            )
             return
             
         if mode == "word":
@@ -490,11 +790,26 @@ class PrintManagerWidget(QWidget):
             self._print_files_pdf(unique_files)
 
     def _print_all(self, mode="word"):
-        if not self.files_to_print:
-            QMessageBox.warning(self, 'Brak', 'Brak plików widocznych do druku.')
+        files = self._checked_files()
+        if not files:
+            QMessageBox.warning(
+                self,
+                'Nic nie zaznaczono',
+                'Zaznacz pola wyboru przy dokumentach, które mają zostać '
+                'wydrukowane.\n\nMożesz użyć przycisku „✅ Wszystko” nad listą.',
+            )
             return
-            
-        files = [str(f) for f in self.files_to_print]
+
+        if len(files) > 20:
+            reply = QMessageBox.question(
+                self,
+                'Potwierdź wydruk',
+                f'Zaznaczono {len(files)} dokumentów. Rozpocząć drukowanie?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         
         if mode == "word":
             self._print_files_word(files)

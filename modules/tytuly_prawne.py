@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QGuiApplication, QShortcut
 
+from utils.parcel_location import split_parcel_location
 from utils.output_paths import project_output_dir
 
 from modules.legal_titles_dialogs import OddzialEditorDialog, ComboBoxDelegate
@@ -1043,6 +1044,42 @@ class LegalTitlesWidget(QWidget):
             ),
         )
 
+        chk_t5_city = QCheckBox("Zaciągaj miejscowość do T5")
+        chk_t5_city.setChecked(
+            self.chk_t5_city.isChecked()
+            if hasattr(self, 'chk_t5_city')
+            else self.config.get('legal_t5_pull_city', False)
+        )
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_t5_city,
+                "Wypełnia kolumnę Miejscowość w Tabeli 5 według źródła "
+                "wybranego poniżej. Po odznaczeniu kolumna zostaje pusta.",
+            ),
+        )
+
+        combo_city_source = QComboBox()
+        combo_city_source.addItems([
+            "Miejscowość z projektu (domyślnie)",
+            "Miejscowośc działki z wypisu",
+            "Adres właściciela – miejscowość",
+        ])
+        combo_city_source.setCurrentIndex(self.config.get('legal_t5_city_source', 0))
+        combo_city_source.setToolTip(
+            "Wskazuje, skąd pobierana jest treść kolumny Miejscowość w Tabeli 5."
+        )
+        t5_form.addRow("Źródło miejscowości T5:", combo_city_source)
+        t5_form.addRow(
+            "",
+            help_label(
+                "Domyślnie wpisywana jest miejscowość z danych projektu. "
+                "Drugi wariant bierze „Miejscowośc działki” z Wypisów, "
+                "trzeci – miejscowość z adresu właściciela. Gdy wybrane "
+                "źródło jest puste, program sięga po miejscowość projektu."
+            ),
+        )
+
         combo_street_source = QComboBox()
         combo_street_source.addItems([
             "Adres właściciela – sama ulica",
@@ -1110,13 +1147,19 @@ class LegalTitlesWidget(QWidget):
         def update_t5_preview(*_args):
             source_index = max(0, min(combo_street_source.currentIndex(), 2))
             street_values = ("ul. Leśna", "ul. Leśna 12", "ul. Działkowa")
+            city_index = max(0, min(combo_city_source.currentIndex(), 2))
+            city_values = ("Maki", "Żukowo", "Gdańsk")
             headers = ["Działka"]
+            if chk_t5_city.isChecked():
+                headers.append("Miejscowość")
             if chk_t5_street.isChecked():
                 headers.append("Ulica")
             headers.extend(("Oddział", "Tytuł", "Urządzenie", "KW"))
 
             def make_row(parcel, second_row=False):
                 row = [parcel]
+                if chk_t5_city.isChecked():
+                    row.append(city_values[city_index])
                 if chk_t5_street.isChecked():
                     row.append(street_values[source_index])
                 row.extend(
@@ -1135,6 +1178,11 @@ class LegalTitlesWidget(QWidget):
                 if chk_t5_street.isChecked()
                 else "kolumna ulicy ukryta"
             )
+            city_note = (
+                f"miejscowość: {city_values[city_index]}"
+                if chk_t5_city.isChecked()
+                else "kolumna miejscowości pusta"
+            )
             grouped_columns = [
                 name
                 for name, control in (
@@ -1146,7 +1194,7 @@ class LegalTitlesWidget(QWidget):
                 if control.isChecked()
             ]
             note = (
-                f"{street_note}. Scalone kolumny: "
+                f"{city_note}, {street_note}. Scalone kolumny: "
                 f"{', '.join(grouped_columns) if grouped_columns else 'brak — dane są powtarzane w każdym wierszu'}."
             )
             update_example_panel(
@@ -1159,6 +1207,7 @@ class LegalTitlesWidget(QWidget):
 
         for control in (
             chk_t5_street,
+            chk_t5_city,
             chk_group_odd,
             chk_group_tytul,
             chk_group_urz,
@@ -1166,6 +1215,7 @@ class LegalTitlesWidget(QWidget):
         ):
             control.toggled.connect(update_t5_preview)
         combo_street_source.currentIndexChanged.connect(update_t5_preview)
+        combo_city_source.currentIndexChanged.connect(update_t5_preview)
         update_t5_preview()
         t5_content.addWidget(box_t5, 3)
         t5_content.addWidget(t5_preview_box, 2)
@@ -1325,6 +1375,8 @@ class LegalTitlesWidget(QWidget):
         self.config['legal_t3_skip_no_kw'] = chk_t3_skip_no_kw.isChecked()
         self.config['legal_t5_pull_street'] = chk_t5_street.isChecked()
         self.config['legal_t5_street_source'] = combo_street_source.currentIndex()
+        self.config['legal_t5_city_source'] = combo_city_source.currentIndex()
+        self.config['legal_t5_pull_city'] = chk_t5_city.isChecked()
         self.config['legal_t5_merge_kw'] = chk_t5_merge_kw.isChecked()
         self.config['legal_view_word_wrap'] = chk_wrap.isChecked()
         self.config['legal_view_auto_resize_rows'] = chk_resize.isChecked()
@@ -1345,6 +1397,7 @@ class LegalTitlesWidget(QWidget):
         if hasattr(self, 'combo_t12_owner_mode'):
             self.combo_t12_owner_mode.blockSignals(True); self.combo_t12_owner_mode.setCurrentIndex(combo_multi_owners.currentIndex()); self.combo_t12_owner_mode.blockSignals(False)
         self.chk_t5_street.blockSignals(True); self.chk_t5_street.setChecked(chk_t5_street.isChecked()); self.chk_t5_street.blockSignals(False)
+        self.chk_t5_city.blockSignals(True); self.chk_t5_city.setChecked(chk_t5_city.isChecked()); self.chk_t5_city.blockSignals(False)
         self.chk_dash_street.blockSignals(True); self.chk_dash_street.setChecked(chk_dash.isChecked()); self.chk_dash_street.blockSignals(False)
         self.chk_extra_1a.setChecked(chk_extra_1a.isChecked())
         self.chk_extra_1b.setChecked(chk_extra_1b.isChecked())
@@ -1441,6 +1494,16 @@ class LegalTitlesWidget(QWidget):
         self.chk_t5_street.setChecked(self.config.get('legal_t5_pull_street', False))
         self.chk_t5_street.toggled.connect(lambda checked: self.config.update({'legal_t5_pull_street': checked}))
         row2.addWidget(self.chk_t5_street)
+        row2.addWidget(QLabel(" | "))
+
+        self.chk_t5_city = QCheckBox("Zaciągaj miejscowość do T5")
+        self.chk_t5_city.setToolTip(
+            "Wypełnia kolumnę Miejscowość w Tabeli 5. Źródło (projekt, "
+            "wypis albo adres właściciela) wybierzesz w Ustawieniach."
+        )
+        self.chk_t5_city.setChecked(self.config.get('legal_t5_pull_city', False))
+        self.chk_t5_city.toggled.connect(lambda checked: self.config.update({'legal_t5_pull_city': checked}))
+        row2.addWidget(self.chk_t5_city)
         row2.addWidget(QLabel(" | "))
         
         self.chk_dash_street = QCheckBox("W T3 zmień ulicę na '-' jeśli jest jak miasto")
@@ -2245,6 +2308,9 @@ class LegalTitlesWidget(QWidget):
             group_mode = 0
         pull_t5_street = self.chk_t5_street.isChecked()
         t5_street_source = self.config.get('legal_t5_street_source', 0)
+        pull_t5_city = self.chk_t5_city.isChecked()
+        t5_city_source = self.config.get('legal_t5_city_source', 0)
+        project_city = str(self.active_project.get('city', '') or '').strip()
         dash_t3_street = self.chk_dash_street.isChecked()
         sort_parcels = self.chk_sort_parcels.isChecked()
 
@@ -2346,8 +2412,26 @@ class LegalTitlesWidget(QWidget):
                         street_t5 = f"{street} {house}".strip() if street else house
                     else:
                         street_t5 = p_addr if p_addr else o.get('parcel_street', '')
+                        # Wypis trzyma miejscowość i ulicę razem
+                        # („MAKI, WYBICKIEGO J. 50”) — bierzemy samą ulicę.
+                        street_t5 = split_parcel_location(street_t5).street or street_t5
                 else:
                     street_t5 = ""
+
+                # Miejscowość: własne źródło, z zapasem w danych projektu.
+                if pull_t5_city:
+                    if t5_city_source == 1:
+                        city_t5 = split_parcel_location(p_addr).city if p_addr else ''
+                        if not city_t5:
+                            city_t5 = str(o.get('city', '') or '').strip()
+                    elif t5_city_source == 2:
+                        city_t5 = str(o.get('city', '') or '').strip()
+                    else:
+                        city_t5 = project_city
+                    if not city_t5:
+                        city_t5 = project_city
+                else:
+                    city_t5 = ""
 
                 key_t5 = f"{base_name}::{p_num}"
                 key_t5_alt = f"{pair_key_alt(base_name)}::{p_num}"
@@ -2393,7 +2477,7 @@ class LegalTitlesWidget(QWidget):
                     if p_num not in t5_grouped:
                         t5_grouped[p_num] = {
                             'owners': [], 'kw': [], 'gmina': p_muni,
-                            'miejscowosc': o.get('city', ''), 'ulica': street_t5, 'obreb': p_prec_num
+                            'miejscowosc': city_t5, 'ulica': street_t5, 'obreb': p_prec_num
                         }
                     if name_t5 not in t5_grouped[p_num]['owners']: t5_grouped[p_num]['owners'].append(name_t5)
                     if p_kw and p_kw not in t5_grouped[p_num]['kw']: t5_grouped[p_num]['kw'].append(p_kw)
@@ -2404,7 +2488,7 @@ class LegalTitlesWidget(QWidget):
                         p_muni = p.get('municipality', o.get('municipality', '')) if isinstance(p, dict) else o.get('municipality', '')
                         p_prec_num = p.get('precinct_number', o.get('precinct_number', '')) if isinstance(p, dict) else o.get('precinct_number', '')
                         self._insert_to_table(self.table_3, key_t5, [
-                            "", "Gdańsk", "", "", p_muni, o.get('city', ''), street_t5, name_t5, "",
+                            "", "Gdańsk", "", "", p_muni, city_t5, street_t5, name_t5, "",
                             p_kw, p_num, p_prec_num, "", "0", "0", "", ""
                         ])
                         new_r = self.table_3.rowCount() - 1
