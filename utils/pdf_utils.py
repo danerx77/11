@@ -2,6 +2,12 @@
 pdf_utils.py – Narzędzia do przetwarzania PDF (wypisy i druczki).
 """
 import re
+
+from utils.wypis_fields import (
+    extract_ownership_form,
+    normalize_parcel_identifier,
+    normalize_share,
+)
 import fitz  # PyMuPDF
 from pathlib import Path
 
@@ -129,9 +135,13 @@ def _extract_parcels_simplified_wypis(text: str) -> list[dict]:
         if m_kw:
             kw_mem = re.sub(r'\s+', '', m_kw.group(1)).upper()
             if current: current['kw'] = kw_mem
-        m_id = re.search(r'Identyfikator\s+dzia[łl]ki\s*:?\s*([0-9A-Za-z_.\-/]+)', line, re.I)
+        m_id = re.search(
+            r'Identyfikator\s+dzia[łl]ki\s*:?\s*'
+            r'([0-9A-Za-z_.\-/]+(?:[ \t]+\d+(?:/[0-9A-Za-z]+)?)*)',
+            line, re.I,
+        )
         if m_id and current:
-            current['identifier'] = m_id.group(1).strip()
+            current['identifier'] = normalize_parcel_identifier(m_id.group(1))
         if re.fullmatch(r'\d+(?:/\d+)?', line):
             look = ' '.join(lines[i+1:i+8]).lower()
             if not (re.search(r'\d+[\.,]\d{2,4}', look) or 'kw ' in look or 'identyfikator' in look):
@@ -227,7 +237,7 @@ def _parse_simplified_wypis_page(text: str) -> list[dict]:
         owners.append({
             'full_name':raw, 'name_plural':raw, 'name_separate':raw, 'first_name':fn, 'last_name':ln, 'last_name_plural':ln,
             'address':addr, 'address_2':e.get('address2',''), 'city':'', 'parcels':parcels, 'parcel_street':street,
-            'total_area_ha':total_area, 'share':'1/1', 'kw_numbers':kw_numbers, 'is_couple':False, 'is_dead':False,
+            'total_area_ha':total_area, 'share':'1/1', 'ownership_form':'', 'kw_numbers':kw_numbers, 'is_couple':False, 'is_dead':False,
             'is_institution':is_inst, 'is_company':is_company, 'is_spolka':is_spolka, 'is_church':is_church,
             'status_sprawy':'Do zrobienia', **meta
         })
@@ -387,6 +397,13 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
         if share_match:
             share = share_match.group(1)
             break
+    # Forma władania: "współwłasność", "wspólność ustawowa", "udział łączny"...
+    ownership_form = ""
+    for line in lines[:8]:
+        found = extract_ownership_form(line)
+        if found:
+            ownership_form = found
+            break
     entities = []
     current_entity = None
     for line in lines:
@@ -479,7 +496,7 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
             'first_name': f"{f1} i {f2}".strip(), 'last_name': n1,
             'last_name_plural': n_plural if n_plural else n1, 
             'address': addr1, 'address_2': addr2, 'city': '', 'parcels': parcels,
-            'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'kw_numbers': kw_numbers,
+            'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'ownership_form': ownership_form, 'kw_numbers': kw_numbers,
             'is_couple': True, 'is_dead': False, 'is_institution': False, 'is_company': False, 'is_spolka': False, 'is_church': False,
             'status_sprawy': 'Do zrobienia'
         })
@@ -504,7 +521,7 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
                 'full_name': raw, 'name_plural': raw, 'name_separate': raw,
                 'first_name': fn, 'last_name': ln, 'last_name_plural': ln, 
                 'address': addr, 'address_2': e.get('address2', ''), 'city': '', 'parcels': parcels,
-                'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'kw_numbers': kw_numbers,
+                'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'ownership_form': ownership_form, 'kw_numbers': kw_numbers,
                 'is_couple': False, 'is_dead': e['is_dead'], 
                 'is_institution': is_inst, 'is_company': is_company, 'is_spolka': is_spolka, 'is_church': is_church,
                 'status_sprawy': 'Do zrobienia'
@@ -555,15 +572,19 @@ def _extract_parcels_from_text(text: str) -> list[dict]:
             address_buffer = ""
             continue
         if expect_identifier_line:
-            ident = line.strip(' ,;:')
+            ident = normalize_parcel_identifier(line.strip(' ,;:'))
             if ident:
                 last_identifier = ident
                 if current_parcel: current_parcel['identifier'] = ident
             expect_identifier_line = False
             continue
-        m_id = re.search(r'Identyfikator\s+dzia[łl]ki\s*:?\s*([0-9A-Za-z_.\-/]+)?', line, re.I)
+        m_id = re.search(
+            r'Identyfikator\s+dzia[łl]ki\s*:?\s*'
+            r'([0-9A-Za-z_.\-/]+(?:[ \t]+\d+(?:/[0-9A-Za-z]+)?)*)?',
+            line, re.I,
+        )
         if m_id:
-            ident = (m_id.group(1) or '').strip()
+            ident = normalize_parcel_identifier(m_id.group(1) or '')
             if ident:
                 last_identifier = ident
                 if current_parcel: current_parcel['identifier'] = ident
@@ -594,7 +615,7 @@ def _extract_parcels_from_text(text: str) -> list[dict]:
         line_clean = line
         teryt_match = re.search(r'\b(\d{2,6}[_\s\.-]+\d[_\s\.-]+\d{1,4}[_\s\.-]+(\d+(?:/[A-Za-z\d]+)?))\b', line_clean)
         if teryt_match:
-            ident_val = teryt_match.group(1)
+            ident_val = normalize_parcel_identifier(teryt_match.group(1))
             parcel_num = teryt_match.group(2)
             if current_parcel:
                 if current_parcel['number'] == parcel_num or current_parcel['number'] in ident_val:

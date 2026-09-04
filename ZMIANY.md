@@ -183,6 +183,87 @@ obrębu do poszczególnych działek.
 
 ---
 
+# Czwarta tura poprawek
+
+## 17. Projekty — schematy nazwy folderu
+
+* W **Ustawieniach** jest nowa sekcja **„Projekty — nazwa folderu nowego
+  projektu”** z podglądem na żywo. Do wyboru 9 gotowych wariantów albo własny
+  wzór z pól `{nazwa}`, `{symbol}`, `{miasto}`, `{termin}`.
+* Osobno ustawiasz, **czym zastąpić ukośnik** w numerze projektu:
+  `OBI.23.23220` (jak dotąd), `OBI-23-23220`, `OBI_23_23220`, ze spacją albo
+  bez separatora.
+* Dodatkowo: zapis terminu (5 wariantów, np. `04-12-2026`, `2026-12-04`) oraz
+  zamiana spacji na myślnik lub podkreślnik.
+* Ten sam schemat podpowiada się w oknie **„Nowy projekt”**, gdzie pod polem
+  formatu widać **gotową nazwę folderu**, zanim klikniesz OK.
+* Bez zmiany ustawień nazwa wygląda jak dotąd:
+  **`Maki OBI.23.23220 04-12-2026`**.
+
+## 18. Wypisy — jednostka ewidencyjna na trzy sposoby
+
+W Ustawieniach, sekcja **„Wypisy — odczyt danych z dokumentu”**:
+
+1. **Tak jak w wypisie** — `Maki - G`, `Maki - M` (ustawienie domyślne).
+2. **Tylko miejscowość** — zawsze `Maki`.
+3. **Miejscowość, ale zostaw „- M”** — gmina traci oznaczenie (`Maki`),
+   miasto je zachowuje (`Maki - M`).
+
+Gdy wypis podaje kilka jednostek po przecinku, każda jest formatowana osobno,
+a powtórki są usuwane.
+
+## 19. Wypisy — kropki w identyfikatorze działki
+
+* Identyfikator rozdzielony spacjami jest teraz zapisywany prawidłowo:
+  * `110101 2 0010 202` → **`110101_2.0010.202`**
+  * `110101 2 0010 22 21` → **`110101_2.0010.22/21`**
+* Poprawka działa w czterech miejscach, w których program czyta identyfikator
+  z PDF, oraz w module **Wskaźnik**. Zapis już poprawny zostaje bez zmian.
+
+## 20. Wypisy — nowa kolumna „Forma władania”
+
+* Program odczytuje z wypisu formę władania i pokazuje ją w nowej kolumnie
+  obok „Udziału”: *współwłasność*, *wspólność ustawowa*, *użytkowanie
+  wieczyste*, *udział łączny*, *trwały zarząd* i podobne.
+* Kolumnę można poprawić ręcznie, tak jak pozostałe.
+
+## 21. Wskaźnik — „Pobierz z listy działek” z pełnymi danymi
+
+* Wcześniej przycisk pobierał **same numery** działek, bo lista działek nie zna
+  identyfikatorów — te są w Wypisach. Teraz jednym kliknięciem program
+  **łączy oba źródła**: numery z listy działek, a identyfikator, obręb, gminę,
+  powiat i województwo z wypisów.
+* Po pobraniu widać podsumowanie: ile działek ma identyfikator, a ile nie —
+  i co zrobić z brakami.
+
+## 22. Oświadczenia i Pisma — jedno pole zamiast dwóch
+
+* Dwa mylące pola („Pokaż tylko grupę” + „Wszystkie bez działek z grup”)
+  zastąpiło **jedno**: **„Pokaż i generuj tylko wybraną grupę”**.
+* Włączone przy wybranej grupie — widać **wyłącznie działki tej grupy**, także
+  w kolumnie „Działki”. Działki z innych grup znikają z listy.
+* Włączone przy „Wszystkie działki” — program ukrywa działki, które trafiły
+  już do nazwanych grup.
+
+## 23. Oświadczenia — „Generuj automatycznie wszystkie” tylko dla grupy
+
+* Przycisk **⚡ GENERUJ AUTOMATYCZNIE WSZYSTKIE** respektuje teraz filtr grupy:
+  generuje dokumenty **tylko dla działek z widocznej grupy**, a nie dla
+  wszystkich grup naraz.
+* Naprawiony błąd: **postać urządzeń ustawiona przy grupie nie trafiała do
+  dokumentu**. Teraz opis z grupy ma pierwszeństwo przed tym, co akurat
+  zostało w formularzu — osobno dla budowy i demontażu.
+* Gdy w grupie nie ma żadnego właściciela, program mówi to wprost, zamiast
+  generować cokolwiek.
+
+## 24. Pisma — nazwa przycisku jak w Oświadczeniach
+
+* **„GENERUJ WSZYSTKIE BEZ PTASZKA”** → **„⚡ GENERUJ AUTOMATYCZNIE
+  WSZYSTKIE”**, tak samo jak w Oświadczeniach. Filtr grupy obowiązuje tu
+  dokładnie tak samo.
+
+---
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

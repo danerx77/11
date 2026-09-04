@@ -5,6 +5,14 @@ import json
 import os
 import shutil
 import re
+
+from utils.project_naming import (
+    DATE_FORMAT_KEY,
+    PROJECT_FOLDER_DEFAULTS,
+    TEMPLATE_KEY as PROJECT_TEMPLATE_KEY,
+    TEMPLATE_PRESETS as PROJECT_TEMPLATE_PRESETS,
+    build_project_folder_name,
+)
 from pathlib import Path
 from datetime import datetime
 
@@ -72,21 +80,61 @@ class NewProjectDialog(QDialog):
 
         self.format_combo = QComboBox()
         self.format_combo.setEditable(True)
-        self.format_combo.addItems([
-            '{miasto} {symbol} {termin}',
-            '{termin} {miasto} {symbol}',
-            'P. {nazwa} [{symbol}]'
-        ])
-        
+        # Wzory z Ustawień; pierwszy jest ten wybrany jako domyślny.
+        preferred = str(
+            self.config.get(
+                PROJECT_TEMPLATE_KEY, PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY]
+            )
+            or PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY]
+        )
+        templates = [preferred]
+        for _label, template in PROJECT_TEMPLATE_PRESETS:
+            if template not in templates:
+                templates.append(template)
+        self.format_combo.addItems(templates)
+        self.format_combo.setCurrentText(preferred)
+        self.format_combo.currentTextChanged.connect(self._update_folder_preview)
+        for widget in (self.name_edit, self.symbol_edit, self.city_edit):
+            widget.textChanged.connect(self._update_folder_preview)
+        self.deadline_edit.dateChanged.connect(self._update_folder_preview)
+
         help_label = QLabel("Wpisz własny schemat. Zmienne: {nazwa}, {symbol}, {miasto}, {termin}")
         help_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addRow('Format folderu:', self.format_combo)
         layout.addRow('', help_label)
 
+        self.lbl_folder_preview = QLabel()
+        self.lbl_folder_preview.setObjectName('naming_preview')
+        self.lbl_folder_preview.setWordWrap(True)
+        layout.addRow('Nazwa folderu:', self.lbl_folder_preview)
+        self._update_folder_preview()
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
+
+    def _current_folder_name(self) -> str:
+        return build_project_folder_name(
+            self.config,
+            name=self.name_edit.text(),
+            symbol=self.symbol_edit.text(),
+            city=self.city_edit.text(),
+            deadline=self.deadline_edit.date().toString(
+                str(
+                    self.config.get(
+                        DATE_FORMAT_KEY, PROJECT_FOLDER_DEFAULTS[DATE_FORMAT_KEY]
+                    )
+                )
+            ),
+            template=self.format_combo.currentText(),
+        )
+
+    def _update_folder_preview(self, *_args):
+        if not hasattr(self, 'lbl_folder_preview'):
+            return
+        name = self._current_folder_name()
+        self.lbl_folder_preview.setText(name or '(podaj dane projektu)')
 
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(self, 'Wybierz folder nadrzędny', self.folder_edit.text())
@@ -107,7 +155,14 @@ class NewProjectDialog(QDialog):
             'name': self.name_edit.text().strip(),
             'symbol': self.symbol_edit.text().strip(),
             'city': self.city_edit.text().strip(),
-            'deadline': self.deadline_edit.date().toString('dd-MM-yyyy'),
+            'deadline': self.deadline_edit.date().toString(
+                str(
+                    self.config.get(
+                        DATE_FORMAT_KEY,
+                        PROJECT_FOLDER_DEFAULTS[DATE_FORMAT_KEY],
+                    )
+                )
+            ),
             'parent_folder': self.folder_edit.text().strip(),
             'folder_format_text': self.format_combo.currentText()
         }
@@ -326,14 +381,15 @@ class ProjectManagerWidget(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted: return
         vals = dlg.get_values()
 
-        fmt = vals['folder_format_text']
-        sym = vals['symbol'].replace('/', '.').replace('\\', '.')
-        
-        folder_name = fmt.replace('{miasto}', vals['city']).replace('{symbol}', sym).replace('{termin}', vals['deadline']).replace('{nazwa}', vals['name']).strip()
-        if not folder_name: folder_name = vals['name']
-        
-        folder_name = folder_name.replace('  ', ' ').strip()
-        folder_name = re.sub(r'[\\/*?:"<>|]', '_', folder_name)
+        # Nazwa folderu powstaje wg schematu wybranego w Ustawieniach.
+        folder_name = build_project_folder_name(
+            self.config,
+            name=vals['name'],
+            symbol=vals['symbol'],
+            city=vals['city'],
+            deadline=vals['deadline'],
+            template=vals['folder_format_text'],
+        )
         
         project_path = Path(vals['parent_folder']) / folder_name
 

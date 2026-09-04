@@ -15,6 +15,11 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QShortcut, QKeySequence
 
 from utils.parcel_sorting import parcel_sort_key as parcel_number_sort_key
+from utils.wypis_fields import (
+    format_municipality_for_config,
+    format_ownership,
+    normalize_parcel_identifier,
+)
 
 def format_area_pl(val) -> str:
     if not val: return "0,00"
@@ -248,11 +253,11 @@ class OwnersListWidget(QWidget):
         header_row.addWidget(self.sort_combo)
         left_layout.addLayout(header_row)
 
-        self.table = QTableWidget(0, 23)
+        self.table = QTableWidget(0, 24)
         self.table.setHorizontalHeaderLabels([
             'Status Sprawy', 'Typ', 'Adres Status', 'Działki',
             'Nazwisko / Instytucja', 'Imię', 'Nazwisko odmienione', 'Nazwa (Odmieniona/Razem)', 'Nazwa (Osobno)',
-            'Adres', 'Pow. [ha]', 'KW', 'Udział',
+            'Adres', 'Pow. [ha]', 'KW', 'Udział', 'Forma władania',
             'Miejscowośc działki', 'Ulica Działki', 'PESEL', 'NIP', 'Województwo', 'Powiat', 'Jedn. Ewid./Gmina', 'Obręb', 'Nr Obrębu', 'Identyfikator działki'
         ])
         
@@ -586,9 +591,15 @@ class OwnersListWidget(QWidget):
             kws = ', '.join(str(value) for value in kw_values)
             self.table.setItem(row, 11, QTableWidgetItem(kws))
             self.table.setItem(row, 12, QTableWidgetItem(o.get('share', '1/1')))
+            self.table.setItem(
+                row, 13,
+                QTableWidgetItem(
+                    self._owner_table_value(o, 'ownership_form')
+                ),
+            )
             
             self.table.setItem(
-                row, 13, QTableWidgetItem(self._owner_table_value(o, 'city'))
+                row, 14, QTableWidgetItem(self._owner_table_value(o, 'city'))
             )
             self.table.setItem(
                 row,
@@ -600,28 +611,36 @@ class OwnersListWidget(QWidget):
                 ),
             )
 
-            self.table.setItem(row, 15, QTableWidgetItem(o.get('pesel', '')))
-            self.table.setItem(row, 16, QTableWidgetItem(o.get('nip', '')))
+            self.table.setItem(row, 16, QTableWidgetItem(o.get('pesel', '')))
+            self.table.setItem(row, 17, QTableWidgetItem(o.get('nip', '')))
             self.table.setItem(
-                row, 17, QTableWidgetItem(self._owner_table_value(o, 'voivodeship'))
+                row, 18, QTableWidgetItem(self._owner_table_value(o, 'voivodeship'))
             )
             self.table.setItem(
-                row, 18, QTableWidgetItem(self._owner_table_value(o, 'county'))
+                row, 19, QTableWidgetItem(self._owner_table_value(o, 'county'))
             )
             self.table.setItem(
-                row, 19, QTableWidgetItem(self._owner_table_value(o, 'municipality'))
+                row, 20,
+                QTableWidgetItem(
+                    format_municipality_for_config(
+                        self._owner_table_value(o, 'municipality'), self.config
+                    )
+                ),
             )
             self.table.setItem(
-                row, 20, QTableWidgetItem(self._owner_table_value(o, 'precinct'))
+                row, 21, QTableWidgetItem(self._owner_table_value(o, 'precinct'))
             )
             self.table.setItem(
-                row, 21, QTableWidgetItem(self._owner_table_value(o, 'precinct_number'))
+                row, 22, QTableWidgetItem(self._owner_table_value(o, 'precinct_number'))
             )
             identifiers = []
             for p_info in o.get('parcels', []):
-                if isinstance(p_info, dict) and p_info.get('identifier') and p_info.get('identifier') not in identifiers:
-                    identifiers.append(p_info.get('identifier'))
-            self.table.setItem(row, 22, QTableWidgetItem(', '.join(identifiers)))
+                if not isinstance(p_info, dict) or not p_info.get('identifier'):
+                    continue
+                ident = normalize_parcel_identifier(p_info.get('identifier'))
+                if ident and ident not in identifiers:
+                    identifiers.append(ident)
+            self.table.setItem(row, 23, QTableWidgetItem(', '.join(identifiers)))
             
             self.table.item(row, 3).setData(Qt.ItemDataRole.UserRole, idx)
             shown += 1
@@ -641,11 +660,13 @@ class OwnersListWidget(QWidget):
         # Numery są zgodne z faktycznym układem nagłówków tabeli. Wcześniej
         # przesunięcie o jedną kolumnę zapisywało np. Adres jako Działki,
         # przez co dane widoczne w szczegółach znikały z właściwych pól.
+        # Kolumna 13 to "Forma władania"; dalsze pola przesunięte o jeden.
         mapping = {4: 'last_name', 5: 'first_name', 6: 'last_name_plural',
                    7: 'name_plural', 8: 'name_separate', 9: 'address',
-                   13: 'city', 14: 'parcel_street', 15: 'pesel', 16: 'nip',
-                   17: 'voivodeship', 18: 'county', 19: 'municipality',
-                   20: 'precinct', 21: 'precinct_number'}
+                   13: 'ownership_form',
+                   14: 'city', 15: 'parcel_street', 16: 'pesel', 17: 'nip',
+                   18: 'voivodeship', 19: 'county', 20: 'municipality',
+                   21: 'precinct', 22: 'precinct_number'}
                    
         if col in mapping:
             owner[mapping[col]] = new_val

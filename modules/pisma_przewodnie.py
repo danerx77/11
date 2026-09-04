@@ -290,13 +290,14 @@ class CoverLetterWidget(QWidget):
         self.group_combo.setMinimumWidth(180)
         self.group_combo.currentTextChanged.connect(self._on_group_changed)
         group_layout.addWidget(self.group_combo)
-        self.chk_show_only_group = QCheckBox('Pokaż tylko grupę')
+        self.chk_show_only_group = QCheckBox('Pokaż i generuj tylko wybraną grupę')
+        self.chk_show_only_group.setToolTip(
+            'Jedno pole na wszystko: lista pokazuje wyłącznie właścicieli i '
+            'działki z wybranej grupy, a generowanie obejmuje tylko te działki.\n'
+            'Przy „Wszystkie działki” ukrywa działki przypisane do innych grup.'
+        )
         self.chk_show_only_group.stateChanged.connect(self._refresh_owners_table)
         group_layout.addWidget(self.chk_show_only_group)
-        self.chk_exclude_grouped_from_all = QCheckBox('Wszystkie bez działek z grup')
-        self.chk_exclude_grouped_from_all.setToolTip('Gdy wybierzesz "Wszystkie działki", działki użyte w innych grupach nie będą pokazywane.')
-        self.chk_exclude_grouped_from_all.stateChanged.connect(self._refresh_owners_table)
-        group_layout.addWidget(self.chk_exclude_grouped_from_all)
         btn_group_create = QPushButton('➕ Utwórz z ptaszków')
         btn_group_create.clicked.connect(self._create_group_from_checked)
         group_layout.addWidget(btn_group_create)
@@ -448,7 +449,7 @@ class CoverLetterWidget(QWidget):
         self.btn_generate_sel = QPushButton('⚙️ Generuj dla ZAZNACZONYCH (z ptaszkiem)')
         self.btn_generate_sel.clicked.connect(self._generate_selected)
         gen_row.addWidget(self.btn_generate_sel)
-        self.btn_generate_all = QPushButton('⚡ GENERUJ WSZYSTKIE BEZ PTASZKA')
+        self.btn_generate_all = QPushButton('⚡ GENERUJ AUTOMATYCZNIE WSZYSTKIE')
         self.btn_generate_all.setObjectName('btn_accent')
         self.btn_generate_all.clicked.connect(self._generate_all)
         gen_row.addWidget(self.btn_generate_all)
@@ -630,7 +631,7 @@ class CoverLetterWidget(QWidget):
         name = self.group_combo.currentText()
         if name == 'Wszystkie działki':
             all_nums = set(self._all_project_parcels())
-            if hasattr(self, 'chk_exclude_grouped_from_all') and self.chk_exclude_grouped_from_all.isChecked():
+            if hasattr(self, 'chk_show_only_group') and self.chk_show_only_group.isChecked():
                 used = set()
                 for group in self.parcel_groups.values():
                     used.update(group.get('parcels', []))
@@ -638,6 +639,25 @@ class CoverLetterWidget(QWidget):
             return all_nums
         group = self.parcel_groups.get(name, {})
         return set(group.get('parcels', []))
+
+    def _group_parcel_filter(self):
+        """Numery działek wybranej grupy albo ``None``, gdy filtr wyłączony."""
+        if not hasattr(self, 'chk_show_only_group'):
+            return None
+        if not self.chk_show_only_group.isChecked():
+            return None
+        return self._selected_group_parcels()
+
+    @staticmethod
+    def _parcel_number(parcel):
+        return str(parcel.get('number', parcel)) if isinstance(parcel, dict) else str(parcel)
+
+    def _filter_parcels_to_group(self, parcels):
+        """Zostawia tylko działki należące do wybranej grupy."""
+        allowed = self._group_parcel_filter()
+        if allowed is None:
+            return list(parcels or [])
+        return [p for p in (parcels or []) if self._parcel_number(p) in allowed]
 
     def _all_project_parcels(self):
         nums = set()
@@ -792,16 +812,16 @@ class CoverLetterWidget(QWidget):
                 
                 fmt = self.config.get('couple_format_cover', 0)
                 display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
-                parcels_str = ', '.join([str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])])
+                visible_parcels = self._filter_parcels_to_group(o.get('parcels', []))
+                if not visible_parcels and self._group_parcel_filter() is not None:
+                    continue
+                parcels_str = ', '.join(
+                    self._parcel_number(p) for p in visible_parcels
+                )
                 if hasattr(self, 'chk_show_only_group') and self.chk_show_only_group.isChecked():
                     wanted_owner_keys = self._selected_group_owner_keys()
                     if wanted_owner_keys:
                         if self._owner_group_key(o, specific_addr) not in wanted_owner_keys:
-                            continue
-                    else:
-                        wanted_group = self._selected_group_parcels()
-                        owner_nums = {str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])}
-                        if wanted_group and not (owner_nums & wanted_group):
                             continue
                 if filter_text:
                     search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
@@ -1181,8 +1201,23 @@ class CoverLetterWidget(QWidget):
             search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
             return filter_text in search_target
 
+        # Filtr grupy obowiązuje także przy generowaniu seryjnym.
+        owners_for_generation = self.owners
+        if self._group_parcel_filter() is not None:
+            owners_for_generation = [
+                owner for owner in self.owners
+                if self._filter_parcels_to_group(owner.get('parcels', []))
+            ]
+            if not owners_for_generation:
+                return QMessageBox.information(
+                    self,
+                    'Pusta grupa',
+                    'Żaden właściciel nie ma działek z wybranej grupy.\n'
+                    'Zmień grupę albo wyłącz „Pokaż i generuj tylko wybraną grupę”.',
+                )
+
         targets = select_address_targets(
-            self.owners,
+            owners_for_generation,
             hide_done=self.chk_hide_generated.isChecked(),
             is_done=self._cover_done,
             matches_filter=matches_filter if filter_text else None,

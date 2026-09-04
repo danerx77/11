@@ -14,6 +14,8 @@ from collections.abc import Iterable, Mapping
 import re
 from typing import Any
 
+from utils.wypis_fields import normalize_parcel_identifier
+
 from utils.parcel_sorting import (
     normalize_parcel_number,
     parcel_sort_key,
@@ -45,10 +47,15 @@ _SEPARATOR_RE = re.compile(r"[\t;|]+|\s{2,}|\s*=>\s*|\s*=\s*")
 
 
 def normalize_identifier(value: object) -> str:
-    """Zwraca identyfikator bez zbędnych spacji, zachowując jego treść."""
+    """Zwraca identyfikator w zapisie z podkreślnikiem i kropkami.
+
+    ``110101 2 0010 202`` → ``110101_2.0010.202``. Wartości, których nie da
+    się rozpoznać, zostają bez zmian (bez nadmiarowych spacji).
+    """
 
     text = " ".join(str("" if value is None else value).split())
-    return text.strip(" ,;")
+    text = text.strip(" ,;")
+    return normalize_parcel_identifier(text) or text
 
 
 def _clean_text(value: object) -> str:
@@ -292,6 +299,25 @@ def indicator_rows_from_parcels(parcels: Iterable[Mapping[str, Any] | str]) -> l
         seen.add(key)
         rows.append(row)
     return rows
+
+
+def indicator_rows_from_project(
+    parcels: Iterable[Mapping[str, Any] | str],
+    owners: Iterable[Mapping[str, Any]] = (),
+) -> list[dict]:
+    """Łączy listę działek projektu z danymi z Wypisów.
+
+    Lista działek decyduje o tym, które działki mają się pojawić, a wypisy
+    uzupełniają identyfikator, obręb, gminę, powiat i województwo. Działki
+    znane tylko z wypisów też trafiają na listę, żeby nic nie zginęło.
+    """
+
+    rows = indicator_rows_from_parcels(parcels)
+    owner_rows = indicator_rows_from_owners(owners or [])
+    if not owner_rows:
+        return rows
+    merged, _added, _updated = merge_indicator_rows(rows, owner_rows)
+    return merged
 
 
 def sort_indicator_rows(

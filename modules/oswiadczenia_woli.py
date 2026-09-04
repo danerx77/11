@@ -187,13 +187,14 @@ class DeclGeneratorWidget(QWidget):
         self.group_combo.setMinimumWidth(180)
         self.group_combo.currentTextChanged.connect(self._on_group_changed)
         group_layout.addWidget(self.group_combo)
-        self.chk_show_only_group = QCheckBox('Pokaż tylko grupę')
+        self.chk_show_only_group = QCheckBox('Pokaż i generuj tylko wybraną grupę')
+        self.chk_show_only_group.setToolTip(
+            'Jedno pole na wszystko: lista pokazuje wyłącznie właścicieli i '
+            'działki z wybranej grupy, a generowanie obejmuje tylko te działki.\n'
+            'Przy „Wszystkie działki” ukrywa działki przypisane do innych grup.'
+        )
         self.chk_show_only_group.stateChanged.connect(self._refresh_owners_table)
         group_layout.addWidget(self.chk_show_only_group)
-        self.chk_exclude_grouped_from_all = QCheckBox('Wszystkie bez działek z grup')
-        self.chk_exclude_grouped_from_all.setToolTip('Gdy wybierzesz "Wszystkie działki", działki użyte w innych grupach nie będą pokazywane.')
-        self.chk_exclude_grouped_from_all.stateChanged.connect(self._refresh_owners_table)
-        group_layout.addWidget(self.chk_exclude_grouped_from_all)
         btn_group_create = QPushButton('➕ Utwórz z ptaszków')
         btn_group_create.clicked.connect(self._create_group_from_checked)
         group_layout.addWidget(btn_group_create)
@@ -653,7 +654,9 @@ class DeclGeneratorWidget(QWidget):
         name = self.group_combo.currentText()
         if name == 'Wszystkie działki':
             all_nums = set(self._all_project_parcels())
-            if hasattr(self, 'chk_exclude_grouped_from_all') and self.chk_exclude_grouped_from_all.isChecked():
+            # Przy włączonym filtrze „Wszystkie działki” znaczy: wszystko poza
+            # działkami, które trafiły już do nazwanych grup.
+            if hasattr(self, 'chk_show_only_group') and self.chk_show_only_group.isChecked():
                 used = set()
                 for group in self.parcel_groups.values():
                     used.update(group.get('parcels', []))
@@ -661,6 +664,55 @@ class DeclGeneratorWidget(QWidget):
             return all_nums
         group = self.parcel_groups.get(name, {})
         return set(group.get('parcels', []))
+
+    def _group_parcel_filter(self):
+        """Zbiór numerów działek, do których ograniczamy widok i generowanie.
+
+        Zwraca ``None``, gdy filtr grupy jest wyłączony — wtedy nic nie
+        ograniczamy.
+        """
+        if not hasattr(self, 'chk_show_only_group'):
+            return None
+        if not self.chk_show_only_group.isChecked():
+            return None
+        return self._selected_group_parcels()
+
+    @staticmethod
+    def _parcel_number(parcel):
+        return str(parcel.get('number', parcel)) if isinstance(parcel, dict) else str(parcel)
+
+    def _filter_parcels_to_group(self, parcels):
+        """Zostawia tylko działki należące do wybranej grupy."""
+        allowed = self._group_parcel_filter()
+        if allowed is None:
+            return list(parcels or [])
+        return [p for p in (parcels or []) if self._parcel_number(p) in allowed]
+
+    def _group_for_parcels(self, parcels):
+        """Znajduje grupę, do której należą działki właściciela."""
+        numbers = {self._parcel_number(p) for p in (parcels or [])}
+        if not numbers:
+            return None
+        best_group, best_hits = None, 0
+        for group in self.parcel_groups.values():
+            hits = len(numbers & set(group.get('parcels', [])))
+            if hits > best_hits:
+                best_group, best_hits = group, hits
+        return best_group
+
+    def _device_descriptions_for(self, parcels, fallback_budowa, fallback_demontaz):
+        """Opis urządzeń: najpierw z grupy działek, potem z formularza.
+
+        Dzięki temu seryjne generowanie wpisuje postać urządzeń ustawioną
+        przy grupie, a nie tę, która akurat została w formularzu.
+        """
+        group = self._group_for_parcels(parcels)
+        if not group:
+            return fallback_budowa, fallback_demontaz
+        return (
+            (group.get('budowa') or '').strip() or fallback_budowa,
+            (group.get('demontaz') or '').strip() or fallback_demontaz,
+        )
 
     def _all_project_parcels(self):
         nums = set()
@@ -836,7 +888,11 @@ class DeclGeneratorWidget(QWidget):
                 
             for specific_addr in addresses:
                 cats = set()
-                parcels = o.get('parcels', [])
+                # Przy włączonym filtrze grupy pokazujemy wyłącznie działki
+                # z wybranej grupy — także w kolumnie „Działki”.
+                parcels = self._filter_parcels_to_group(o.get('parcels', []))
+                if not parcels and self._group_parcel_filter() is not None:
+                    continue
                 for p_info in parcels:
                     num = p_info['number'] if isinstance(p_info, dict) else str(p_info)
                     for known_p in self.parcels:
@@ -866,11 +922,6 @@ class DeclGeneratorWidget(QWidget):
                     wanted_owner_keys = self._selected_group_owner_keys()
                     if wanted_owner_keys:
                         if self._owner_group_key(o, specific_addr) not in wanted_owner_keys:
-                            continue
-                    else:
-                        wanted_group = self._selected_group_parcels()
-                        owner_nums = {str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in parcels}
-                        if wanted_group and not (owner_nums & wanted_group):
                             continue
 
                 if filter_text:
@@ -1356,7 +1407,7 @@ class DeclGeneratorWidget(QWidget):
 
         for o in self.owners:
             cats = set()
-            for p_info in o.get('parcels', []):
+            for p_info in self._filter_parcels_to_group(o.get('parcels', [])):
                 num = p_info['number'] if isinstance(p_info, dict) else str(p_info)
                 for known_p in self.parcels:
                     if known_p.get('number') != num:
@@ -1399,8 +1450,24 @@ class DeclGeneratorWidget(QWidget):
             search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
             return filter_text in search_target
 
+        # Gdy filtr grupy jest włączony, seryjne generowanie obejmuje tylko
+        # właścicieli mających działki w tej grupie.
+        owners_for_generation = self.owners
+        if self._group_parcel_filter() is not None:
+            owners_for_generation = [
+                owner for owner in self.owners
+                if self._filter_parcels_to_group(owner.get('parcels', []))
+            ]
+            if not owners_for_generation:
+                return QMessageBox.information(
+                    self,
+                    'Pusta grupa',
+                    'Żaden właściciel nie ma działek z wybranej grupy.\n'
+                    'Zmień grupę albo wyłącz „Pokaż i generuj tylko wybraną grupę”.',
+                )
+
         targets = select_address_targets(
-            self.owners,
+            owners_for_generation,
             hide_done=hide_generated,
             is_done=is_complete,
             matches_filter=matches_filter if filter_text else None,
@@ -1456,7 +1523,11 @@ class DeclGeneratorWidget(QWidget):
                 skipped_info.append(f"{o.get('full_name', 'Nieznany')} (brak adresu/kodu, zmarły lub instytucja)")
                 continue
                 
-            parcels = o.get('parcels', [])
+            # Filtr grupy obowiązuje też przy generowaniu: dokument powstaje
+            # tylko dla działek z wybranej grupy.
+            parcels = self._filter_parcels_to_group(o.get('parcels', []))
+            if not parcels and self._group_parcel_filter() is not None:
+                continue
             
             cats = set()
             b_nums, d_nums = [], []
@@ -1531,7 +1602,14 @@ class DeclGeneratorWidget(QWidget):
                     precinct_str = precinct_str.upper()
 
                 t_tmpl = p['template_path_budowa'] if t == 'budowa' else p['template_path_demontaz']
-                dev_desc = p['device_description_budowa'] if t == 'budowa' else p['device_description_demontaz']
+                # Postać urządzeń ustawiona przy grupie ma pierwszeństwo przed
+                # tym, co akurat zostało w formularzu.
+                desc_bud, desc_dem = self._device_descriptions_for(
+                    parcels,
+                    p['device_description_budowa'],
+                    p['device_description_demontaz'],
+                )
+                dev_desc = desc_bud if t == 'budowa' else desc_dem
                 display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
 
                 if not t_tmpl or not Path(t_tmpl).is_file():

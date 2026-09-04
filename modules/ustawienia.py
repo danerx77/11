@@ -16,6 +16,24 @@ from utils.generation_targets import (
     COVER_GENERATION_RULES,
     cover_generation_rule_defaults,
 )
+from utils.project_naming import (
+    DATE_FORMAT_CHOICES,
+    DATE_FORMAT_KEY,
+    PROJECT_FOLDER_DEFAULTS,
+    SPACE_REPLACEMENT_CHOICES as PROJECT_SPACE_CHOICES,
+    SPACE_REPLACEMENT_KEY as PROJECT_SPACE_KEY,
+    SYMBOL_SEPARATOR_CHOICES,
+    SYMBOL_SEPARATOR_KEY,
+    TEMPLATE_KEY as PROJECT_TEMPLATE_KEY,
+    TEMPLATE_PRESETS as PROJECT_TEMPLATE_PRESETS,
+    PLACEHOLDERS as PROJECT_PLACEHOLDERS,
+    project_folder_preview,
+)
+from utils.wypis_fields import (
+    MUNICIPALITY_MODE_CHOICES,
+    MUNICIPALITY_MODE_KEY,
+    DEFAULT_MUNICIPALITY_MODE,
+)
 from utils.document_naming import (
     ASCII_KEY,
     COVER_PARCEL_LIMIT_KEY,
@@ -540,6 +558,9 @@ class SettingsTabWidget(QWidget):
 
         main_layout.addWidget(self._build_naming_box())
 
+        main_layout.addWidget(self._build_project_folder_box())
+        main_layout.addWidget(self._build_wypis_box())
+
         # PISMA PRZEWODNIE — REGUŁY SERII
         cover_rules_box = QGroupBox(
             "Pisma przewodnie — reguły seryjnego generowania"
@@ -956,6 +977,154 @@ class SettingsTabWidget(QWidget):
     # ──────────────────────────────────────────────────────────────
     # Nazewnictwo generowanych plików
     # ──────────────────────────────────────────────────────────────
+    def _build_project_folder_box(self) -> QGroupBox:
+        """Sekcja wyboru schematu nazwy folderu projektu."""
+        box = QGroupBox("Projekty — nazwa folderu nowego projektu")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Tu ustawiasz, jak ma się nazywać folder tworzony przy zakładaniu "
+            "nowego projektu. Ustawienie domyślne odtwarza dotychczasową nazwę, "
+            "np. „Maki OBI.23.23220 04-12-2026”. Ten sam schemat podpowiada się "
+            "potem w oknie „Nowy projekt”, gdzie nadal możesz go zmienić."
+        )
+        info.setObjectName("naming_hint")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+
+        self.project_folder_preset = QComboBox()
+        for label, template in PROJECT_TEMPLATE_PRESETS:
+            self.project_folder_preset.addItem(f"{label} — {template}", template)
+        self.project_folder_preset.addItem("Własny wzór (wpisz poniżej)", "")
+        self.project_folder_preset.activated.connect(
+            lambda index: self._apply_project_folder_preset(index)
+        )
+        form.addRow("Wariant nazwy:", self.project_folder_preset)
+
+        self.project_folder_template = QLineEdit()
+        self.project_folder_template.setPlaceholderText(
+            PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY]
+        )
+        self.project_folder_template.textChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Własny wzór:", self.project_folder_template)
+
+        self.project_symbol_separator = QComboBox()
+        for label, value in SYMBOL_SEPARATOR_CHOICES:
+            self.project_symbol_separator.addItem(label, value)
+        self.project_symbol_separator.currentIndexChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Ukośnik w numerze zamień na:", self.project_symbol_separator)
+
+        self.project_date_format = QComboBox()
+        for label, value in DATE_FORMAT_CHOICES:
+            self.project_date_format.addItem(label, value)
+        self.project_date_format.currentIndexChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Zapis terminu:", self.project_date_format)
+
+        self.project_space_mode = QComboBox()
+        for label, value in PROJECT_SPACE_CHOICES:
+            self.project_space_mode.addItem(label, value)
+        self.project_space_mode.currentIndexChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Spacje w nazwie:", self.project_space_mode)
+
+        layout.addLayout(form)
+
+        self.lbl_project_folder_preview = QLabel()
+        self.lbl_project_folder_preview.setObjectName("naming_preview")
+        self.lbl_project_folder_preview.setWordWrap(True)
+        layout.addWidget(self.lbl_project_folder_preview)
+
+        fields = QLabel(
+            "Dostępne pola: "
+            + "   •   ".join(f"{tag} – {desc}" for tag, desc in PROJECT_PLACEHOLDERS)
+        )
+        fields.setObjectName("naming_fields")
+        fields.setWordWrap(True)
+        layout.addWidget(fields)
+
+        return box
+
+    def _apply_project_folder_preset(self, index: int):
+        template = self.project_folder_preset.itemData(index)
+        if template:
+            self.project_folder_template.setText(template)
+        self._update_project_folder_preview()
+
+    def _project_folder_settings(self) -> dict:
+        return {
+            PROJECT_TEMPLATE_KEY: self.project_folder_template.text().strip()
+            or PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY],
+            SYMBOL_SEPARATOR_KEY: self.project_symbol_separator.currentData(),
+            PROJECT_SPACE_KEY: self.project_space_mode.currentData(),
+            DATE_FORMAT_KEY: self.project_date_format.currentData(),
+        }
+
+    def _update_project_folder_preview(self, *_):
+        if not hasattr(self, "lbl_project_folder_preview"):
+            return
+        settings = self._project_folder_settings()
+        try:
+            example = project_folder_preview(settings)
+        except Exception as exc:  # pragma: no cover - zabezpieczenie UI
+            self.lbl_project_folder_preview.setText(f"Nie można zbudować podglądu: {exc}")
+            return
+        self.lbl_project_folder_preview.setText(
+            "Podgląd nazwy folderu (Maki, OBI/23/23220, termin 04-12-2026):\n"
+            f"  {example}"
+        )
+
+    def _build_wypis_box(self) -> QGroupBox:
+        """Sekcja ustawień odczytu danych z wypisów."""
+        box = QGroupBox("Wypisy — odczyt danych z dokumentu")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Jednostka ewidencyjna bywa zapisana jako „Maki - G” (gmina) albo "
+            "„Maki - M” (miasto). Tutaj wybierasz, w jakiej postaci program ma "
+            "zapisywać tę wartość."
+        )
+        info.setObjectName("naming_hint")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+
+        self.wypis_municipality_mode = QComboBox()
+        for label, value in MUNICIPALITY_MODE_CHOICES:
+            self.wypis_municipality_mode.addItem(label, value)
+        form.addRow("Jednostka ewidencyjna:", self.wypis_municipality_mode)
+
+        layout.addLayout(form)
+
+        self.chk_wypis_fix_identifier = QCheckBox(
+            "Poprawiaj zapis identyfikatora działki "
+            "(110101 2 0010 202 → 110101_2.0010.202)"
+        )
+        self.chk_wypis_fix_identifier.setToolTip(
+            "Numer działki rozdzielony spacjami zostanie zapisany z ukośnikiem, "
+            "np. 110101 2 0010 22 21 → 110101_2.0010.22/21."
+        )
+        layout.addWidget(self.chk_wypis_fix_identifier)
+
+        self.chk_wypis_read_ownership = QCheckBox(
+            "Odczytuj „Formę władania” i udział z wypisu (kolumna w tabeli)"
+        )
+        self.chk_wypis_read_ownership.setToolTip(
+            "Np. „14/48 współwłasność”, „wspólność ustawowa”, „udział łączny”."
+        )
+        layout.addWidget(self.chk_wypis_read_ownership)
+
+        return box
+
     def _build_naming_box(self) -> QGroupBox:
         """Sekcja wyboru schematu nazw dla Oświadczeń i Pism przewodnich."""
         box = QGroupBox("Nazewnictwo plików — Oświadczenia i Pisma (PSM)")
@@ -1191,6 +1360,44 @@ class SettingsTabWidget(QWidget):
                 naming[key] = self.config[key]
         self._apply_naming_values(naming)
         self._update_naming_preview()
+
+        # Nazwa folderu projektu.
+        folder_defaults = dict(PROJECT_FOLDER_DEFAULTS)
+        for key in list(folder_defaults):
+            if key in self.config:
+                folder_defaults[key] = self.config[key]
+        self.project_folder_template.setText(
+            str(folder_defaults[PROJECT_TEMPLATE_KEY])
+        )
+        preset_index = self.project_folder_preset.findData(
+            folder_defaults[PROJECT_TEMPLATE_KEY]
+        )
+        self.project_folder_preset.setCurrentIndex(
+            preset_index if preset_index >= 0
+            else self.project_folder_preset.count() - 1
+        )
+        for combo, key in (
+            (self.project_symbol_separator, SYMBOL_SEPARATOR_KEY),
+            (self.project_space_mode, PROJECT_SPACE_KEY),
+            (self.project_date_format, DATE_FORMAT_KEY),
+        ):
+            index = combo.findData(folder_defaults[key])
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        self._update_project_folder_preview()
+
+        # Odczyt danych z wypisów.
+        mode_index = self.wypis_municipality_mode.findData(
+            self.config.get(MUNICIPALITY_MODE_KEY, DEFAULT_MUNICIPALITY_MODE)
+        )
+        self.wypis_municipality_mode.setCurrentIndex(
+            mode_index if mode_index >= 0 else 0
+        )
+        self.chk_wypis_fix_identifier.setChecked(
+            bool(self.config.get("wypis_fix_identifier", True))
+        )
+        self.chk_wypis_read_ownership.setChecked(
+            bool(self.config.get("wypis_read_ownership", True))
+        )
 
         # Wygląd zakładek.
         tab_layout_mode = self.config.get("tab_layout_mode", "modern")
@@ -1452,6 +1659,19 @@ class SettingsTabWidget(QWidget):
         # Nazewnictwo plików — zapisujemy komplet kluczy.
         for key, value in self._naming_settings().items():
             self.config[key] = value
+
+        for key, value in self._project_folder_settings().items():
+            self.config[key] = value
+
+        self.config[MUNICIPALITY_MODE_KEY] = (
+            self.wypis_municipality_mode.currentData()
+        )
+        self.config["wypis_fix_identifier"] = (
+            self.chk_wypis_fix_identifier.isChecked()
+        )
+        self.config["wypis_read_ownership"] = (
+            self.chk_wypis_read_ownership.isChecked()
+        )
 
         selected_tab_layout = self.tab_layout_combo.currentData() or "modern"
         tab_layout_changed = selected_tab_layout != getattr(

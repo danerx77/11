@@ -47,6 +47,7 @@ from utils.parcel_indicators import (
     format_indicator_export,
     indicator_rows_from_owners,
     indicator_rows_from_parcels,
+    indicator_rows_from_project,
     indicator_summary,
     make_indicator_row,
     merge_indicator_rows,
@@ -368,14 +369,25 @@ class ParcelIndicatorWidget(QWidget):
                 "Lista działek projektu jest pusta. "
                 "Uzupełnij ją w zakładce „Lista działek”.",
             )
+        # Sama lista działek nie zna identyfikatorów — te są w Wypisach,
+        # więc od razu łączymy oba źródła.
         added, updated = self._merge_rows(
-            indicator_rows_from_parcels(self._project_parcels)
+            indicator_rows_from_project(self._project_parcels, self._owners)
         )
-        QMessageBox.information(
-            self,
-            "Lista działek",
-            f"Dodano nowych działek: {added}\nUzupełniono istniejących: {updated}",
+        with_identifier = sum(1 for row in self.rows if row.get("identifier"))
+        missing = len(self.rows) - with_identifier
+        message = (
+            f"Dodano nowych działek: {added}\n"
+            f"Uzupełniono istniejących: {updated}\n"
+            f"Z identyfikatorem: {with_identifier}"
         )
+        if missing:
+            message += (
+                f"\nBez identyfikatora: {missing}"
+                "\n\nBrakujące dane znajdziesz w wypisach — wczytaj je "
+                "w zakładce „Wypisy”, a potem kliknij „Uzupełnij z wypisów”."
+            )
+        QMessageBox.information(self, "Lista działek", message)
 
     def _load_from_owners(self):
         if not self._owners:
