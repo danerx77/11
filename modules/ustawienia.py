@@ -1186,7 +1186,55 @@ class SettingsTabWidget(QWidget):
         )
         layout.addWidget(self.chk_wypis_read_ownership)
 
+        # ── Wzory odczytu PDF ──
+        profiles_hint = QLabel(
+            "Wypisy z różnych urzędów mają inne nazwy pól — jeden pisze "
+            "„Bliższe określenie położenia”, inny „Adres nieruchomości”. "
+            "W oknie poniżej wczytasz przykładowy PDF, zobaczysz co program "
+            "z niego odczytał i poprawisz przypisania. Ustawienia zapiszą się "
+            "jako wzór dla kolejnych dokumentów z tego samego urzędu."
+        )
+        profiles_hint.setObjectName("muted_hint")
+        profiles_hint.setWordWrap(True)
+        layout.addWidget(profiles_hint)
+
+        profiles_row = QHBoxLayout()
+        btn_profiles = QPushButton("🧩 Wzory odczytu wypisów (PDF)…")
+        btn_profiles.setObjectName("btn_primary")
+        btn_profiles.setToolTip(
+            "Wczytaj przykładowy wypis, sprawdź co jest czym i dostosuj "
+            "odczyt do dokumentów o innej budowie."
+        )
+        btn_profiles.clicked.connect(self._open_wypis_profiles)
+        profiles_row.addWidget(btn_profiles)
+
+        self.lbl_wypis_profiles = QLabel()
+        self.lbl_wypis_profiles.setObjectName("muted_hint")
+        self.lbl_wypis_profiles.setWordWrap(True)
+        profiles_row.addWidget(self.lbl_wypis_profiles, 1)
+        layout.addLayout(profiles_row)
+
         return box
+
+    def _refresh_wypis_profiles_label(self):
+        """Pokazuje, ile wzorów zapisano i który jest aktywny."""
+        from utils.wypis_profiles import ACTIVE_KEY, AUTO_KEY, load_profiles
+
+        profiles = load_profiles(self.config)
+        active = str(self.config.get(ACTIVE_KEY, "") or "")
+        auto = bool(self.config.get(AUTO_KEY, True))
+        tryb = "automatyczny" if auto else f"ręczny — „{active or 'brak'}”"
+        self.lbl_wypis_profiles.setText(
+            f"Zapisanych wzorów: {len(profiles)} • tryb: {tryb}."
+        )
+
+    def _open_wypis_profiles(self):
+        """Otwiera kreator wzorów odczytu wypisów."""
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        dialog = WypisProfileDialog(self.config, self)
+        if dialog.exec():
+            self._refresh_wypis_profiles_label()
 
     def _build_naming_box(self) -> QGroupBox:
         """Sekcja wyboru schematu nazw dla Oświadczeń i Pism przewodnich."""
@@ -1495,6 +1543,7 @@ class SettingsTabWidget(QWidget):
         self.default_proj_edit.setText(
             self.config.get("default_project_root", "")
         )
+        self._refresh_wypis_profiles_label()
         for target, _label, _default in OUTPUT_TARGETS:
             enabled = is_auto_enabled(self.config, target)
             self.output_auto_checks[target].setChecked(enabled)

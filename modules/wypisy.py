@@ -1158,7 +1158,7 @@ class OwnersListWidget(QWidget):
                     parse_wypis_pdf,
                 )
                 owners = parse_wypis_pdf(filepath)
-                file_meta = extract_wypis_metadata_file(filepath)
+                file_meta = extract_wypis_metadata_file(filepath, self.config)
                 # Wypis potrafi obejmować działki z kilku obrębów, gmin,
                 # a nawet powiatów. Odczytujemy metadane osobno dla każdej
                 # działki, zamiast brać wyłącznie pierwszą wartość z pliku.

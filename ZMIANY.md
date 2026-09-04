@@ -469,6 +469,70 @@ Przyciski druku rozróżniają teraz dwa tryby: *„Drukuj podświetlone”*
 (zaznaczone myszą) i *„Drukuj zaznaczone ✅”* (z pól wyboru). Przy
 wydruku ponad 20 dokumentów program prosi o potwierdzenie.
 
+## 38. Wypisy — wzory odczytu PDF („co jest czym”)
+
+Wypisy z różnych urzędów mają inne nazwy pól: jeden pisze „Bliższe
+określenie położenia”, drugi „Adres nieruchomości”, trzeci „Położenie”.
+Dotąd wszystkie warianty były zaszyte w programie, więc nietypowy wypis
+odczytywał się niepełnie albo błędnie.
+
+W **Ustawieniach → Wypisy** jest teraz przycisk **„🧩 Wzory odczytu
+wypisów (PDF)…”**, który otwiera osobne okno.
+
+### Co pokazuje okno
+
+Po wczytaniu przykładowego wypisu program wyświetla tabelę **co jest
+czym** — dla każdego z 13 pól widać:
+
+| Pole w programie | Etykiety w PDF | Rozpoznano | Odczytana wartość |
+| --- | --- | --- | --- |
+| Powiat | `Powiat` | ✅ odczytano | kartuski |
+| Położenie działki | `Adres nieruchomości` | ✅ odczytano | MAKI, WYBICKIEGO J. 50 |
+| Udział | `Udział` | ❌ nie znaleziono | |
+
+Kolory mówią od razu, co wymaga uwagi: zielony — pole odczytane, żółty —
+etykieta jest, ale brakuje wartości, czerwony — nie znaleziono. Pod
+tabelą jest podsumowanie w rodzaju *„Odczytano 7 z 13 pól”*. Obok
+wyświetlany jest pełny tekst dokumentu.
+
+### Tryb automatyczny i ręczny
+
+- **Automatyczny** (domyślnie) — program porównuje treść PDF ze
+  znacznikami wszystkich wzorów i sam wybiera najlepiej pasujący.
+- **Ręczny** — po odznaczeniu przełącznika zawsze używany jest wzór
+  wybrany z listy.
+
+Znaczniki to fragmenty nagłówka, po których poznajemy wydawcę, np.
+`STAROSTWO POWIATOWE W KARTUZACH`. Wpisujesz je w polu obok.
+
+### Własne wzory dla nietypowych wypisów
+
+Przyciskami **Nowy / Kopiuj / Zmień nazwę / Usuń** tworzysz własne wzory.
+Etykiety przypisujesz na dwa sposoby:
+
+1. wpisując je wprost w kolumnie „Etykiety w PDF” (kilka wariantów
+   oddziel średnikiem),
+2. zaznaczając nazwę pola w tekście dokumentu i klikając **„⬅️ Użyj
+   zaznaczenia jako etykiety”**.
+
+Wzory zapisują się w konfiguracji, więc kolejny wypis z tego samego
+urzędu odczyta się już poprawnie — bez ponownego ustawiania.
+
+### Wzór własny poprawia też błędny odczyt
+
+Wzory **wbudowane** jedynie uzupełniają pola, których standardowy odczyt
+nie znalazł — dzięki temu włączenie ich nie zmienia wyników tam, gdzie
+wszystko działało.
+
+Wzór **własny** działa mocniej: skoro sam opisałeś dokument ze swojego
+urzędu, program traktuje Twoje przypisania jako nadrzędne i poprawia
+także wartości odczytane błędnie. W teście na wypisie ze Starostwa
+Kartuzy pole „Powiat” odczytywało się jako `OWE W KARTUZACH, kartuski`;
+po dodaniu własnego wzoru daje poprawne `kartuski`.
+
+Wzoru wbudowanego nie da się usunąć ani zmienić mu nazwy — od tego jest
+przycisk „Kopiuj”, który robi Twoją własną wersję do edycji.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

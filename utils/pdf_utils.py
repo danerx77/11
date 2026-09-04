@@ -244,7 +244,57 @@ def _parse_simplified_wypis_page(text: str) -> list[dict]:
         })
     return owners
 
-def extract_wypis_metadata_file(pdf_path: str) -> dict:
+def apply_profile_to_meta(meta: dict, text: str, config: dict = None) -> dict:
+    """Uzupełnia metadane według wzoru odczytu wybranego w Ustawieniach.
+
+    Wzory pozwalają obsłużyć wypisy z urzędów, które nazywają pola inaczej.
+    Uzupełniamy tylko puste wartości — dotychczasowy odczyt ma pierwszeństwo,
+    dzięki czemu włączenie wzorów nie zmienia wyników tam, gdzie wszystko
+    działało poprawnie.
+    """
+    if not config or not str(text or '').strip():
+        return meta
+
+    try:
+        from utils.wypis_profiles import (
+            ACTIVE_KEY,
+            AUTO_KEY,
+            detect_profile,
+            extract_field,
+            find_profile,
+            load_profiles,
+        )
+    except Exception:
+        return meta
+
+    try:
+        profiles = load_profiles(config)
+        if config.get(AUTO_KEY, True):
+            profile, _score = detect_profile(profiles, text)
+        else:
+            profile = find_profile(profiles, str(config.get(ACTIVE_KEY, '') or ''))
+        if not profile:
+            return meta
+
+        from utils.wypis_profiles import should_override
+
+        override = should_override(profile)
+        for field in _WYPIS_META_FIELDS:
+            # Wzór wbudowany tylko uzupełnia braki; wzór własny użytkownika
+            # poprawia też wartości odczytane błędnie.
+            if meta.get(field) and not override:
+                continue
+            value = extract_field(text, profile, field)
+            if value:
+                meta[field] = value
+                meta[f'{field}_values'] = [value]
+    except Exception:
+        # Błędny wzór nie może zablokować importu wypisu.
+        return meta
+    return meta
+
+
+def extract_wypis_metadata_file(pdf_path: str, config: dict = None) -> dict:
     """Odczytuje nagłówek wypisu razem z listą wszystkich wartości.
 
     Jeden wypis może obejmować kilka obrębów, gmin, a nawet powiatów. Dlatego
@@ -274,6 +324,11 @@ def extract_wypis_metadata_file(pdf_path: str) -> dict:
             meta[field] = value
             if value:
                 meta[f'{field}_values'] = [value]
+
+    # Na końcu dokładamy wzór odczytu zdefiniowany przez użytkownika
+    # (Ustawienia → Wzory odczytu wypisów). Uzupełnia wyłącznie pola, których
+    # standardowy odczyt nie znalazł, więc nie psuje działających wypisów.
+    apply_profile_to_meta(meta, text, config)
     return meta
 
 def extract_wypis_parcel_metadata_file(pdf_path: str) -> dict:
