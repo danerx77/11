@@ -264,6 +264,52 @@ a powtórki są usuwane.
 
 ---
 
+# Piąta tura poprawek
+
+## 25. Forma władania — teraz naprawdę czytana z PDF
+
+* **Przyczyna błędu:** wypisy są drukowane **bez polskich znaków**
+  (`udzial laczny`, `wspolnosc ustawowa`), a program szukał wyłącznie zapisu
+  z ogonkami — więc nie znajdował nic i kolumna zostawała pusta.
+* Rozpoznawanie działa teraz **niezależnie od ogonków i wielkości liter**,
+  a wynik zawsze zapisuje się poprawną polszczyzną:
+  `udzial laczny` → **udział łączny**, `wspolnosc ustawowa` →
+  **wspólność ustawowa**, `WSPOLWLASNOSC` → **współwłasność**.
+* Wypis potrafi rozbić opis na kilka wierszy (`udzial laczny` / `14/48` /
+  `wspólwłasność`). Program czyta **cały blok** i skleja obie informacje:
+  **„udział łączny, współwłasność”** — dokładnie jak na Twoim zrzucie.
+* „Współwłasność” nie jest już mylona ze „własnością”.
+
+## 26. Forma władania w szczegółach właściciela
+
+* Pozycja **„Forma władania”** pojawia się w panelu szczegółów pod
+  „Udziałem”.
+* Pole jest też w oknie **dodawania i edycji właściciela**, więc można je
+  poprawić ręcznie.
+
+## 27. Nowy projekt — wybór separatora w numerze
+
+* W oknie **„Nowy projekt”** doszło pole **„Ukośnik w numerze zamień na:”**
+  z wyborem: kropka (jak dotąd), **myślnik**, **podkreślnik**, spacja albo bez
+  separatora.
+* Podgląd nazwy folderu zmienia się od razu, a utworzony folder ma dokładnie
+  taką nazwę, jaka była w podglądzie.
+
+## 28. Wskaźnik — eksport z wyborem kolumn
+
+* Przycisk **„Eksportuj widok”** otwiera teraz okno wyboru zawartości pliku:
+  * **Nr działki i identyfikator** (domyślnie),
+  * **Same numery działek**,
+  * **Same identyfikatory**,
+  * **Wszystkie kolumny** — tak jak działało dotychczas,
+  * albo własny wybór dowolnych kolumn.
+* Dodatkowo: wybór znaku rozdzielającego (tabulator, średnik, przecinek,
+  spacja, myślnik) i decyzja, czy dopisać wiersz z nazwami kolumn.
+* Widać **podgląd**, jak będzie wyglądał plik, a wybór jest zapamiętywany na
+  następny raz. Zapis działa zarówno do TXT, jak i CSV.
+
+---
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

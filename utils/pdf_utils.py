@@ -4,6 +4,7 @@ pdf_utils.py – Narzędzia do przetwarzania PDF (wypisy i druczki).
 import re
 
 from utils.wypis_fields import (
+    combine_ownership_forms,
     extract_ownership_form,
     normalize_parcel_identifier,
     normalize_share,
@@ -398,12 +399,9 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
             share = share_match.group(1)
             break
     # Forma władania: "współwłasność", "wspólność ustawowa", "udział łączny"...
-    ownership_form = ""
-    for line in lines[:8]:
-        found = extract_ownership_form(line)
-        if found:
-            ownership_form = found
-            break
+    # Wypis potrafi rozbić to na kilka wierszy i drukować bez polskich znaków,
+    # więc przeszukujemy nagłówek bloku w całości.
+    ownership_form = combine_ownership_forms("\n".join(lines[:10]))
     entities = []
     current_entity = None
     for line in lines:

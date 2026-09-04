@@ -8,6 +8,9 @@ import re
 
 from utils.project_naming import (
     DATE_FORMAT_KEY,
+    SYMBOL_SEPARATOR_CHOICES,
+    SYMBOL_SEPARATOR_KEY,
+    DEFAULT_SYMBOL_SEPARATOR,
     PROJECT_FOLDER_DEFAULTS,
     TEMPLATE_KEY as PROJECT_TEMPLATE_KEY,
     TEMPLATE_PRESETS as PROJECT_TEMPLATE_PRESETS,
@@ -99,9 +102,23 @@ class NewProjectDialog(QDialog):
         self.deadline_edit.dateChanged.connect(self._update_folder_preview)
 
         help_label = QLabel("Wpisz własny schemat. Zmienne: {nazwa}, {symbol}, {miasto}, {termin}")
-        help_label.setStyleSheet("color: gray; font-size: 11px;")
+        help_label.setObjectName('naming_fields')
         layout.addRow('Format folderu:', self.format_combo)
         layout.addRow('', help_label)
+
+        # Ukośnik w numerze projektu trzeba czymś zastąpić — Windows go nie
+        # dopuszcza w nazwie folderu. Wybór jest też w Ustawieniach, ale ma
+        # być pod ręką przy zakładaniu projektu.
+        self.separator_combo = QComboBox()
+        for label, value in SYMBOL_SEPARATOR_CHOICES:
+            self.separator_combo.addItem(label, value)
+        saved_separator = str(
+            self.config.get(SYMBOL_SEPARATOR_KEY, DEFAULT_SYMBOL_SEPARATOR)
+        )
+        sep_index = self.separator_combo.findData(saved_separator)
+        self.separator_combo.setCurrentIndex(sep_index if sep_index >= 0 else 0)
+        self.separator_combo.currentIndexChanged.connect(self._update_folder_preview)
+        layout.addRow('Ukośnik w numerze zamień na:', self.separator_combo)
 
         self.lbl_folder_preview = QLabel()
         self.lbl_folder_preview.setObjectName('naming_preview')
@@ -114,9 +131,16 @@ class NewProjectDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
 
+    def _folder_config(self) -> dict:
+        """Ustawienia nazwy z uwzględnieniem wyboru zrobionego w tym oknie."""
+        config = dict(self.config)
+        if hasattr(self, 'separator_combo'):
+            config[SYMBOL_SEPARATOR_KEY] = self.separator_combo.currentData()
+        return config
+
     def _current_folder_name(self) -> str:
         return build_project_folder_name(
-            self.config,
+            self._folder_config(),
             name=self.name_edit.text(),
             symbol=self.symbol_edit.text(),
             city=self.city_edit.text(),
@@ -164,7 +188,9 @@ class NewProjectDialog(QDialog):
                 )
             ),
             'parent_folder': self.folder_edit.text().strip(),
-            'folder_format_text': self.format_combo.currentText()
+            'folder_format_text': self.format_combo.currentText(),
+            'folder_symbol_separator': self.separator_combo.currentData(),
+            'folder_name': self._current_folder_name()
         }
 
 
@@ -381,9 +407,12 @@ class ProjectManagerWidget(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted: return
         vals = dlg.get_values()
 
-        # Nazwa folderu powstaje wg schematu wybranego w Ustawieniach.
-        folder_name = build_project_folder_name(
-            self.config,
+        # Nazwa folderu jest dokładnie taka, jaką pokazał podgląd w oknie.
+        folder_name = vals.get('folder_name') or build_project_folder_name(
+            {**self.config,
+             SYMBOL_SEPARATOR_KEY: vals.get(
+                 'folder_symbol_separator', DEFAULT_SYMBOL_SEPARATOR
+             )},
             name=vals['name'],
             symbol=vals['symbol'],
             city=vals['city'],

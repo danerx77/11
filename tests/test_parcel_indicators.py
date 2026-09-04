@@ -1,6 +1,7 @@
 """Testy logiki modułu Wskaźnik: działki i identyfikatory ewidencyjne."""
 
 import unittest
+from pathlib import Path
 
 from utils.parcel_indicators import (
     filter_indicator_rows,
@@ -198,7 +199,7 @@ class FilterAndSummaryTests(unittest.TestCase):
         self.assertEqual(
             text.splitlines(),
             [
-                "Nr działki;Identyfikator",
+                "Nr działki;Identyfikator działki",
                 "1/1;221001_1.0001.1/1",
                 "1/2;221001_1.0001.1/2",
             ],
@@ -207,3 +208,42 @@ class FilterAndSummaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExportDialogWiringTests(unittest.TestCase):
+    """Eksport TXT ma pozwalać wybrać kolumny (zgłoszenie użytkownika)."""
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.source = (root / "modules" / "wskaznik.py").read_text(encoding="utf-8")
+
+    def test_export_dialog_exists(self):
+        self.assertIn("class IndicatorExportDialog", self.source)
+
+    def test_presets_cover_the_requested_variants(self):
+        self.assertIn("Nr działki i identyfikator", self.source)
+        self.assertIn("Same numery działek", self.source)
+        self.assertIn("Same identyfikatory", self.source)
+        self.assertIn("Wszystkie kolumny (jak w tabeli)", self.source)
+
+    def test_export_uses_the_selected_columns(self):
+        self.assertIn("columns=columns", self.source)
+
+    def test_choice_is_remembered(self):
+        self.assertIn("wskaznik_export_columns", self.source)
+
+
+class ExportColumnLabelTests(unittest.TestCase):
+    def test_labels_are_shared_in_one_place(self):
+        from utils.parcel_indicators import EXPORT_COLUMN_LABELS, INDICATOR_FIELDS
+
+        for field in INDICATOR_FIELDS:
+            self.assertIn(field, EXPORT_COLUMN_LABELS)
+
+    def test_export_can_select_a_single_column(self):
+        rows = [{"number": "1/1", "identifier": "221001_1.0001.1/1"}]
+        self.assertEqual(
+            format_indicator_export(rows, columns=("identifier",)),
+            "221001_1.0001.1/1",
+        )

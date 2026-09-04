@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -44,6 +45,7 @@ from PySide6.QtWidgets import (
 from utils.parcel_indicators import (
     INDICATOR_FIELDS,
     filter_indicator_rows,
+    EXPORT_COLUMN_LABELS,
     format_indicator_export,
     indicator_rows_from_owners,
     indicator_rows_from_parcels,
@@ -67,6 +69,178 @@ COLUMNS = (
     ("voivodeship", "Województwo", 140),
     ("note", "Notatka", 200),
 )
+
+
+class IndicatorExportDialog(QDialog):
+    """Okno wyboru kolumn i formatu przy zapisie zestawienia."""
+
+    # Zestawy gotowe do kliknięcia jednym ruchem.
+    PRESETS = (
+        ("Nr działki i identyfikator", ("number", "identifier")),
+        ("Same numery działek", ("number",)),
+        ("Same identyfikatory", ("identifier",)),
+        ("Wszystkie kolumny (jak w tabeli)", tuple(f for f, _, _ in COLUMNS)),
+    )
+
+    SEPARATORS = (
+        ("Tabulator", "\t"),
+        ("Średnik  ;", ";"),
+        ("Przecinek  ,", ","),
+        ("Spacja", " "),
+        ("Myślnik  -", " - "),
+    )
+
+    def __init__(self, parent=None, *, row_count: int = 0, config=None):
+        super().__init__(parent)
+        self.setWindowTitle("Zapisz zestawienie — wybierz zawartość")
+        self.resize(560, 520)
+        self._config = config if isinstance(config, dict) else {}
+
+        layout = QVBoxLayout(self)
+
+        info = QLabel(
+            f"Do zapisania: {row_count} "
+            f"{'działka' if row_count == 1 else 'działek'}.\n"
+            "Zaznacz kolumny, które mają trafić do pliku."
+        )
+        info.setObjectName("info_banner")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Gotowy zestaw:"))
+        self.preset_combo = QComboBox()
+        for label, fields in self.PRESETS:
+            self.preset_combo.addItem(label, fields)
+        self.preset_combo.addItem("Własny wybór", ())
+        self.preset_combo.activated.connect(self._apply_preset)
+        preset_row.addWidget(self.preset_combo, 1)
+        layout.addLayout(preset_row)
+
+        box = QGroupBox("Kolumny w pliku")
+        box_layout = QVBoxLayout(box)
+        self.column_checks: dict[str, QCheckBox] = {}
+        saved = self._config.get("wskaznik_export_columns")
+        saved_fields = set(saved) if isinstance(saved, (list, tuple)) else {
+            "number",
+            "identifier",
+        }
+        for field, label, _width in COLUMNS:
+            check = QCheckBox(label)
+            check.setChecked(field in saved_fields)
+            check.stateChanged.connect(self._on_columns_changed)
+            box_layout.addWidget(check)
+            self.column_checks[field] = check
+        layout.addWidget(box)
+
+        form = QFormLayout()
+        self.separator_combo = QComboBox()
+        for label, value in self.SEPARATORS:
+            self.separator_combo.addItem(label, value)
+        saved_sep = self._config.get("wskaznik_export_separator", "\t")
+        sep_index = self.separator_combo.findData(saved_sep)
+        self.separator_combo.setCurrentIndex(sep_index if sep_index >= 0 else 0)
+        self.separator_combo.currentIndexChanged.connect(self._update_preview)
+        form.addRow("Rozdzielaj znakiem:", self.separator_combo)
+        layout.addLayout(form)
+
+        self.chk_header = QCheckBox("Dopisz wiersz z nazwami kolumn")
+        self.chk_header.setChecked(
+            bool(self._config.get("wskaznik_export_header", True))
+        )
+        self.chk_header.stateChanged.connect(self._update_preview)
+        layout.addWidget(self.chk_header)
+
+        self.lbl_preview = QLabel()
+        self.lbl_preview.setObjectName("naming_preview")
+        self.lbl_preview.setWordWrap(True)
+        layout.addWidget(self.lbl_preview)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("💾 Zapisz")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Anuluj")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._sync_preset_to_columns()
+        self._update_preview()
+
+    # ── obsługa ──
+    def _apply_preset(self, index: int):
+        fields = self.preset_combo.itemData(index)
+        if not fields:
+            return
+        for field, check in self.column_checks.items():
+            check.blockSignals(True)
+            check.setChecked(field in fields)
+            check.blockSignals(False)
+        self._update_preview()
+
+    def _on_columns_changed(self, *_):
+        self._sync_preset_to_columns()
+        self._update_preview()
+
+    def _sync_preset_to_columns(self):
+        current = tuple(self.selected_columns())
+        match = self.preset_combo.count() - 1  # "Własny wybór"
+        for index, (_label, fields) in enumerate(self.PRESETS):
+            if tuple(fields) == current:
+                match = index
+                break
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.setCurrentIndex(match)
+        self.preset_combo.blockSignals(False)
+
+    def selected_columns(self) -> list[str]:
+        return [
+            field
+            for field, _label, _width in COLUMNS
+            if self.column_checks[field].isChecked()
+        ]
+
+    def separator(self) -> str:
+        return self.separator_combo.currentData()
+
+    def include_header(self) -> bool:
+        return self.chk_header.isChecked()
+
+    def _update_preview(self, *_):
+        columns = self.selected_columns()
+        if not columns:
+            self.lbl_preview.setText("Zaznacz przynajmniej jedną kolumnę.")
+            return
+        example = {
+            "number": "22/21",
+            "identifier": "110101_2.0010.22/21",
+            "precinct": "Maki",
+            "precinct_number": "0010",
+            "municipality": "Maki - G",
+            "county": "kartuski",
+            "voivodeship": "pomorskie",
+            "note": "",
+        }
+        separator = self.separator()
+        # Nazwy kolumn muszą być te same, których użyje zapis pliku.
+        labels = EXPORT_COLUMN_LABELS
+        lines = []
+        if self.include_header():
+            lines.append(separator.join(labels[field] for field in columns))
+        lines.append(separator.join(example[field] for field in columns))
+        shown = "\n".join(lines).replace("\t", "→   ")
+        self.lbl_preview.setText("Tak będzie wyglądał plik:\n" + shown)
+
+    def accept(self):
+        if not self.selected_columns():
+            return QMessageBox.warning(
+                self,
+                "Brak kolumn",
+                "Zaznacz przynajmniej jedną kolumnę do zapisania.",
+            )
+        super().accept()
 
 
 class IndicatorImportDialog(QDialog):
@@ -570,27 +744,47 @@ class ParcelIndicatorWidget(QWidget):
     def _export_visible(self):
         if not self._visible_rows:
             return QMessageBox.information(self, "Pusto", "Nie ma czego zapisać.")
+
+        # Najpierw pytamy, co ma trafić do pliku: same numery, numer
+        # z identyfikatorem, czy wszystkie kolumny jak w tabeli.
+        dialog = IndicatorExportDialog(
+            self, row_count=len(self._visible_rows), config=self.config
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        columns = dialog.selected_columns()
+        separator = dialog.separator()
+        header = dialog.include_header()
+
+        # Zapamiętujemy wybór na następny raz.
+        if isinstance(self.config, dict):
+            self.config["wskaznik_export_columns"] = list(columns)
+            self.config["wskaznik_export_separator"] = separator
+            self.config["wskaznik_export_header"] = header
+
         path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Zapisz zestawienie wskaźnika",
-            "wskaznik_dzialek.csv",
-            "Plik CSV (*.csv);;Plik tekstowy (*.txt)",
+            "wskaznik_dzialek.txt",
+            "Plik tekstowy (*.txt);;Plik CSV (*.csv)",
         )
         if not path:
             return
         try:
             if path.lower().endswith(".csv") or "CSV" in selected_filter:
+                labels = EXPORT_COLUMN_LABELS
                 with open(path, "w", encoding="utf-8-sig", newline="") as handle:
                     writer = csv.writer(handle, delimiter=";")
-                    writer.writerow([label for _, label, _ in COLUMNS])
+                    if header:
+                        writer.writerow([labels[field] for field in columns])
                     for row in self._visible_rows:
-                        writer.writerow([row.get(field, "") for field, _, _ in COLUMNS])
+                        writer.writerow([row.get(field, "") for field in columns])
             else:
                 text = format_indicator_export(
                     self._visible_rows,
-                    columns=[field for field, _, _ in COLUMNS],
-                    separator="\t",
-                    header=True,
+                    columns=columns,
+                    separator=separator,
+                    header=header,
                 )
                 Path(path).write_text(text + "\n", encoding="utf-8")
         except Exception as exc:

@@ -422,6 +422,19 @@ def indicator_summary(
     }
 
 
+# Nagłówki kolumn używane przy zapisie do pliku i w podglądzie.
+EXPORT_COLUMN_LABELS: dict[str, str] = {
+    "number": "Nr działki",
+    "identifier": "Identyfikator działki",
+    "precinct": "Obręb",
+    "precinct_number": "Nr obrębu",
+    "municipality": "Jednostka ewidencyjna",
+    "county": "Powiat",
+    "voivodeship": "Województwo",
+    "note": "Notatka",
+}
+
+
 def format_indicator_export(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -432,16 +445,7 @@ def format_indicator_export(
     """Buduje tekst do zapisania w pliku TXT/CSV lub skopiowania do schowka."""
 
     selected_columns = tuple(columns)
-    labels = {
-        "number": "Nr działki",
-        "identifier": "Identyfikator",
-        "precinct": "Obręb",
-        "precinct_number": "Nr obrębu",
-        "municipality": "Jednostka ewidencyjna",
-        "county": "Powiat",
-        "voivodeship": "Województwo",
-        "note": "Notatka",
-    }
+    labels = EXPORT_COLUMN_LABELS
 
     lines: list[str] = []
     if header:

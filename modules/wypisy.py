@@ -129,6 +129,12 @@ class AddOwnerDialog(QDialog):
         self.share_edit = QLineEdit(o.get('share', '1/1'))
         layout.addRow('Udział:', self.share_edit)
 
+        self.ownership_form_edit = QLineEdit(o.get('ownership_form', ''))
+        self.ownership_form_edit.setPlaceholderText(
+            'np. współwłasność, wspólność ustawowa, udział łączny'
+        )
+        layout.addRow('Forma władania:', self.ownership_form_edit)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -159,6 +165,7 @@ class AddOwnerDialog(QDialog):
             'county': self.county_edit.text().strip(), 'municipality': self.municipality_edit.text().strip(),
             'precinct': self.precinct_edit.text().strip(), 'precinct_number': self.precinct_num_edit.text().strip(), 'parcel_numbers': parcels,
             'total_area_ha': area, 'kw_numbers': kws, 'share': self.share_edit.text().strip(),
+            'ownership_form': self.ownership_form_edit.text().strip(),
             'parcels': [{'number': n, 'area_ha': 0.0, 'kw': kws[i] if i < len(kws) else (kws[-1] if kws else '')} for i, n in enumerate(parcels)],
             'is_dead': False, 'is_institution': False, 'is_company': False, 'is_spolka': False, 'is_church': False, 'is_couple': False
         }
@@ -771,6 +778,7 @@ class OwnersListWidget(QWidget):
                 f"Nr Obrębu: {o.get('precinct_number', '')}",
                 f"Pow. łącznie: {format_area_pl(o.get('total_area_ha', 0))} ha",
                 f"Udział: {o.get('share', '1/1')}",
+                f"Forma władania: {self._owner_table_value(o, 'ownership_form')}",
                 "Działki i Księgi Wieczyste:"
             ] + parcels_info
             

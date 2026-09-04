@@ -173,3 +173,30 @@ class PreviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewProjectDialogWiringTests(unittest.TestCase):
+    """Okno „Nowy projekt” ma mieć wybór separatora pod ręką."""
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.source = (root / "modules" / "projekty.py").read_text(encoding="utf-8")
+
+    def test_dialog_offers_the_separator_choice(self):
+        self.assertIn("separator_combo", self.source)
+        self.assertIn("SYMBOL_SEPARATOR_CHOICES", self.source)
+
+    def test_dash_and_underscore_are_available(self):
+        from utils.project_naming import SYMBOL_SEPARATOR_CHOICES
+
+        values = {value for _label, value in SYMBOL_SEPARATOR_CHOICES}
+        self.assertIn("-", values)
+        self.assertIn("_", values)
+        self.assertIn(".", values)
+
+    def test_preview_uses_the_choice_from_the_dialog(self):
+        self.assertIn("_folder_config", self.source)
+
+    def test_created_folder_matches_the_preview(self):
+        self.assertIn("vals.get('folder_name')", self.source)

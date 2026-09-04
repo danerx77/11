@@ -150,19 +150,39 @@ def identifier_matches_parcel(identifier: Any, parcel_number: Any) -> bool:
 
 # ── Forma władania i udział ──────────────────────────────────────────
 
-# Formy spotykane w wypisach.
+# Formy spotykane w wypisach. Kolejność ma znaczenie: dłuższe i bardziej
+# szczegółowe napisy sprawdzamy przed krótszymi, żeby "współwłasność" nie
+# została rozpoznana jako "własność".
 _OWNERSHIP_FORMS: tuple[str, ...] = (
-    "współwłasność",
+    "wspólność ustawowa majątkowa małżeńska",
     "wspólność ustawowa",
-    "wspólnosc ustawowa",
-    "własność",
+    "współwłasność ustawowa",
+    "współwłasność w częściach ułamkowych",
+    "współwłasność łączna",
+    "współwłasność",
+    "współużytkowanie wieczyste",
     "użytkowanie wieczyste",
+    "udział łączny",
     "trwały zarząd",
     "posiadanie samoistne",
     "posiadanie zależne",
     "dzierżawa",
-    "udział łączny",
+    "władanie",
+    "własność",
 )
+
+# Wypisy bywają drukowane bez polskich znaków ("wspolnosc ustawowa",
+# "udzial laczny"), więc porównujemy napisy po zdjęciu ogonków.
+_DIACRITICS = str.maketrans(
+    "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ"
+)
+
+
+def _fold(value: str) -> str:
+    """Sprowadza napis do postaci bez ogonków i bez wielkich liter."""
+
+    return " ".join(str(value or "").translate(_DIACRITICS).lower().split())
+
 
 _SHARE = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
 
@@ -180,17 +200,52 @@ def normalize_share(value: Any) -> str:
 
 
 def extract_ownership_form(text: Any) -> str:
-    """Wyszukuje formę władania w tekście wypisu."""
+    """Wyszukuje formę władania w tekście wypisu.
 
-    raw = "" if text is None else str(text)
-    lowered = raw.lower()
+    Działa niezależnie od polskich znaków — „wspolnosc ustawowa” z wypisu
+    drukowanego bez ogonków zostanie rozpoznana tak samo jak „wspólność
+    ustawowa”. Zwracany zapis jest zawsze kanoniczny, z ogonkami.
+    """
+
+    folded = _fold(text)
+    if not folded:
+        return ""
     for form in _OWNERSHIP_FORMS:
-        if form in lowered:
-            # Zwracamy zapis w formie kanonicznej (z polskimi znakami).
-            if form == "wspólnosc ustawowa":
-                return "wspólność ustawowa"
+        if _fold(form) in folded:
             return form
     return ""
+
+
+def extract_ownership_forms(text: Any) -> list[str]:
+    """Zwraca wszystkie formy władania znalezione w tekście.
+
+    Wypis potrafi podać dwie informacje naraz, np. „wspólność ustawowa”
+    i „współwłasność” albo „udział łączny” i „współwłasność”. Zwracamy je
+    w kolejności występowania w dokumencie, bez powtórzeń.
+    """
+
+    folded = _fold(text)
+    if not folded:
+        return []
+    found: list[tuple[int, str]] = []
+    used: list[str] = []
+    for form in _OWNERSHIP_FORMS:
+        needle = _fold(form)
+        position = folded.find(needle)
+        if position < 0:
+            continue
+        # "współwłasność" nie może się zdublować z "współwłasność łączna".
+        if any(needle in _fold(other) or _fold(other) in needle for other in used):
+            continue
+        used.append(form)
+        found.append((position, form))
+    return [form for _position, form in sorted(found)]
+
+
+def combine_ownership_forms(text: Any) -> str:
+    """Skleja znalezione formy władania w jeden opis do kolumny tabeli."""
+
+    return ", ".join(extract_ownership_forms(text))
 
 
 def parse_ownership_line(line: Any) -> dict[str, str]:

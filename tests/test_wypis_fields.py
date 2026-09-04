@@ -13,6 +13,7 @@ from utils.wypis_fields import (  # noqa: E402
     MODE_KEEP_CITY,
     MUNICIPALITY_MODE_CHOICES,
     MUNICIPALITY_MODE_KEY,
+    combine_ownership_forms,
     extract_ownership_form,
     format_municipality,
     format_municipality_for_config,
@@ -242,3 +243,64 @@ class WypisTableWiringTests(unittest.TestCase):
         """Po dodaniu kolumny edycja nie może zapisywać do złego pola."""
         self.assertIn("13: 'ownership_form'", self.source)
         self.assertIn("22: 'precinct_number'", self.source)
+
+
+class OwnershipWithoutDiacriticsTests(unittest.TestCase):
+    """Wypisy bywają drukowane bez ogonków — zgłoszenie ze zrzutu ekranu."""
+
+    def test_forms_from_the_users_screenshot(self):
+        cases = {
+            "udzial laczny": "udział łączny",
+            "wspolnosc ustawowa": "wspólność ustawowa",
+            "wspolwlasnosc": "współwłasność",
+            "wlasnosc": "własność",
+            "uzytkowanie wieczyste": "użytkowanie wieczyste",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(extract_ownership_form(raw), expected)
+
+    def test_uppercase_is_recognized(self):
+        self.assertEqual(extract_ownership_form("WSPOLWLASNOSC"), "współwłasność")
+
+    def test_wspolwlasnosc_is_not_mistaken_for_wlasnosc(self):
+        self.assertEqual(extract_ownership_form("wspolwlasnosc"), "współwłasność")
+
+    def test_multiline_entry_from_the_screenshot(self):
+        block = "udzial laczny\n14/48\nwspółwłasność"
+        self.assertEqual(
+            combine_ownership_forms(block), "udział łączny, współwłasność"
+        )
+
+    def test_second_multiline_entry(self):
+        block = "wspolnosc ustawowa\n1/24\nwspółwłasność"
+        self.assertEqual(
+            combine_ownership_forms(block), "wspólność ustawowa, współwłasność"
+        )
+
+    def test_single_form_stays_single(self):
+        self.assertEqual(combine_ownership_forms("1/48\nwspółwłasność"), "współwłasność")
+
+    def test_plain_ownership(self):
+        self.assertEqual(combine_ownership_forms("1/1\nwłasność"), "własność")
+
+    def test_no_form_gives_empty(self):
+        self.assertEqual(combine_ownership_forms("1/1\nbrak danych"), "")
+
+
+class OwnershipInDetailsTests(unittest.TestCase):
+    """Forma władania ma być też w szczegółach i w oknie edycji."""
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.source = (root / "modules" / "wypisy.py").read_text(encoding="utf-8")
+
+    def test_details_panel_shows_the_form(self):
+        self.assertIn('f"Forma władania:', self.source)
+
+    def test_edit_dialog_has_the_field(self):
+        self.assertIn("ownership_form_edit", self.source)
+
+    def test_edit_dialog_saves_the_field(self):
+        self.assertIn("'ownership_form': self.ownership_form_edit", self.source)
