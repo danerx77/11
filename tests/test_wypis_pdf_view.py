@@ -1623,3 +1623,111 @@ class PodswietlanieNaglowkaTests(unittest.TestCase):
             self.dialog.table.horizontalHeader().sectionsClickable()
         )
 
+
+class WieleStronITabelaTests(unittest.TestCase):
+    """Runda 28: ciasne kolumny i wypisy na kilku stronach."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+
+        import fitz
+
+        cls._dir = tempfile.mkdtemp()
+        cls.pdf = str(Path(cls._dir) / "dwie_strony.pdf")
+        doc = fitz.open()
+        strona1 = [
+            "G R U N T Y",
+            "",
+            "Numer          POWIERZCHNIA w ha        Numer",
+            "dzialki        Uzytkow i klas  Dzialki  KW",
+            "27/176         0.0235          0.0235   GD1R/00012345/6",
+        ]
+        strona2 = [
+            "B U D Y N K I",
+            "",
+            "Numer dzialki      Powierzchnia zabudowy",
+            "99/12              0.0450",
+            "Wlasciciel   Anna Nowak",
+        ]
+        for tresc in (strona1, strona2):
+            page = doc.new_page()
+            y = 60
+            for linia in tresc:
+                page.insert_text((40, y), linia, fontsize=8)
+                y += 18
+        doc.save(cls.pdf)
+        doc.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+
+        shutil.rmtree(cls._dir, ignore_errors=True)
+
+    def _linie(self):
+        from modules.wypis_pdf_view import read_pdf_text
+
+        return read_pdf_text(self.pdf).split("\n")
+
+    def _kolumny(self, fragment: str):
+        from utils.wypis_profiles import _split_columns
+
+        for linia in self._linie():
+            if fragment in linia:
+                return [tekst for _start, tekst in _split_columns(linia)]
+        raise AssertionError(f"brak linii z {fragment!r}")
+
+    def test_ciasne_kolumny_nie_sklejaja_sie(self):
+        # „0.0235” i numer KW dzieli wąska przerwa — wcześniej program
+        # widział to jako jedną wartość „0.0235 GD1R/00012345/6”.
+        kolumny = self._kolumny("27/176")
+        self.assertIn("GD1R/00012345/6", kolumny)
+        self.assertNotIn("0.0235 GD1R/00012345/6", kolumny)
+
+    def test_numer_dzialki_jest_osobna_kolumna(self):
+        self.assertEqual(self._kolumny("27/176")[0], "27/176")
+
+    def test_slowa_jednej_nazwy_zostaja_razem(self):
+        # Kontrola w drugą stronę: „Anna Nowak” to jedna wartość.
+        self.assertIn("Anna Nowak", self._kolumny("Wlasciciel"))
+
+    def test_tekst_ma_oznaczenia_stron(self):
+        from modules.wypis_pdf_view import PAGE_MARK
+
+        tresc = "\n".join(self._linie())
+        self.assertIn(f"{PAGE_MARK} 1", tresc)
+        self.assertIn(f"{PAGE_MARK} 2", tresc)
+
+    def test_tekst_zawiera_dane_z_obu_stron(self):
+        tresc = "\n".join(self._linie())
+        self.assertIn("27/176", tresc)
+        self.assertIn("99/12", tresc)
+
+    def test_zmiana_strony_przewija_tekst(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        stary = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+        try:
+            from modules.wypis_pdf_view import PAGE_MARK
+            from modules.wypis_profil_dialog import WypisProfileDialog
+
+            dialog = WypisProfileDialog({})
+            dialog.show()
+            dialog.load_pdf_path(self.pdf)
+            dialog._change_page(1)
+
+            self.assertEqual(dialog._page_index, 1)
+            pozycja = dialog.text_view.textCursor().position()
+            self.assertTrue(
+                dialog.pdf_text[pozycja:].startswith(f"{PAGE_MARK} 2")
+            )
+        finally:
+            QMessageBox.information = stary
+
+    def test_obie_strony_daja_sie_wyswietlic(self):
+        from modules.wypis_pdf_view import page_count
+
+        self.assertEqual(page_count(self.pdf), 2)
+

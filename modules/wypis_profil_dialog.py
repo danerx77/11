@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from modules.wypis_pdf_view import (
+    PAGE_MARK,
     WypisPdfView,
     load_page,
     page_count,
@@ -1771,6 +1772,37 @@ class WypisProfileDialog(QDialog):
         if 0 <= new_index < self._page_total:
             self._page_index = new_index
             self._load_page_view()
+            self._scroll_text_to_page(new_index)
+
+    def _page_of_value(self, etykieta: str) -> int:
+        """Numer strony, na której stoi dana etykieta (0 = nie wiadomo)."""
+
+        if not etykieta or not self.pdf_text or self._page_total < 2:
+            return 0
+        pozycja = self.pdf_text.find(etykieta)
+        if pozycja < 0:
+            return 0
+        return self.pdf_text.count(PAGE_MARK, 0, pozycja) or 1
+
+    def _scroll_text_to_page(self, index: int) -> None:
+        """Przewija zakładkę tekstową do wybranej strony.
+
+        Tekst zawiera wszystkie strony naraz, więc po zmianie strony
+        w podglądzie ustawiamy widok tekstu na tym samym miejscu.
+        """
+
+        if not self.pdf_text or self._page_total < 2:
+            return
+
+        znacznik = f"{PAGE_MARK} {index + 1} "
+        pozycja = self.pdf_text.find(znacznik)
+        if pozycja < 0:
+            return
+
+        kursor = self.text_view.textCursor()
+        kursor.setPosition(pozycja)
+        self.text_view.setTextCursor(kursor)
+        self.text_view.centerCursor()
 
     def _refresh_marks(self) -> None:
         """Rysuje ramki pól, które mają już przypisane etykiety."""
@@ -2020,9 +2052,14 @@ class WypisProfileDialog(QDialog):
                 value_item.setText(odczyt)
                 value_item.setForeground(QColor("#e8eef4"))
                 # Długie wartości są przycinane w tabeli, więc pełną treść
-                # pokazujemy w podpowiedzi pod kursorem.
+                # pokazujemy w podpowiedzi pod kursorem. Przy wypisach
+                # wielostronicowych dopisujemy, z której strony pochodzi.
+                strona = self._page_of_value(data.get("matched_label", ""))
+                podpowiedz = f"{odczyt}\n\n" if odczyt else ""
+                if strona:
+                    podpowiedz += f"Znalezione na stronie {strona}.\n"
                 value_item.setToolTip(
-                    (f"{odczyt}\n\n" if odczyt else "")
+                    podpowiedz
                     + "Kliknij dwa razy, aby poprawić wartość ręcznie."
                 )
             pogrubienie = status == "ok" or reczna is not None

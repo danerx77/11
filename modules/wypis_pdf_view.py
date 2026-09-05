@@ -92,6 +92,10 @@ def load_page(pdf_path: str, page_number: int = 0, dpi: int = 96) -> PageData | 
         return None
 
 
+#: Nagłówek oddzielający strony w tekście wypisu.
+PAGE_MARK = "──────── STRONA"
+
+
 def read_pdf_text(pdf_path: str) -> str:
     """Zwraca tekst PDF z zachowanym układem wierszy.
 
@@ -131,8 +135,49 @@ def read_pdf_text(pdf_path: str) -> str:
                     else:
                         wiersze.append([slowo])
 
+                # Miejsca, w których zaczynają się kolumny tabeli. Zbieramy
+                # je z całej strony: jeśli w którymkolwiek wierszu zaczyna
+                # się tam nowa komórka, to jest granica kolumny. Bez tego
+                # „0.0235” i „GD1R/…” w wąsko rozstawionej tabeli sklejały
+                # się w jedną wartość, bo dzieliła je pojedyncza spacja.
+                # Kandydaci na granice kolumn, zapamiętani z numerem wiersza.
+                # Kolumna to miejsce, w którym komórki stoją jedna pod drugą
+                # w RÓŻNYCH wierszach — dzięki temu odstęp między słowami
+                # jednej nazwy („Anna Nowak”) nie udaje granicy.
+                granice: list[tuple[int, float]] = []
+                for numer_wiersza, wiersz in enumerate(wiersze):
+                    wiersz.sort(key=lambda w: w[0])
+                    for poprzednie, biezace in zip(wiersz, wiersz[1:]):
+                        przerwa = biezace[0] - poprzednie[2]
+                        szerokosc_znaku = max(
+                            (poprzednie[2] - poprzednie[0])
+                            / max(len(poprzednie[4]), 1),
+                            1.0,
+                        )
+                        if przerwa > szerokosc_znaku * 1.1:
+                            granice.append((numer_wiersza, biezace[0]))
+                    if wiersz:
+                        granice.append((numer_wiersza, wiersz[0][0]))
+
+                def _granica(x: float, moj_wiersz: int) -> bool:
+                    """Czy w tym miejscu zaczyna się kolumna tabeli?
+
+                    Szukamy potwierdzenia w INNYM wierszu: komórka musi
+                    mieć nad sobą lub pod sobą inną komórkę zaczynającą
+                    się w tym samym miejscu.
+                    """
+
+                    # Potwierdzeniem jest komórka w SĄSIEDNIM wierszu —
+                    # bezpośrednio nad albo pod naszą. Tak stoją rubryki
+                    # tabeli. Przypadkowa zbieżność z odległym wierszem
+                    # („Nowak” pod „Powierzchnia”) się nie liczy.
+                    return any(
+                        abs(wiersz - moj_wiersz) == 1 and abs(x - g) <= 3.0
+                        for wiersz, g in granice
+                    )
+
                 linie = []
-                for wiersz in wiersze:
+                for numer_wiersza, wiersz in enumerate(wiersze):
                     wiersz.sort(key=lambda w: w[0])
                     tekst = wiersz[0][4]
                     for poprzednie, biezace in zip(wiersz, wiersz[1:]):
@@ -142,13 +187,32 @@ def read_pdf_text(pdf_path: str) -> str:
                             / max(len(poprzednie[4]), 1),
                             1.0,
                         )
-                        # Szeroka przerwa = osobna kolumna tabeli.
-                        odstep = "   " if przerwa > szerokosc_znaku * 1.8 else " "
+                        # Szeroka przerwa albo początek znanej kolumny —
+                        # w obu wypadkach to osobna komórka tabeli.
+                        szeroka = przerwa > szerokosc_znaku * 1.8
+                        # Słowo zaczynające się w miejscu znanej kolumny to
+                        # nowa komórka, nawet gdy dzieli je wąska przerwa
+                        # („0.0235” i „GD1R/…” w ciasnej tabeli).
+                        odstep = (
+                            "   "
+                            if szeroka
+                            or (przerwa > 1.0 and _granica(biezace[0], numer_wiersza))
+                            else " "
+                        )
                         tekst += odstep + biezace[4]
                     linie.append(tekst)
                 strony.append("\n".join(linie))
     except Exception:  # pragma: no cover - zależne od pliku
         return ""
+
+    # Przy wielostronicowych wypisach wstawiamy widoczny podział, żeby
+    # w zakładce tekstowej było wiadomo, gdzie kończy się która strona.
+    if len(strony) > 1:
+        czesci = []
+        for numer, tresc in enumerate(strony, start=1):
+            czesci.append(f"{PAGE_MARK} {numer} {'─' * 40}")
+            czesci.append(tresc)
+        return "\n".join(czesci)
 
     return "\n".join(strony)
 

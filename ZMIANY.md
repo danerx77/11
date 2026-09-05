@@ -1418,6 +1418,34 @@ Styl wyłącza teraz reakcję nagłówka na kursor i na wciśnięcie, a komórki
 tabeli nie zmieniają tła pod myszą. Podświetlany jest wyłącznie zaznaczony
 wiersz.
 
+## 58. Ciasne kolumny nie sklejają się; wypisy wielostronicowe
+
+**Numer działki sklejał się z numerem księgi wieczystej.** W ciasno złożonych
+tabelach sąsiednie komórki dzieli przerwa niewiele większa od zwykłej spacji.
+Program uznawał je wtedy za jeden napis i pole „Powierzchnia” dostawało
+wartość `0.0235 KW GD1R/00012345/6` zamiast samego `0.0235`.
+
+Teraz granice kolumn rozpoznajemy z układu całej strony: miejsce jest granicą
+wtedy, gdy w **sąsiednim wierszu** — bezpośrednio nad albo pod — zaczyna się
+tam kolejna komórka. Tak stoją rubryki tabeli. Przypadkowy odstęp między
+słowami jednej nazwy („Anna Nowak”) nie powtarza się w wierszu obok, więc
+takie napisy pozostają w całości.
+
+| Fragment tabeli | Wcześniej | Teraz |
+|---|---|---|
+| `0.0235   GD1R/00012345/6` | ❌ jedna wartość | ✅ dwie kolumny |
+| `Właściciel   Anna Nowak` | ✅ | ✅ `Anna Nowak` razem |
+
+**Wypisy na kilku stronach.** Tekst dokumentu zawierał wszystkie strony
+sklejone jedna za drugą, bez śladu, gdzie kończy się która. Teraz w zakładce
+„📄 Tekst dokumentu” każda strona zaczyna się widocznym paskiem
+`──────── STRONA 2 ────────`, a przyciski ◀ ▶ nad podglądem przewijają tekst
+do tej samej strony, którą oglądasz. W podpowiedzi odczytanej wartości
+dopisujemy, na której stronie ją znaleziono.
+
+Odczyt pól obejmuje **cały dokument**, nie tylko pierwszą stronę — wartości
+z dalszych stron trafiają do tabeli tak samo jak te z pierwszej.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
