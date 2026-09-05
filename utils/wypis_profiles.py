@@ -1097,6 +1097,12 @@ def _extract_from_column(
                     continue
                 if _wyglada_na_naglowek(ponizej, profile):
                     continue
+                # Zawinięty ogon nagłówka („i klas” pod „Użytków i klas”):
+                # nie ma cyfry, a niżej stoi prawdziwy wiersz danych.
+                if not any(znak.isdigit() for znak in nizej) and _ma_dane_ponizej(
+                    lines, lines.index(nizej)
+                ):
+                    continue
                 # „Dwa pod spodem”: pomijamy pierwszy znaleziony wiersz
                 # danych i bierzemy następny (tabele z kilkoma wierszami).
                 if pomin > 0:
@@ -1180,14 +1186,14 @@ def _wyglada_na_naglowek(
     if not kolumny:
         return False
     teksty = [tekst for _start, tekst in kolumny]
-    # Dane prawie zawsze mają cyfrę (numer działki, powierzchnia, numer KW).
-    # Wiersz bez jednej cyfry, złożony z kilku krótkich napisów, to kolejne
-    # piętro nagłówka — nie wartość, której szukamy.
     if any(any(znak.isdigit() for znak in tekst) for tekst in teksty):
-        return False
-    if any(_looks_like_label(tekst, profile) for tekst in teksty):
+        return False          # jest cyfra — to dane
+    # Bez cyfr: jedna komórka to zwykła wartość tekstowa („Jan Kowalski”).
+    # Kilka komórek obok siebie to kolejne piętro nagłówka albo jego
+    # zawinięty ogon („i klas” pod „Użytków”), a nie wiersz danych.
+    if len(teksty) >= 2:
         return True
-    return len(teksty) >= 2
+    return any(_looks_like_label(tekst, profile) for tekst in teksty)
 
 
 def _extract_from_left(

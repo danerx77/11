@@ -1480,6 +1480,30 @@ filtrem, zanim dotrą do tabeli, więc nic się nie rozjaśnia.
 **Paski „STRONA n” nie są mylone z danymi.** W wypisach wielostronicowych
 odczyt pomija linie oddzielające strony, zamiast brać je za wartość pola.
 
+## 60. Trzy usterki naprawione u źródła
+
+**Podświetlanie kolumn — przyczyną była moja poprawka.** Żeby wyłączyć
+rozjaśnianie nagłówka pod kursorem, dopisałem wcześniej do arkusza stylów
+reguły `QHeaderView::section:hover`. To był błąd: **sama obecność** reguły
+„:hover” każe Qt włączyć śledzenie myszy (flagę `WA_Hover`), więc poprawka
+włączała dokładnie to, co miała wyłączyć. Reguły zostały usunięte — bez nich
+Qt nie śledzi kursora i nic się nie podświetla.
+
+**Zmiana strony nie zmieniała odczytanych wartości.** Odczyt zawsze skanował
+cały dokument od początku, więc niezależnie od oglądanej strony w kolumnie
+„⑤ Odczytana wartość” stały te same dane. Teraz strona pokazana w podglądzie
+ma pierwszeństwo: jej treść trafia na początek analizy, a reszta dokumentu
+zostaje jako uzupełnienie (pola występujące tylko na innych stronach nadal się
+znajdują). Przełączenie strony przyciskami ◀ ▶ od razu przelicza tabelę —
+nie trzeba nawet klikać „🔄 Sprawdź ponownie”.
+
+**„Pod spodem” czytało zawinięty ogon nagłówka.** Gdy nazwa rubryki nie mieści
+się w jednej linii („Użytków i klas” łamane na „Użytków” i „i klas”), program
+brał drugą część za wartość i zwracał „i klas”. Teraz linia bez ani jednej
+cyfry, pod którą stoją prawdziwe dane, jest pomijana jako dalszy ciąg
+nagłówka. Wartości tekstowe bez cyfr („Jan Kowalski”) czytają się bez zmian,
+bo pod nimi nie ma już wiersza danych.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

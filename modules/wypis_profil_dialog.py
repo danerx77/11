@@ -248,18 +248,10 @@ class WypisProfileDialog(QDialog):
                 padding: 8px 6px;
                 font-weight: 700;
             }
-            /* Nagłówek ma stać spokojnie: bez rozjaśniania pod kursorem
-               i bez reakcji na wciśnięcie. Wcześniej najechanie myszą
-               podświetlało całą kolumnę. */
-            QHeaderView::section:hover,
-            QHeaderView::section:pressed,
-            QHeaderView::section:checked {
-                background: #1e3648;
-                color: #cfe0ee;
-            }
-            QTableWidget::item:hover {
-                background: transparent;
-            }
+            /* UWAGA: nie wolno tu wpisywać reguł „:hover” dla tabeli ani
+               nagłówka. Sama ich obecność każe Qt włączyć śledzenie myszy
+               (flaga WA_Hover) i wtedy kolumna rozjaśnia się pod kursorem.
+               Brak reguły = brak podświetlenia. */
             QComboBox, QLineEdit, QPlainTextEdit {
                 background: #1a2e3c;
                 color: #e6eef5;
@@ -1809,6 +1801,10 @@ class WypisProfileDialog(QDialog):
             self._page_index = new_index
             self._load_page_view()
             self._scroll_text_to_page(new_index)
+            # Po zmianie strony pokazujemy to, co stoi na TEJ stronie.
+            if self.pdf_text:
+                self._analyze()
+                self._refresh_marks()
 
     def _page_of_value(self, etykieta: str) -> int:
         """Numer strony, na której stoi dana etykieta (0 = nie wiadomo)."""
@@ -2062,6 +2058,31 @@ class WypisProfileDialog(QDialog):
             break
         return ""
 
+    def _text_for_analysis(self) -> str:
+        """Tekst do odczytu, z oglądaną stroną na początku.
+
+        Wypis czytamy z całego dokumentu, ale strona pokazana w podglądzie
+        ma pierwszeństwo. Dzięki temu przełączenie strony naprawdę zmienia
+        to, co widać w kolumnie „Odczytana wartość”, a pola występujące
+        tylko na innych stronach nadal się znajdują.
+        """
+
+        if not self.pdf_text or self._page_total < 2:
+            return self.pdf_text
+
+        czesci = self.pdf_text.split(PAGE_MARK)
+        strony = [f"{PAGE_MARK}{czesc}" for czesc in czesci[1:]]
+        if not (0 <= self._page_index < len(strony)):
+            return self.pdf_text
+
+        biezaca = strony[self._page_index]
+        pozostale = [
+            strona
+            for numer, strona in enumerate(strony)
+            if numer != self._page_index
+        ]
+        return "\n".join([biezaca, *pozostale])
+
     def _reread_and_analyze(self) -> None:
         """Czyta PDF od nowa i przelicza wszystkie pola.
 
@@ -2104,7 +2125,10 @@ class WypisProfileDialog(QDialog):
             return
 
         profile = self._current_profile()
-        rows = {r["field"]: r for r in analyze_text(self.pdf_text, profile)}
+        rows = {
+            r["field"]: r
+            for r in analyze_text(self._text_for_analysis(), profile)
+        }
 
         self._loading = True
         for row in range(self.table.rowCount()):

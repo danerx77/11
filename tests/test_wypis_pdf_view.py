@@ -1610,13 +1610,24 @@ class PodswietlanieNaglowkaTests(unittest.TestCase):
 
         QMessageBox.information = self._info
 
-    def test_styl_wylacza_podswietlenie_naglowka(self):
-        styl = self.dialog.styleSheet()
-        self.assertIn("QHeaderView::section:hover", styl)
+    def test_naglowek_nie_sledzi_kursora(self):
+        # Sedno sprawy: sama obecność reguły „:hover” w arkuszu każe Qt
+        # włączyć WA_Hover i wtedy kolumna rozjaśnia się pod myszą.
+        from PySide6.QtCore import Qt
 
-    def test_styl_wylacza_podswietlenie_komorek(self):
+        naglowek = self.dialog.table.horizontalHeader()
+        self.assertFalse(naglowek.testAttribute(Qt.WidgetAttribute.WA_Hover))
+
+    def test_komorki_nie_sledza_kursora(self):
+        from PySide6.QtCore import Qt
+
+        widok = self.dialog.table.viewport()
+        self.assertFalse(widok.testAttribute(Qt.WidgetAttribute.WA_Hover))
+
+    def test_arkusz_nie_ma_regul_hover_dla_tabeli(self):
         styl = self.dialog.styleSheet()
-        self.assertIn("QTableWidget::item:hover", styl)
+        self.assertNotIn("QHeaderView::section:hover", styl)
+        self.assertNotIn("QTableWidget::item:hover", styl)
 
     def test_naglowek_nie_sledzi_myszy(self):
         self.assertFalse(
@@ -1730,4 +1741,95 @@ class WieleStronITabelaTests(unittest.TestCase):
         from modules.wypis_pdf_view import page_count
 
         self.assertEqual(page_count(self.pdf), 2)
+
+
+class ZmianaStronyOdczytTests(unittest.TestCase):
+    """Runda 30: zmiana strony ma zmieniać odczytane wartości."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+
+        import fitz
+
+        cls._dir = tempfile.mkdtemp()
+        cls.pdf = str(Path(cls._dir) / "dwie.pdf")
+        doc = fitz.open()
+        for tytul, numer, powierzchnia in (
+            ("S T R O N A 1", "27/176", "0.0235"),
+            ("S T R O N A 2", "99/12", "0.9999"),
+        ):
+            page = doc.new_page()
+            y = 60
+            for linia in (
+                tytul,
+                "",
+                "Numer dzialki     Powierzchnia",
+                f"{numer}            {powierzchnia}",
+            ):
+                page.insert_text((40, y), linia, fontsize=9)
+                y += 20
+        doc.save(cls.pdf)
+        doc.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+
+        shutil.rmtree(cls._dir, ignore_errors=True)
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+        from utils.wypis_profiles import normalize_profile
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.chk_auto.setChecked(False)
+        self.dialog.profiles.append(
+            normalize_profile(
+                {
+                    "name": "T",
+                    "fields": {
+                        "parcel_number": ["Numer dzialki"],
+                        "area": ["Powierzchnia"],
+                    },
+                }
+            )
+        )
+        self.dialog._reload_profile_combo("T")
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _wartosc(self, nazwa):
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return self.dialog.table.item(row, 4).text()
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def test_pierwsza_strona_pokazuje_swoje_dane(self):
+        self.assertEqual(self._wartosc("Numer działki"), "27/176")
+
+    def test_zmiana_strony_zmienia_wartosci(self):
+        self.dialog._change_page(1)
+        self.assertEqual(self._wartosc("Numer działki"), "99/12")
+        self.assertEqual(self._wartosc("Powierzchnia"), "0.9999")
+
+    def test_powrot_na_pierwsza_strone_przywraca_dane(self):
+        self.dialog._change_page(1)
+        self.dialog._change_page(-1)
+        self.assertEqual(self._wartosc("Numer działki"), "27/176")
+
+    def test_sprawdz_ponownie_zachowuje_biezaca_strone(self):
+        self.dialog._change_page(1)
+        self.dialog._reread_and_analyze()
+        self.assertEqual(self._wartosc("Numer działki"), "99/12")
 

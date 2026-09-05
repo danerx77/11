@@ -1142,3 +1142,49 @@ class NoweKierunkiTests(unittest.TestCase):
             extract_field(tekst, profil, "parcel_number"), "27/176"
         )
 
+
+class ZawinietyNaglowekTests(unittest.TestCase):
+    """Runda 30: nagłówek zawinięty na dwie linie („Użytków” / „i klas”)."""
+
+    UKLAD = (
+        "POWIERZCHNIA w ha\n"
+        "Uzytkow   Dzialki\n"
+        "i klas\n"
+        "0.0235   0.0235\n"
+    )
+
+    def _czytaj(self, etykieta, kierunek="below"):
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "fields": {"area": [etykieta]},
+                "directions": {"area": kierunek},
+            }
+        )
+        return extract_field(self.UKLAD, profil, "area")
+
+    def test_nie_zwraca_ogona_naglowka(self):
+        # Wcześniej „Pod spodem” zwracało „i klas” — resztę zawiniętej
+        # nazwy rubryki, a nie wartość.
+        self.assertNotEqual(self._czytaj("POWIERZCHNIA w ha"), "i klas")
+
+    def test_czyta_liczbe_spod_naglowka(self):
+        self.assertEqual(self._czytaj("POWIERZCHNIA w ha"), "0.0235")
+
+    def test_czyta_liczbe_spod_podrubryki(self):
+        self.assertEqual(self._czytaj("Uzytkow"), "0.0235")
+
+    def test_wartosc_tekstowa_dalej_dziala(self):
+        # Kontrola w drugą stronę: nazwisko nie ma cyfr, ale jest wartością.
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "fields": {"owner": ["Wlasciciel"]},
+                "directions": {"owner": "below"},
+            }
+        )
+        self.assertEqual(
+            extract_field("Wlasciciel\nJan Kowalski\n", profil, "owner"),
+            "Jan Kowalski",
+        )
+
