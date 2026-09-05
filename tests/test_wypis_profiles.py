@@ -558,3 +558,87 @@ class LabelBoundaryTests(unittest.TestCase):
             extract_field("Nr KW: GD1G/00098765/1", profile, "kw"),
             "GD1G/00098765/1",
         )
+
+
+class PionowaListaOdczytTests(unittest.TestCase):
+    """Runda 19: odczyt z listy pól „etykieta   wartość” bez dwukropków."""
+
+    TEKST = (
+        "Wojewodztwo   POMORSKIE\n"
+        "Powiat   kartuski\n"
+        "Gmina   Zukowo\n"
+        "Jednostka ewidencyjna   221509_2, Szemud\n"
+        "Obreb   0019, BOJANO\n"
+    )
+
+    def setUp(self):
+        self.profil = normalize_profile(
+            {
+                "name": "pionowy",
+                "fields": {
+                    "voivodeship": ["Województwo"],
+                    "county": ["Powiat"],
+                    "municipality": ["Gmina"],
+                    "identifier": ["Jednostka ewidencyjna"],
+                    "precinct": ["Obręb"],
+                },
+            }
+        )
+
+    def test_kazde_pole_czyta_wartosc_ze_swojego_wiersza(self):
+        for pole, oczekiwane in (
+            ("voivodeship", "POMORSKIE"),
+            ("county", "kartuski"),
+            ("municipality", "Zukowo"),
+            ("identifier", "221509_2, Szemud"),
+            ("precinct", "0019, BOJANO"),
+        ):
+            with self.subTest(pole=pole):
+                self.assertEqual(
+                    extract_field(self.TEKST, self.profil, pole), oczekiwane
+                )
+
+    def test_nie_bierze_nazwy_kolejnego_pola_jako_wartosci(self):
+        # „Gmina” ma pod sobą „Jednostka ewidencyjna” — to nie jest wartość.
+        self.assertNotEqual(
+            extract_field(self.TEKST, self.profil, "municipality"),
+            "Jednostka ewidencyjna",
+        )
+
+
+class KratkaNieMylonaZListaTests(unittest.TestCase):
+    """Tabela w kratkę nadal czyta wartości z wiersza pod nagłówkiem."""
+
+    TEKST = (
+        "Obreb   Nr dzialki   Pow. [ha]   Opis uzytku\n"
+        "0019, BOJANO   145/7   0.0235   dr\n"
+        "0019, BOJANO   145/8   0.1120   RIVa\n"
+    )
+
+    def setUp(self):
+        self.profil = normalize_profile(
+            {
+                "name": "kratka",
+                "fields": {
+                    "precinct": ["Obręb"],
+                    "parcel_number": ["Nr działki"],
+                    "area": ["Pow. [ha]"],
+                },
+            }
+        )
+
+    def test_wartosci_spod_naglowkow(self):
+        for pole, oczekiwane in (
+            ("precinct", "0019, BOJANO"),
+            ("parcel_number", "145/7"),
+            ("area", "0.0235"),
+        ):
+            with self.subTest(pole=pole):
+                self.assertEqual(
+                    extract_field(self.TEKST, self.profil, pole), oczekiwane
+                )
+
+    def test_nie_bierze_sasiedniego_naglowka_jako_wartosci(self):
+        self.assertNotEqual(
+            extract_field(self.TEKST, self.profil, "area"), "Opis uzytku"
+        )

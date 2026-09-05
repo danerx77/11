@@ -1125,6 +1125,39 @@ i rozszerzany do słowa pod kursorem, żeby dało się wskazać jedną liczbę.
 `tests/test_wypis_pdf_view.py` — 97 testów (+14 na obszary). Razem
 **526 testów** (było 512).
 
+## 49. Koniec z „blokowaniem" na polu wyżej + rysowanie etykiety
+
+**Zgłoszenie:** przy polach wypisanych jedno pod drugim („Województwo",
+„Powiat", „Gmina", „Jednostka ewidencyjna", „Obręb") najechanie na
+„Obręb" podświetlało **„Województwo"**, a podpowiedź pokazywała inną
+wartość niż ta pod kursorem. Druga prośba: żeby prostokąt dało się
+narysować także wokół **etykiety**, nie tylko wokół wartości.
+
+**Co było nie tak.** Program szukał nazwy pola nad kliknięciem (to jest
+potrzebne w tabelach w kratkę) i w pionowej liście brał pierwszy wiersz
+z góry — czyli zawsze „Województwo". Dodatkowo wiersz wyznaczany był po
+numerze linii z PDF-a, a w wielu wypisach etykieta i wartość to osobne
+linie, więc „Województwo" i „POMORSKIE" nie trafiały do jednego wiersza.
+
+**Poprawki:**
+
+- Wiersz wyznaczamy teraz **po wysokości na stronie**, a nie po numerze
+  linii — etykieta i wartość z tej samej wysokości trafiają razem.
+- Nazwy pola szukamy nad kliknięciem **tylko w tabeli**: wiersz musi mieć
+  co najmniej dwie kolumny, a jego pierwsza komórka musi wyglądać na daną
+  (zawierać cyfrę). W pionowej liście pierwsza komórka to nazwa pola,
+  więc etykieta brana jest **z lewej strony tego samego wiersza**.
+- Klik w sam nagłówek tabeli zwraca **ten** nagłówek, a nie sąsiedni.
+- Odczyt tekstu rozumie układ „etykieta   wartość" bez dwukropka i nie
+  bierze nazwy kolejnego pola jako wartości (dawniej „Gmina" potrafiła
+  wczytać „Jednostka ewidencyjna").
+
+**Nowy tryb „🏷️🔲 ETYKIETA (rysuj)".** Czwarty przycisk nad podglądem.
+Przeciągasz prostokąt wokół nazwy pola na dokumencie, a jej tekst trafia
+do kolumny **② Etykiety w PDF** zaznaczonego wiersza. Działa też tam,
+gdzie dopasowanie po tekście zawodzi — bo liczy się to, co zaznaczysz,
+a nie to, co program zgadnie.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

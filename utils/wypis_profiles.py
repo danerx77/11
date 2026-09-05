@@ -612,10 +612,31 @@ def extract_field(
             # stoi sama w wierszu. Inaczej w tabeli w kratkę wzięlibyśmy
             # sąsiedni nagłówek zamiast danych spod spodu.
             if len(_split_columns(line)) <= 1:
+                # Jeśli etykieta stoi jako pierwsza kolumna, a obok niej
+                # jest już wartość, nie zaglądamy do następnej linii —
+                # tam zaczyna się kolejne pole („Jednostka ewidencyjna”).
+                kolumny_linii = _split_columns(line)
+                if len(kolumny_linii) >= 2 and any(
+                    _fold(kolumny_linii[0][1]) == _fold(label)
+                    for label in labels
+                ):
+                    obok = kolumny_linii[1][1].strip(" :,;-")
+                    if obok and not _looks_like_label(obok, profile):
+                        return obok[:max_length]
+                    continue
+
                 for nxt in lines[index + 1: index + 3]:
                     candidate = _value_until_next_column(nxt, inne_etykiety)
                     if candidate and not _looks_like_label(candidate, profile):
                         return candidate[:max_length]
+
+    # Pionowa lista pól bez dwukropków — „Województwo   POMORSKIE”.
+    # Etykieta jest pierwszą kolumną, wartość następną w TYM SAMYM wierszu.
+    # Sprawdzamy to PRZED tabelą, bo inaczej jako wartość wzięlibyśmy
+    # nazwę kolejnego pola z wiersza poniżej.
+    obok = _extract_from_same_row(lines, labels, profile)
+    if obok:
+        return obok[:max_length]
 
     # Tabela w kratkę: etykieta stoi w nagłówku kolumny, a wartość
     # w wierszu poniżej, w tej samej kolumnie znakowej.
@@ -623,6 +644,42 @@ def extract_field(
     if kolumnowa:
         return kolumnowa[:max_length]
 
+    return ""
+
+
+def _extract_from_same_row(
+    lines: list[str],
+    labels: Iterable[str],
+    profile: Mapping[str, Any] | None,
+) -> str:
+    """Czyta wartość stojącą obok etykiety w tym samym wierszu.
+
+    Dotyczy wypisów, w których pola są wypisane jedno pod drugim bez
+    dwukropka, a wartość oddziela od nazwy tylko odstęp.
+    """
+
+    for line in lines:
+        if not line.strip():
+            continue
+        kolumny = _split_columns(line)
+        if len(kolumny) < 2:
+            continue
+
+        # Wiersz nagłówków tabeli w kratkę („Obręb  Nr działki  Pow. [ha]”)
+        # — wartości stoją tam pod spodem, nie obok. Poznajemy go po tym,
+        # że co najmniej dwie kolumny są nazwami pól.
+        nazwy = sum(
+            1 for _start, tekst in kolumny if _looks_like_label(tekst, profile)
+        )
+        if nazwy >= 2:
+            continue
+
+        for pozycja, (_start, tekst) in enumerate(kolumny[:-1]):
+            if not any(_fold(tekst) == _fold(label) for label in labels):
+                continue
+            wartosc = kolumny[pozycja + 1][1].strip(" :,;-")
+            if wartosc and not _looks_like_label(wartosc, profile):
+                return wartosc
     return ""
 
 

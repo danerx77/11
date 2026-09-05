@@ -58,6 +58,35 @@ def setUpModule():  # noqa: N802 - nazwa wymagana przez unittest
 @unittest.skipIf(
     QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
 )
+
+def _pionowy_wypis():
+    """Wypis z polami jeden pod drugim (jak na zrzucie użytkownika)."""
+
+    try:
+        import fitz
+    except ImportError:
+        return None
+
+    wiersze = [
+        ("Wojewodztwo", "POMORSKIE"),
+        ("Powiat", "kartuski"),
+        ("Gmina", "Zukowo"),
+        ("Jednostka ewidencyjna", "221509_2, Szemud"),
+        ("Obreb", "0019, BOJANO"),
+    ]
+    doc = fitz.open()
+    strona = doc.new_page()
+    y = 90
+    for etykieta, wartosc in wiersze:
+        strona.insert_text((50, y), etykieta, fontsize=11)
+        strona.insert_text((230, y), wartosc, fontsize=11)
+        y += 34
+    katalog = tempfile.mkdtemp()
+    sciezka = str(Path(katalog) / "pion.pdf")
+    doc.save(sciezka)
+    doc.close()
+    return sciezka
+
 class PodgladStronyTests(unittest.TestCase):
     FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
@@ -1117,3 +1146,69 @@ class SkladanieTekstuTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PionowaListaPolTests(unittest.TestCase):
+    """Runda 19: pionowa lista pól — klik nie może trafiać w pole wyżej."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pdf = _pionowy_wypis()
+        cls.page = load_page(cls.pdf) if cls.pdf else None
+
+    def _klik(self, tekst):
+        slowo = next(w for w in self.page.words if tekst in w.text)
+        punkt = QPoint(
+            int(slowo.rect.center().x()), int(slowo.rect.center().y())
+        )
+        return label_at(self.page, punkt)
+
+    def test_kazde_pole_zwraca_siebie_a_nie_pole_wyzej(self):
+        if self.page is None:
+            self.skipTest("brak PyMuPDF")
+        for nazwa in ("Wojewodztwo", "Powiat", "Gmina", "Obreb"):
+            with self.subTest(pole=nazwa):
+                self.assertEqual(self._klik(nazwa)["label"], nazwa)
+
+    def test_klik_w_wartosc_zwraca_etykiete_z_tego_samego_wiersza(self):
+        if self.page is None:
+            self.skipTest("brak PyMuPDF")
+        for wartosc, etykieta in (
+            ("POMORSKIE", "Wojewodztwo"),
+            ("kartuski", "Powiat"),
+            ("BOJANO", "Obreb"),
+        ):
+            with self.subTest(wartosc=wartosc):
+                trafienie = self._klik(wartosc)
+                self.assertEqual(trafienie["label"], etykieta)
+                self.assertIn(wartosc, trafienie["value"])
+
+    def test_naglowek_nie_jest_brany_z_gory_listy(self):
+        if self.page is None:
+            self.skipTest("brak PyMuPDF")
+        self.assertNotEqual(self._klik("Obreb")["label"], "Wojewodztwo")
+
+
+class NaglowekKolumnyTests(TabelaWKratkeTests):
+    """Klik w sam nagłówek tabeli zwraca ten nagłówek, nie sąsiedni."""
+
+    def test_naglowki_zwracaja_same_siebie(self):
+        if self.page is None:
+            self.skipTest("brak PyMuPDF")
+        for tekst, oczekiwany in (
+            ("dzialki", "Nr dzialki"),
+            ("uzytku", "Opis uzytku"),
+        ):
+            with self.subTest(naglowek=tekst):
+                self.assertEqual(self._klik(tekst)["label"], oczekiwany)
+
+    def test_dane_wciaz_znajduja_naglowek_nad_soba(self):
+        if self.page is None:
+            self.skipTest("brak PyMuPDF")
+        for tekst, oczekiwany in (
+            ("0.0235", "Pow. [ha]"),
+            ("145/8", "Nr dzialki"),
+            ("RIVa", "Opis uzytku"),
+        ):
+            with self.subTest(wartosc=tekst):
+                self.assertEqual(self._klik(tekst)["label"], oczekiwany)

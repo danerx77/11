@@ -485,9 +485,25 @@ class WypisProfileDialog(QDialog):
         )
         self.btn_mode_area.toggled.connect(self._on_mode_changed)
 
+        self.btn_mode_area_label = QPushButton("🏷️🔲 ETYKIETA (rysuj)")
+        self.btn_mode_area_label.setCheckable(True)
+        self.btn_mode_area_label.setMinimumHeight(34)
+        self.btn_mode_area_label.setToolTip(
+            "Przeciągnij prostokąt wokół NAZWY pola na dokumencie.\n"
+            "Tekst z zaznaczenia trafi do kolumny „Etykiety w PDF”."
+        )
+        grupa.addButton(self.btn_mode_area_label)
+        self.btn_mode_area_label.setStyleSheet(
+            "QPushButton { padding: 4px 14px; font-weight: 600; }"
+            "QPushButton:checked { background: #16a085; color: #06231e;"
+            " border: 2px solid #6ff0d4; }"
+        )
+        self.btn_mode_area_label.toggled.connect(self._on_mode_changed)
+
         mode_row.addWidget(self.btn_mode_label)
         mode_row.addWidget(self.btn_mode_value)
         mode_row.addWidget(self.btn_mode_area)
+        mode_row.addWidget(self.btn_mode_area_label)
         mode_row.addStretch()
         page_layout.addLayout(mode_row)
 
@@ -764,6 +780,40 @@ class WypisProfileDialog(QDialog):
         key_item = self.table.item(row, 0)
         key = key_item.data(Qt.ItemDataRole.UserRole)
 
+        # Tryb etykiety: zaznaczony tekst zapisujemy jako nazwę pola.
+        if self._click_mode() == "area_label":
+            etykieta = tekst.rstrip(":").strip()
+            if not etykieta:
+                QMessageBox.information(
+                    self,
+                    "Puste zaznaczenie",
+                    "W narysowanym prostokącie nie ma tekstu. "
+                    "Zaznacz nazwę pola na dokumencie.",
+                )
+                return
+
+            self._remember()
+            item = self.table.item(row, 1)
+            obecne = [
+                czesc.strip()
+                for czesc in (item.text() if item else "").split(";")
+                if czesc.strip()
+            ]
+            if etykieta not in obecne:
+                obecne.insert(0, etykieta)
+            self._loading = True
+            self.table.setItem(row, 1, QTableWidgetItem("; ".join(obecne)))
+            self._loading = False
+            self._store_table_into_profile()
+            if self.pdf_text:
+                self._analyze()
+            self._refresh_marks()
+            self.lbl_summary.setText(
+                f"🏷️ Etykieta „{etykieta}” → {key_item.text()}"
+                "  •  " + self.lbl_summary.text()
+            )
+            return
+
         obraz = self.page_view.page.image if self.page_view.page else None
         if obraz is None or obraz.width() <= 0 or obraz.height() <= 0:
             return
@@ -816,6 +866,8 @@ class WypisProfileDialog(QDialog):
     def _click_mode(self) -> str:
         """Zwraca „label”, „value” albo „area” — co robi mysz na dokumencie."""
 
+        if self.btn_mode_area_label.isChecked():
+            return "area_label"
         if self.btn_mode_area.isChecked():
             return "area"
         return "value" if self.btn_mode_value.isChecked() else "label"
@@ -825,7 +877,16 @@ class WypisProfileDialog(QDialog):
 
         tryb = self._click_mode()
         if getattr(self, "page_view", None) is not None:
-            self.page_view.set_draw_mode(tryb == "area")
+            self.page_view.set_draw_mode(tryb in ("area", "area_label"))
+
+        if tryb == "area_label":
+            self.lbl_mode_hint.setText(
+                "🏷️🔲 <b>Tryb etykiety z zaznaczenia.</b> Przeciągnij "
+                "prostokąt wokół <b>nazwy pola</b> na dokumencie — trafi "
+                "ona do kolumny <b>② Etykiety w PDF</b> zaznaczonego wiersza."
+            )
+            self.lbl_mode_hint.setStyleSheet("color: #6ff0d4;")
+            return
 
         if tryb == "area":
             self.lbl_mode_hint.setText(

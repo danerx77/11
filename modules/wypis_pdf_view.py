@@ -179,19 +179,74 @@ def _column_gap(words: list["Word"]) -> float:
     return max(height * 1.6, 14.0)
 
 
+def _row_cells(page: PageData, word: "Word", gap: float) -> list[list["Word"]]:
+    """Zwraca wiersz, w którym leży słowo, podzielony na komórki.
+
+    Wiersz wyznaczamy po wysokości na stronie, a nie po numerze linii —
+    w tabeli w kratkę każda komórka bywa osobnym „line”, więc grupowanie
+    po ``line`` rozbiłoby wiersz na pojedyncze pola.
+    """
+
+    srodek = word.rect.center().y()
+    tolerancja = max(word.rect.height() * 0.6, 2.0)
+    wiersz = [
+        w
+        for w in page.words
+        if abs(w.rect.center().y() - srodek) <= tolerancja
+    ]
+    wiersz.sort(key=lambda w: w.rect.left())
+    if not wiersz:
+        return []
+
+    komorki: list[list[Word]] = [[wiersz[0]]]
+    for poprzednie, slowo in zip(wiersz, wiersz[1:]):
+        if slowo.rect.left() - poprzednie.rect.right() >= gap:
+            komorki.append([slowo])
+        else:
+            komorki[-1].append(slowo)
+    return komorki
+
+
+def _is_data_like(text: str) -> bool:
+    """Czy tekst wygląda na daną (numer, liczba, kod), a nie na nazwę pola?"""
+
+    tekst = str(text or "").strip()
+    if not tekst:
+        return False
+    # Wystarczy jedna cyfra: „0019, BOJANO”, „145/7”, „0.0235” to dane,
+    # a „Województwo”, „Obręb”, „RIVa” to nazwy.
+    return any(znak.isdigit() for znak in tekst)
+
+
 def _header_above(page: PageData, cell: list["Word"]) -> list["Word"]:
     """Szuka nagłówka kolumny stojącego nad wskazaną komórką.
 
-    W wypisach dane bywają w tabeli w kratkę, bez dwukropków — nazwa
-    kolumny („Pow. [ha]”) stoi wtedy w wierszu nagłówka nad wartością.
-    Idziemy w górę kolumny aż do jej pierwszego wiersza, bo pod nagłówkiem
-    może stać kilka wierszy z danymi.
+    Dotyczy tabel w kratkę, gdzie nazwa kolumny („Pow. [ha]”) stoi nad
+    wartością (``0.0235``).
+
+    Dwa warunki chronią przed pomyłką na zwykłej pionowej liście pól
+    („Województwo”, „Powiat”, „Obręb” jedno pod drugim — tam klik w
+    „Obręb” zwracał wcześniej „Województwo”):
+
+    1. wiersz musi mieć co najmniej dwie kolumny,
+    2. kliknięta komórka musi wyglądać na **daną** (zawierać cyfry),
+       a kandydat na nagłówek — na **nazwę** (bez przewagi cyfr).
     """
 
     if not cell:
         return []
 
     gap = _column_gap(page.words)
+    wiersz = _row_cells(page, cell[0], gap)
+    if len(wiersz) < 2:
+        return []                           # wiersz nie jest tabelą
+
+    # Nagłówka szukamy tylko wtedy, gdy PIERWSZA komórka wiersza też jest
+    # daną. W pionowej liście („Województwo   POMORSKIE”) pierwsza komórka
+    # to nazwa pola, więc etykieta stoi po lewej, nie u góry.
+    if not _is_data_like(" ".join(w.text for w in wiersz[0])):
+        return []
+
     biezaca = cell
     ostatnia: list[Word] = []
 
@@ -216,33 +271,32 @@ def _header_above(page: PageData, cell: list["Word"]) -> list["Word"]:
             break
 
         najblizszy = min(kandydaci, key=lambda para: para[0])[1]
+        komorki = _row_cells(page, najblizszy, gap)
+        if len(komorki) < 2:
+            break                           # wyżej nie ma już tabeli
 
-        # Cały wiersz nagłówka dzielimy na komórki i bierzemy tę, w której
-        # leży znalezione słowo — dzięki temu „Opis użytku” zostaje w całości.
-        wiersz = [
-            w
-            for w in page.words
-            if w.block == najblizszy.block and w.line == najblizszy.line
-        ]
-        wiersz.sort(key=lambda w: w.rect.left())
-
-        komorki: list[list[Word]] = [[wiersz[0]]]
-        for poprzednie, slowo in zip(wiersz, wiersz[1:]):
-            if slowo.rect.left() - poprzednie.rect.right() >= gap:
-                komorki.append([slowo])
-            else:
-                komorki[-1].append(slowo)
-
-        komorka = next(k for k in komorki if najblizszy in k)
+        komorka = next((k for k in komorki if najblizszy in k), [])
+        if not komorka:
+            break
 
         # Wiersz z dwukropkiem to opis „etykieta: wartość”, nie nagłówek.
         if any(w.text.endswith(":") for w in komorka):
             break
 
+        # Idziemy aż na samą górę kolumny — nagłówek to pierwszy wiersz.
         ostatnia = komorka
         biezaca = komorka
 
     return ostatnia
+
+
+def _index_komorki(wiersz: list[list["Word"]], cell: list["Word"]) -> int:
+    """Numer komórki w wierszu (0 = pierwsza od lewej)."""
+
+    for numer, komorka in enumerate(wiersz):
+        if komorka is cell or (komorka and cell and komorka[0] is cell[0]):
+            return numer
+    return 0
 
 
 def text_in_rect(page: PageData, rect: QRectF) -> str:
@@ -318,6 +372,29 @@ def read_area_value(pdf_path: str, area: dict, *, dpi: int = 96) -> str:
     return text_in_rect(page, rect)
 
 
+def _wartosc_pod_spodem(page: PageData, cell: list["Word"]) -> bool:
+    """Czy pod komórką stoi dana? Wtedy komórka jest nagłówkiem kolumny."""
+
+    if not cell:
+        return False
+
+    left = min(w.rect.left() for w in cell)
+    right = max(w.rect.right() for w in cell)
+    bottom = max(w.rect.bottom() for w in cell)
+    height = max(w.rect.height() for w in cell)
+
+    for word in page.words:
+        if word.rect.top() < bottom - 1:
+            continue
+        if word.rect.top() - bottom > height * 6:
+            continue
+        if word.rect.right() <= left or word.rect.left() >= right:
+            continue
+        if _is_data_like(word.text):
+            return True
+    return False
+
+
 def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     """Zwraca słowo (lub grupę słów) wskazane kursorem.
 
@@ -351,8 +428,13 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     if hit is None:
         return None
 
+    # Wiersz wyznaczamy po wysokości, nie po numerze linii z PyMuPDF —
+    # w wielu wypisach etykieta i wartość to osobne „line”, przez co
+    # „Województwo” i „POMORSKIE” nie trafiały do jednego wiersza.
+    srodek = hit.rect.center().y()
+    tolerancja = max(hit.rect.height() * 0.6, 2.0)
     same_line = [
-        w for w in page.words if w.block == hit.block and w.line == hit.line
+        w for w in page.words if abs(w.rect.center().y() - srodek) <= tolerancja
     ]
     same_line.sort(key=lambda w: w.rect.left())
 
@@ -401,6 +483,21 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
             if naglowek:
                 label_chunk = naglowek
                 value_chunk = cell
+            elif poprzednia and not _is_data_like(
+                " ".join(w.text for w in poprzednia)
+            ):
+                # Nazwa pola po lewej, wartość po prawej. Wyjątek: jeśli
+                # pod OBIEMA komórkami stoją dane, to wiersz nagłówków
+                # tabeli — wtedy kliknięta komórka jest nazwą kolumny.
+                # Wystarczy, że pod SĄSIEDNIĄ kolumną stoją dane — nasza
+                # kolumna może mieć wartości tekstowe („dr”, „RIVa”).
+                naglowki = _wartosc_pod_spodem(page, poprzednia)
+                if naglowki:
+                    label_chunk = cell
+                    value_chunk = []
+                else:
+                    label_chunk = poprzednia
+                    value_chunk = cell
             else:
                 label_chunk = cell
                 value_chunk = []
