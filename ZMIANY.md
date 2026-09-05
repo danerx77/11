@@ -1446,6 +1446,40 @@ dopisujemy, na której stronie ją znaleziono.
 Odczyt pól obejmuje **cały dokument**, nie tylko pierwszą stronę — wartości
 z dalszych stron trafiają do tabeli tak samo jak te z pierwszej.
 
+## 59. Dwie nowe pozycje w „Skąd czytać”; „Sprawdź ponownie” czyta plik od nowa
+
+**Nowe pozycje w kolumnie „③ Skąd czytać”.** Lista ma teraz siedem ustawień:
+
+| Ustawienie | Gdzie stoi wartość |
+|---|---|
+| 🔎 **Sam wybierz** | program decyduje sam (domyślnie) |
+| ➡️ **Obok, z prawej** | po prawej stronie nazwy |
+| ⬅️ **Obok, z lewej** | po lewej stronie nazwy |
+| ⬇️ **Pod spodem** | w pierwszym wierszu danych pod nazwą |
+| ⬇️⬇️ **Dwa pod spodem** | w **drugim** wierszu danych — gdy tabela ma kilka pozycji |
+| ⬆️ **Nad nazwą** | nad nazwą pola |
+| 🎯 **Wybrana pozycja** | w kolumnie, którą sam wskażesz |
+
+Po wybraniu „🎯 Wybrana pozycja” program pyta, **która wartość z wiersza** jest
+tą właściwą, i pokazuje przy tym ponumerowaną zawartość wiersza z dokumentu.
+Rozwiązuje to układy, w których pod jedną nazwą stoi kilka liczb obok siebie
+(„POWIERZCHNIA w ha” nad „Użytków i klas” oraz „Działki”) — każde pole można
+wtedy wskazać osobno. Numer kolumny zapisuje się we wzorze.
+
+**„🔄 Sprawdź ponownie” nie czytało dokumentu na nowo.** Przycisk analizował
+tekst zapamiętany przy wczytaniu pliku, więc po przełączeniu strony albo
+zmianie czegokolwiek pokazywał stare wartości. Teraz otwiera PDF ponownie,
+odświeża zakładkę tekstową i przelicza wszystkie pola, meldując „🔄 Odczytano
+dokument od nowa”.
+
+**Nagłówek nadal podświetlał się pod kursorem.** Poprzednia poprawka
+(wyłączenie w arkuszu stylów) nie wystarczyła — motyw Qt zapala flagę
+śledzenia myszy z powrotem. Teraz zdarzenia najechania są przechwytywane
+filtrem, zanim dotrą do tabeli, więc nic się nie rozjaśnia.
+
+**Paski „STRONA n” nie są mylone z danymi.** W wypisach wielostronicowych
+odczyt pomija linie oddzielające strony, zamiast brać je za wartość pola.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

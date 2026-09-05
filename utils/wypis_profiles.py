@@ -71,13 +71,17 @@ DIRECTION_RIGHT = "right"      # zawsze z prawej strony
 DIRECTION_BELOW = "below"      # zawsze spod spodu
 DIRECTION_LEFT = "left"        # zawsze obok, po lewej stronie
 DIRECTION_ABOVE = "above"      # zawsze nad nazwą pola
+DIRECTION_BELOW2 = "below2"    # drugi wiersz pod spodem
+DIRECTION_PICK = "pick"        # wskazana ręcznie pozycja w wierszu
 
 DIRECTIONS: tuple[tuple[str, str], ...] = (
     (DIRECTION_AUTO, "🔎 Sam wybierz"),
     (DIRECTION_RIGHT, "➡️ Obok, z prawej"),
     (DIRECTION_LEFT, "⬅️ Obok, z lewej"),
     (DIRECTION_BELOW, "⬇️ Pod spodem"),
+    (DIRECTION_BELOW2, "⬇️⬇️ Dwa pod spodem"),
     (DIRECTION_ABOVE, "⬆️ Nad nazwą"),
+    (DIRECTION_PICK, "🎯 Wybrana pozycja"),
 )
 
 DIRECTION_LABELS: dict[str, str] = dict(DIRECTIONS)
@@ -323,6 +327,18 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         if kierunek in DIRECTION_LABELS and kierunek != DIRECTION_AUTO:
             directions[str(key)] = kierunek
 
+    # Numer kolumny wskazany ręcznie (dla kierunku „🎯 Wybrana pozycja”).
+    raw_cols = source.get("columns")
+    raw_cols = raw_cols if isinstance(raw_cols, Mapping) else {}
+    columns: dict[str, int] = {}
+    for key, value in raw_cols.items():
+        try:
+            numer = int(value)
+        except (TypeError, ValueError):
+            continue
+        if numer > 0:
+            columns[str(key)] = numer
+
     # Pola z celowo skasowaną wartością — program nie ma ich odczytywać.
     raw_skipped = source.get("skipped_values")
     skipped_values = []
@@ -376,6 +392,7 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "hidden_fields": hidden_fields,
         "skipped_values": skipped_values,
         "directions": directions,
+        "columns": columns,
     }
 
 
@@ -762,15 +779,20 @@ def extract_field(
     # to samo niezależnie od ustawienia i zmiana nic by nie dawała.
     kierunek = field_direction(profile, field)
     if kierunek != DIRECTION_AUTO:
-        czytaj = {
-            DIRECTION_RIGHT: _extract_from_same_row,
-            DIRECTION_LEFT: _extract_from_left,
-            DIRECTION_BELOW: _extract_from_column,
-            DIRECTION_ABOVE: _extract_from_above,
-        }.get(kierunek)
-        if czytaj is None:
-            return ""
-        wynik = czytaj(lines, labels, profile)
+        if kierunek == DIRECTION_BELOW2:
+            wynik = _extract_from_column(lines, labels, profile, pomin=1)
+        elif kierunek == DIRECTION_PICK:
+            wynik = _extract_from_pick(lines, labels, profile, field)
+        else:
+            czytaj = {
+                DIRECTION_RIGHT: _extract_from_same_row,
+                DIRECTION_LEFT: _extract_from_left,
+                DIRECTION_BELOW: _extract_from_column,
+                DIRECTION_ABOVE: _extract_from_above,
+            }.get(kierunek)
+            if czytaj is None:
+                return ""
+            wynik = czytaj(lines, labels, profile)
         if wynik:
             return wynik[:max_length]
         # Etykieta z dwukropkiem („Powiat: kartuski”) tworzy jedną kolumnę,
@@ -930,7 +952,7 @@ def _naglowek_pietrowy(
         return False
 
     for nizej in lines[numer + 1: numer + 3]:
-        if not nizej.strip():
+        if not nizej.strip() or _pasek_strony(nizej):
             continue
         ponizej = _split_columns(nizej)
         # Kolejne piętro nagłówka ma WIĘCEJ rubryk niż to nad nim
@@ -1016,6 +1038,8 @@ def _extract_from_column(
     lines: list[str],
     labels: Iterable[str],
     profile: Mapping[str, Any] | None,
+    *,
+    pomin: int = 0,
 ) -> str:
     """Czyta wartość z tabeli, w której nazwa pola jest nagłówkiem kolumny.
 
@@ -1044,7 +1068,7 @@ def _extract_from_column(
 
             # Pierwszy niepusty wiersz poniżej z tą samą liczbą kolumn.
             for nizej in lines[index + 1: index + 6]:
-                if not nizej.strip():
+                if not nizej.strip() or _pasek_strony(nizej):
                     continue
                 ponizej = _split_columns(nizej)
                 if not ponizej:
@@ -1073,8 +1097,74 @@ def _extract_from_column(
                     continue
                 if _wyglada_na_naglowek(ponizej, profile):
                     continue
+                # „Dwa pod spodem”: pomijamy pierwszy znaleziony wiersz
+                # danych i bierzemy następny (tabele z kilkoma wierszami).
+                if pomin > 0:
+                    pomin -= 1
+                    continue
                 return wartosc
     return ""
+
+
+def field_column(profile: Mapping[str, Any] | None, key: str) -> int:
+    """Numer kolumny wskazanej ręcznie dla pola (0 = pierwsza)."""
+
+    if isinstance(profile, Mapping):
+        raw = profile.get("columns")
+        if isinstance(raw, Mapping):
+            try:
+                return max(0, int(raw.get(key, 0)))
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _extract_from_pick(
+    lines: list[str],
+    labels: Iterable[str],
+    profile: Mapping[str, Any] | None,
+    field: str,
+) -> str:
+    """Bierze wartość z kolumny wskazanej ręcznie przez użytkownika.
+
+    Przydaje się w tabelach, gdzie pod nazwą stoi kilka liczb obok siebie
+    („Użytków i klas” oraz „Działki”) i trzeba powiedzieć wprost, która
+    z nich jest tą właściwą.
+    """
+
+    numer = field_column(profile, field)
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        kolumny = _split_columns(line)
+        if not kolumny:
+            continue
+        trafiona = any(
+            _fold(tekst.rstrip(" :").strip()) == _fold(label)
+            for _start, tekst in kolumny
+            for label in labels
+        )
+        if not trafiona:
+            continue
+
+        for nizej in lines[index + 1: index + 6]:
+            if not nizej.strip() or _pasek_strony(nizej):
+                continue
+            ponizej = _split_columns(nizej)
+            if not ponizej or _wyglada_na_naglowek(ponizej, profile):
+                continue
+            if numer < len(ponizej):
+                wartosc = ponizej[numer][1].strip(" :,;-")
+                if wartosc:
+                    return wartosc
+            return ""
+    return ""
+
+
+def _pasek_strony(tekst: str) -> bool:
+    """Czy to pasek oddzielający strony, a nie dane z dokumentu?"""
+
+    return "STRONA" in tekst and "─" in tekst
 
 
 def _wyglada_na_naglowek(
@@ -1156,7 +1246,7 @@ def _extract_from_above(
             # Pierwszy niepusty wiersz powyżej — szukamy w nim kolumny
             # stojącej w tym samym miejscu co nasza etykieta.
             for wyzej in reversed(lines[max(0, index - 5): index]):
-                if not wyzej.strip():
+                if not wyzej.strip() or _pasek_strony(wyzej):
                     continue
                 powyzej = _split_columns(wyzej)
                 if not powyzej:

@@ -1420,10 +1420,10 @@ class KierunekWTabeliTests(unittest.TestCase):
         row = self._wiersz("Powiat")
         widget = self.dialog.table.cellWidget(row, 2)
         self.assertIsNotNone(widget)
-        self.assertEqual(widget.count(), 5)
+        self.assertEqual(widget.count(), 7)
         self.assertEqual(
             [widget.itemData(i) for i in range(widget.count())],
-            ["auto", "right", "left", "below", "above"],
+            ["auto", "right", "left", "below", "below2", "above", "pick"],
         )
 
     def test_domyslnie_wybrany_jest_tryb_automatyczny(self):

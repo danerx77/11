@@ -22,6 +22,7 @@ from utils.wypis_profiles import (  # noqa: E402
     DIRECTION_LEFT,
     DIRECTION_RIGHT,
     custom_field_key,
+    field_column,
     field_direction,
     is_custom_field,
     profile_field_defs,
@@ -912,12 +913,12 @@ class KierunekZLewejINadTests(unittest.TestCase):
         profil = self._profil("area", "Pow.", DIRECTION_ABOVE)
         self.assertEqual(field_direction(profil, "area"), DIRECTION_ABOVE)
 
-    def test_sa_wszystkie_cztery_kierunki_plus_automat(self):
+    def test_sa_wszystkie_kierunki_plus_automat(self):
         from utils.wypis_profiles import DIRECTIONS
 
         self.assertEqual(
             [wartosc for wartosc, _opis in DIRECTIONS],
-            ["auto", "right", "left", "below", "above"],
+            ["auto", "right", "left", "below", "below2", "above", "pick"],
         )
 
 
@@ -1075,4 +1076,69 @@ class NaglowekPietrowyTests(unittest.TestCase):
         )
         tekst = "Wojewodztwo   POMORSKIE\nPowiat   kartuski\nGmina   Zukowo\n"
         self.assertEqual(extract_field(tekst, profil, "county"), "kartuski")
+
+
+class NoweKierunkiTests(unittest.TestCase):
+    """Runda 29: „Dwa pod spodem” i „Wybrana pozycja”."""
+
+    TABELA = (
+        "Numer   POWIERZCHNIA w ha   Numer\n"
+        "dzialki   Uzytkow i klas   Dzialki   KW\n"
+        "27/176   0.0235   0.9999   GD1R/00012345/6\n"
+        "33/2   0.5000   0.7777   GD1R/00099999/9\n"
+    )
+
+    def _czytaj(self, kierunek, kolumna=0):
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "fields": {"parcel_number": ["dzialki"]},
+                "directions": {"parcel_number": kierunek},
+                "columns": {"parcel_number": kolumna},
+            }
+        )
+        return extract_field(self.TABELA, profil, "parcel_number")
+
+    def test_pod_spodem_bierze_pierwszy_wiersz(self):
+        self.assertEqual(self._czytaj("below"), "27/176")
+
+    def test_dwa_pod_spodem_bierze_drugi_wiersz(self):
+        self.assertEqual(self._czytaj("below2"), "33/2")
+
+    def test_wybrana_pozycja_druga_kolumna(self):
+        self.assertEqual(self._czytaj("pick", 1), "0.0235")
+
+    def test_wybrana_pozycja_trzecia_kolumna(self):
+        self.assertEqual(self._czytaj("pick", 2), "0.9999")
+
+    def test_wybrana_pozycja_czwarta_kolumna(self):
+        self.assertEqual(self._czytaj("pick", 3), "GD1R/00012345/6")
+
+    def test_profil_pamieta_numer_kolumny(self):
+        profil = normalize_profile(
+            {"name": "t", "columns": {"area": 2}}
+        )
+        self.assertEqual(field_column(profil, "area"), 2)
+
+    def test_brak_numeru_kolumny_to_zero(self):
+        profil = normalize_profile({"name": "t"})
+        self.assertEqual(field_column(profil, "area"), 0)
+
+    def test_pasek_strony_nie_jest_wartoscia(self):
+        # Wypisy wielostronicowe mają w tekście pasek „STRONA 2”.
+        tekst = (
+            "Numer dzialki\n"
+            "──────── STRONA 2 ────────\n"
+            "27/176\n"
+        )
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "fields": {"parcel_number": ["Numer dzialki"]},
+                "directions": {"parcel_number": "below"},
+            }
+        )
+        self.assertEqual(
+            extract_field(tekst, profil, "parcel_number"), "27/176"
+        )
 

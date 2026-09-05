@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -50,6 +50,7 @@ from modules.wypis_pdf_view import (
 
 from utils.global_settings import wypis_profiles_path
 from utils.wypis_profiles import (
+    _split_columns,
     FIELD_DEFS,
     FIELD_HINTS,
     FIELD_KEYS,
@@ -65,6 +66,7 @@ from utils.wypis_profiles import (
     DIRECTION_ABOVE,
     DIRECTION_BELOW,
     DIRECTION_LEFT,
+    DIRECTION_PICK,
     DIRECTION_RIGHT,
     DIRECTIONS,
     custom_field_key,
@@ -98,6 +100,26 @@ STATUS_HINTS = {
     "found": "Etykieta jest w dokumencie, ale nie ma przy niej wartości.",
     "missing": "Pole nieokreślone — wskaż je na dokumencie albo wpisz wartość ręcznie.",
 }
+
+
+class _BezPodswietlenia(QObject):
+    """Zjada zdarzenia najechania myszą, żeby nic się nie rozjaśniało.
+
+    Sam arkusz stylów nie wystarcza: motyw Qt zapala flagę ``WA_Hover``
+    z powrotem, więc nagłówek tabeli podświetlał całą kolumnę pod
+    kursorem. Filtr przechwytuje zdarzenia zanim dotrą do widżetu.
+    """
+
+    _ZDARZENIA = {
+        QEvent.Type.HoverEnter,
+        QEvent.Type.HoverMove,
+        QEvent.Type.HoverLeave,
+    }
+
+    def eventFilter(self, obiekt, zdarzenie):  # noqa: N802 - API Qt
+        if zdarzenie.type() in self._ZDARZENIA:
+            return True          # zdarzenie zjedzone, brak podświetlenia
+        return super().eventFilter(obiekt, zdarzenie)
 
 
 class WypisProfileDialog(QDialog):
@@ -336,8 +358,11 @@ class WypisProfileDialog(QDialog):
         pdf_row.addWidget(btn_load)
 
         btn_reanalyze = QPushButton("🔄 Sprawdź ponownie")
-        btn_reanalyze.setToolTip("Ponawia analizę po zmianie etykiet.")
-        btn_reanalyze.clicked.connect(self._analyze)
+        btn_reanalyze.setToolTip(
+            "Czyta dokument od nowa i ponawia analizę.\n"
+            "Użyj po zmianie etykiet albo kierunku odczytu."
+        )
+        btn_reanalyze.clicked.connect(self._reread_and_analyze)
         pdf_row.addWidget(btn_reanalyze)
 
         btn_detect = QPushButton("🔎 Dobierz wzór automatycznie")
@@ -409,6 +434,12 @@ class WypisProfileDialog(QDialog):
         header.setSectionsClickable(False)
         header.setSectionsMovable(False)
         header.setHighlightSections(False)
+        # Sam arkusz stylów nie wystarczy: Qt śledzi kursor, bo widżety mają
+        # włączoną flagę WA_Hover. Zdejmujemy ją, żeby nagłówek i komórki
+        # naprawdę nie reagowały na samo najechanie myszą.
+        self._blokada_podswietlenia = _BezPodswietlenia(self)
+        header.installEventFilter(self._blokada_podswietlenia)
+        self.table.viewport().installEventFilter(self._blokada_podswietlenia)
         self.table.itemChanged.connect(self._on_label_edited)
         self.table.itemDoubleClicked.connect(self._before_cell_edit)
         self.table.currentCellChanged.connect(
@@ -1200,6 +1231,11 @@ class WypisProfileDialog(QDialog):
             kierunki.pop(key, None)
         self.profiles[index]["directions"] = kierunki
 
+        # „🎯 Wybrana pozycja” wymaga podania, która kolumna w wierszu
+        # danych jest tą właściwą — pytamy o to od razu.
+        if kierunek == DIRECTION_PICK:
+            self._ask_for_column(key, index)
+
         # Zmiana kierunku ma sens tylko wtedy, gdy pole nie jest zablokowane
         # ręcznym wpisem ani narysowanym obszarem.
         self._skipped_values.discard(key)
@@ -1974,6 +2010,93 @@ class WypisProfileDialog(QDialog):
                 "Dobrano wzór",
                 f"Najlepiej pasuje wzór „{profile['name']}” (trafność: {score}).",
             )
+
+    def _ask_for_column(self, key: str, index: int) -> None:
+        """Pyta, z której kolumny wiersza danych brać wartość."""
+
+        kolumny = dict(self.profiles[index].get("columns") or {})
+        biezaca = int(kolumny.get(key, 1) or 1)
+        podglad = self._preview_row_for(key)
+        opis = (
+            "Która wartość z wiersza jest tą właściwą?\n\n"
+            "Podaj jej numer, licząc od lewej strony (1 = pierwsza)."
+        )
+        if podglad:
+            opis += "\n\nWiersz z dokumentu:\n" + podglad
+
+        numer, ok = QInputDialog.getInt(
+            self, "Wybrana pozycja", opis, biezaca, 1, 30, 1
+        )
+        if not ok:
+            return
+
+        kolumny[key] = numer - 1
+        self.profiles[index]["columns"] = kolumny
+
+    def _preview_row_for(self, key: str) -> str:
+        """Pokazuje ponumerowane wartości wiersza danych dla podpowiedzi."""
+
+        etykiety = self._current_profile()["fields"].get(key) or []
+        if not etykiety or not self.pdf_text:
+            return ""
+
+        linie = self.pdf_text.split("\n")
+        for numer, linia in enumerate(linie):
+            kolumny = _split_columns(linia)
+            trafiona = any(
+                tekst.rstrip(" :").strip().casefold() == etykieta.casefold()
+                for _start, tekst in kolumny
+                for etykieta in etykiety
+            )
+            if not trafiona:
+                continue
+            for nizej in linie[numer + 1: numer + 5]:
+                dane = _split_columns(nizej)
+                if len(dane) >= 2 and any(
+                    any(z.isdigit() for z in tekst) for _s, tekst in dane
+                ):
+                    return "\n".join(
+                        f"   {i}. {tekst}"
+                        for i, (_s, tekst) in enumerate(dane, start=1)
+                    )
+            break
+        return ""
+
+    def _reread_and_analyze(self) -> None:
+        """Czyta PDF od nowa i przelicza wszystkie pola.
+
+        Sam „_analyze” pracował na tekście zapamiętanym przy wczytaniu
+        pliku, więc po zmianie czegokolwiek w dokumencie albo po
+        przełączeniu strony pokazywał stare dane.
+        """
+
+        if not self.pdf_path:
+            QMessageBox.information(
+                self,
+                "Najpierw wczytaj wypis",
+                "Wczytaj przykładowy wypis (PDF), a program sprawdzi, "
+                "co potrafi z niego odczytać.",
+            )
+            return
+
+        try:
+            self.pdf_text = read_pdf_text(self.pdf_path)
+        except Exception as exc:  # pragma: no cover - zależne od pliku
+            QMessageBox.critical(
+                self,
+                "Nie udało się odczytać PDF",
+                f"Program nie zdołał ponownie otworzyć tego pliku.\n\n{exc}",
+            )
+            return
+
+        self.text_view.setPlainText(self.pdf_text)
+        if self._page_total > 1:
+            self._scroll_text_to_page(self._page_index)
+        self._analyze()
+        self._refresh_marks()
+        self.lbl_summary.setText(
+            "🔄 Odczytano dokument od nowa.  •  " + self.lbl_summary.text()
+        )
 
     def _analyze(self):
         if not self.pdf_text:
