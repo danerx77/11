@@ -60,6 +60,80 @@ FIELD_DEFS: tuple[tuple[str, str, str], ...] = (
 
 FIELD_KEYS: tuple[str, ...] = tuple(key for key, _l, _h in FIELD_DEFS)
 FIELD_LABELS: dict[str, str] = {key: label for key, label, _h in FIELD_DEFS}
+
+#: Przedrostek kluczy pól dodanych przez użytkownika. Dzięki niemu wiadomo,
+#: które pola można usunąć i zmienić im nazwę, a których ruszać nie wolno.
+CUSTOM_PREFIX = "custom_"
+
+
+def is_custom_field(key: str) -> bool:
+    """Czy to pole dodane przez użytkownika (a nie wbudowane)?"""
+
+    return str(key or "").startswith(CUSTOM_PREFIX)
+
+
+def custom_field_key(label: str, taken: Iterable[str] = ()) -> str:
+    """Buduje klucz nowego pola na podstawie jego nazwy."""
+
+    podstawa = _fold(str(label or "").strip()).replace(" ", "_")
+    podstawa = "".join(z for z in podstawa if z.isalnum() or z == "_").strip("_")
+    if not podstawa:
+        podstawa = "pole"
+
+    zajete = set(taken)
+    klucz = f"{CUSTOM_PREFIX}{podstawa}"
+    numer = 2
+    while klucz in zajete:
+        klucz = f"{CUSTOM_PREFIX}{podstawa}_{numer}"
+        numer += 1
+    return klucz
+
+
+def profile_field_defs(
+    profile: Mapping[str, Any] | None,
+) -> list[tuple[str, str, str]]:
+    """Lista pól do pokazania: wbudowane plus dodane przez użytkownika.
+
+    Pola można ukryć (klucz w ``hidden_fields``) — wtedy nie zaśmiecają
+    tabeli. Wbudowanych nie usuwamy na stałe, żeby dało się je przywrócić.
+    """
+
+    ukryte = set()
+    wlasne: dict[str, str] = {}
+    if isinstance(profile, Mapping):
+        raw_hidden = profile.get("hidden_fields")
+        if isinstance(raw_hidden, (list, tuple, set)):
+            ukryte = {str(k) for k in raw_hidden}
+        raw_custom = profile.get("custom_fields")
+        if isinstance(raw_custom, Mapping):
+            wlasne = {
+                str(k): str(v).strip()
+                for k, v in raw_custom.items()
+                if str(v or "").strip()
+            }
+
+    defs = [
+        (key, label, hint)
+        for key, label, hint in FIELD_DEFS
+        if key not in ukryte
+    ]
+    for key, label in wlasne.items():
+        if key in ukryte:
+            continue
+        defs.append((key, label, "Pole dodane przez Ciebie."))
+    return defs
+
+
+def profile_field_keys(profile: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Klucze pól widocznych w danym wzorze."""
+
+    return tuple(key for key, _l, _h in profile_field_defs(profile))
+
+
+def profile_field_labels(profile: Mapping[str, Any] | None) -> dict[str, str]:
+    """Nazwy pól widocznych w danym wzorze."""
+
+    return {key: label for key, label, _h in profile_field_defs(profile)}
 FIELD_HINTS: dict[str, str] = {key: hint for key, _l, hint in FIELD_DEFS}
 
 # Wzory mieszkają w osobnym pliku ``dane/wypis_profiles.json``. Poniższe
@@ -166,7 +240,10 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     raw_fields = source.get("fields")
     raw_fields = raw_fields if isinstance(raw_fields, Mapping) else {}
 
-    for key in FIELD_KEYS:
+    klucze_pol = list(FIELD_KEYS) + [
+        str(k) for k in raw_fields if is_custom_field(str(k))
+    ]
+    for key in klucze_pol:
         value = raw_fields.get(key, [])
         if isinstance(value, str):
             value = [value]
@@ -193,8 +270,38 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     manual_values = {
         str(key): str(value).strip()
         for key, value in raw_manual.items()
-        if str(key) in FIELD_KEYS and str(value or "").strip()
+        if (str(key) in FIELD_KEYS or is_custom_field(str(key)))
+        and str(value or "").strip()
     }
+
+    # Pola dodane przez użytkownika: {klucz: nazwa}. Trzymamy je razem
+    # ze wzorem, bo w różnych urzędach wypisy mają różne rubryki.
+    raw_custom = source.get("custom_fields")
+    raw_custom = raw_custom if isinstance(raw_custom, Mapping) else {}
+    custom_fields: dict[str, str] = {}
+    for key, value in raw_custom.items():
+        klucz = str(key or "").strip()
+        nazwa = str(value or "").strip()
+        if klucz.startswith(CUSTOM_PREFIX) and nazwa:
+            custom_fields[klucz] = nazwa
+
+    # Pola z celowo skasowaną wartością — program nie ma ich odczytywać.
+    raw_skipped = source.get("skipped_values")
+    skipped_values = []
+    if isinstance(raw_skipped, (list, tuple, set)):
+        for key in raw_skipped:
+            klucz = str(key or "").strip()
+            if klucz and klucz not in skipped_values:
+                skipped_values.append(klucz)
+
+    # Pola ukryte — te, których użytkownik nie chce widzieć w tabeli.
+    raw_hidden = source.get("hidden_fields")
+    hidden_fields = []
+    if isinstance(raw_hidden, (list, tuple, set)):
+        for key in raw_hidden:
+            klucz = str(key or "").strip()
+            if klucz and klucz not in hidden_fields:
+                hidden_fields.append(klucz)
 
     # Obszary odczytu narysowane myszką. Trzymamy je w procentach strony
     # (0-100), więc działają niezależnie od powiększenia i rozdzielczości.
@@ -202,7 +309,9 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     raw_areas = raw_areas if isinstance(raw_areas, Mapping) else {}
     areas: dict[str, dict[str, float]] = {}
     for key, value in raw_areas.items():
-        if str(key) not in FIELD_KEYS or not isinstance(value, Mapping):
+        if (
+            str(key) not in FIELD_KEYS and not is_custom_field(str(key))
+        ) or not isinstance(value, Mapping):
             continue
         try:
             obszar = {
@@ -225,6 +334,9 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "fields": fields,
         "manual_values": manual_values,
         "areas": areas,
+        "custom_fields": custom_fields,
+        "hidden_fields": hidden_fields,
+        "skipped_values": skipped_values,
     }
 
 
@@ -599,7 +711,7 @@ def extract_field(
     # Etykiety pozostałych pól — po nich poznajemy kolejną kolumnę wiersza.
     wlasne = {_fold(l) for l in labels}
     inne_etykiety = []
-    for key in FIELD_KEYS:
+    for key in profile_field_keys(profile):
         for other in labels_for(profile, key):
             if _fold(other) not in wlasne and other not in inne_etykiety:
                 inne_etykiety.append(other)
@@ -804,7 +916,8 @@ def analyze_text(
     haystack = _fold(text)
     rows: list[dict[str, str]] = []
 
-    for key in FIELD_KEYS:
+    etykiety_pol = profile_field_labels(clean)
+    for key in profile_field_keys(clean):
         labels = clean["fields"].get(key, [])
         matched = ""
         for label in labels:
@@ -814,7 +927,7 @@ def analyze_text(
         value = extract_field(text, clean, key) if matched else ""
         rows.append({
             "field": key,
-            "label": FIELD_LABELS[key],
+            "label": etykiety_pol.get(key, key),
             "matched_label": matched,
             "value": value,
             "status": "ok" if value else ("found" if matched else "missing"),

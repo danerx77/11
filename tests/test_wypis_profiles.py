@@ -17,6 +17,10 @@ from utils.wypis_profiles import (  # noqa: E402
     FIELD_LABELS,
     analyze_text,
     default_profiles,
+    custom_field_key,
+    is_custom_field,
+    profile_field_defs,
+    profile_field_keys,
     detect_profile,
     extract_field,
     find_profile,
@@ -706,3 +710,86 @@ class OdczytNowychPolTests(unittest.TestCase):
                 self.assertEqual(
                     extract_field(self.TEKST, profil, pole), oczekiwane
                 )
+
+
+class WlasnePolaTests(unittest.TestCase):
+    """Runda 22: użytkownik dodaje i usuwa pola, bo urzędy mają różne rubryki."""
+
+    def test_klucz_pola_wlasnego_ma_przedrostek(self):
+        klucz = custom_field_key("Numer arkusza")
+        self.assertTrue(is_custom_field(klucz))
+        self.assertNotIn(klucz, FIELD_KEYS)
+
+    def test_klucze_sie_nie_powtarzaja(self):
+        pierwszy = custom_field_key("Arkusz")
+        drugi = custom_field_key("Arkusz", [pierwszy])
+        self.assertNotEqual(pierwszy, drugi)
+
+    def test_polskie_znaki_w_nazwie_dzialaja(self):
+        klucz = custom_field_key("Księga wieczysta działki")
+        self.assertTrue(is_custom_field(klucz))
+        self.assertTrue(klucz.replace("_", "").isalnum())
+
+    def test_pola_wbudowane_nie_sa_wlasne(self):
+        for key in FIELD_KEYS:
+            with self.subTest(pole=key):
+                self.assertFalse(is_custom_field(key))
+
+    def test_wlasne_pole_widac_w_tabeli(self):
+        profil = normalize_profile(
+            {"name": "t", "custom_fields": {"custom_arkusz": "Arkusz mapy"}}
+        )
+        klucze = profile_field_keys(profil)
+        self.assertIn("custom_arkusz", klucze)
+        self.assertEqual(len(klucze), len(FIELD_KEYS) + 1)
+
+    def test_ukryte_pole_znika_z_tabeli(self):
+        profil = normalize_profile({"name": "t", "hidden_fields": ["regon"]})
+        self.assertNotIn("regon", profile_field_keys(profil))
+
+    def test_zapis_zachowuje_wlasne_pola(self):
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "custom_fields": {"custom_arkusz": "Arkusz"},
+                "fields": {"custom_arkusz": ["Nr arkusza"]},
+                "manual_values": {"custom_arkusz": "12"},
+            }
+        )
+        self.assertEqual(profil["custom_fields"], {"custom_arkusz": "Arkusz"})
+        self.assertEqual(profil["fields"]["custom_arkusz"], ["Nr arkusza"])
+        self.assertEqual(profil["manual_values"]["custom_arkusz"], "12")
+
+    def test_odrzuca_wlasne_pole_bez_przedrostka(self):
+        profil = normalize_profile(
+            {"name": "t", "custom_fields": {"zle": "Bez przedrostka"}}
+        )
+        self.assertEqual(profil["custom_fields"], {})
+
+    def test_wlasne_pole_da_sie_odczytac_z_tekstu(self):
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "custom_fields": {"custom_arkusz": "Arkusz mapy"},
+                "fields": {"custom_arkusz": ["Arkusz mapy"]},
+            }
+        )
+        wiersze = {
+            r["field"]: r for r in analyze_text("Arkusz mapy: 12\n", profil)
+        }
+        self.assertIn("custom_arkusz", wiersze)
+        self.assertEqual(wiersze["custom_arkusz"]["value"], "12")
+        self.assertEqual(wiersze["custom_arkusz"]["label"], "Arkusz mapy")
+
+
+class SkasowaneWartosciTests(unittest.TestCase):
+    """Wartość skasowaną przyciskiem program ma zostawić pustą."""
+
+    def test_profil_pamieta_skasowane_pola(self):
+        profil = normalize_profile(
+            {"name": "t", "skipped_values": ["area", "kw"]}
+        )
+        self.assertEqual(profil["skipped_values"], ["area", "kw"])
+
+    def test_domyslnie_nic_nie_jest_skasowane(self):
+        self.assertEqual(normalize_profile({"name": "t"})["skipped_values"], [])

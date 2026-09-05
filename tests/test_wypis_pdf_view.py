@@ -1249,12 +1249,46 @@ class ZakladkaTekstowaTests(unittest.TestCase):
         finally:
             okno.deleteLater()
 
-    def test_nazwa_pola_nie_zawiera_cyfr(self):
+    def test_pomija_dane_i_bierze_nazwe_pola(self):
         if QApplication.instance() is None:
             self.skipTest("brak Qt")
         okno = self._dialog()
         try:
-            # „0019,” stoi przed „BOJANO”, ale to dana, nie nazwa pola.
-            self.assertEqual(okno._label_for_value("BOJANO"), "")
+            # „0019,” stoi tuż przed „BOJANO”, ale to dana, nie nazwa.
+            # Nazwą jest „Obreb” z lewej strony tego samego wiersza.
+            self.assertEqual(okno._label_for_value("BOJANO"), "Obreb")
+        finally:
+            okno.deleteLater()
+
+    def test_znajduje_nazwe_kolumny_z_wiersza_wyzej(self):
+        if QApplication.instance() is None:
+            self.skipTest("brak Qt")
+        okno = self._dialog()
+        okno.pdf_text = (
+            "Obreb   Nr dzialki   Pow. [ha]   Opis uzytku\n"
+            "0019, BOJANO   145/7   0.0235   dr\n"
+        )
+        try:
+            for wartosc, oczekiwane in (
+                ("145/7", "Nr dzialki"),
+                ("0.0235", "Pow. [ha]"),
+                ("dr", "Opis uzytku"),
+            ):
+                with self.subTest(wartosc=wartosc):
+                    self.assertEqual(
+                        okno._label_for_value(wartosc), oczekiwane
+                    )
+        finally:
+            okno.deleteLater()
+
+    def test_zaznaczenie_wielu_wierszy_nie_gubi_nazwy(self):
+        if QApplication.instance() is None:
+            self.skipTest("brak Qt")
+        okno = self._dialog()
+        try:
+            # Qt oddziela wiersze znakiem separatora akapitu.
+            self.assertEqual(
+                okno._label_for_value("POMORSKIE\nPowiat"), "Wojewodztwo"
+            )
         finally:
             okno.deleteLater()

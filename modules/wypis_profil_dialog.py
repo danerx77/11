@@ -60,6 +60,9 @@ from utils.wypis_profiles import (
     normalize_profile,
     save_settings,
     summarize,
+    custom_field_key,
+    is_custom_field,
+    profile_field_defs,
 )
 
 STATUS_COLORS = {
@@ -67,7 +70,7 @@ STATUS_COLORS = {
     "manual": "#f1c40f",
     "ok": "#2ecc71",
     "found": "#f1c40f",
-    "missing": "#e74c3c",
+    "missing": "#8fa3b8",
 }
 
 STATUS_TEXTS = {
@@ -75,7 +78,7 @@ STATUS_TEXTS = {
     "manual": "✏️ wpisano ręcznie",
     "ok": "✅ odczytano",
     "found": "⚠️ brak wartości",
-    "missing": "❌ nie znaleziono",
+    "missing": "➖ nieokreślony",
 }
 
 #: Pełne wyjaśnienia statusów — pokazywane jako podpowiedź.
@@ -84,7 +87,7 @@ STATUS_HINTS = {
     "manual": "Wartość poprawiona ręcznie — program nie nadpisze jej odczytem z PDF.",
     "ok": "Program znalazł etykietę i odczytał wartość.",
     "found": "Etykieta jest w dokumencie, ale nie ma przy niej wartości.",
-    "missing": "Nie znaleziono tej etykiety — wskaż ją na dokumencie.",
+    "missing": "Pole nieokreślone — wskaż je na dokumencie albo wpisz wartość ręcznie.",
 }
 
 
@@ -119,6 +122,8 @@ class WypisProfileDialog(QDialog):
         self._manual_values: dict[str, str] = {}
         #: Obszary odczytu narysowane myszką: {klucz pola: prostokąt %}.
         self._areas: dict[str, dict] = {}
+        # Pola, których wartość użytkownik świadomie skasował.
+        self._skipped_values: set[str] = set()
 
         self._build_ui()
         self._apply_style()
@@ -391,6 +396,14 @@ class WypisProfileDialog(QDialog):
         self.btn_clear_row.clicked.connect(self._clear_row)
         edit_row.addWidget(self.btn_clear_row)
 
+        self.btn_clear_value = QPushButton("🚫 Usuń wartość")
+        self.btn_clear_value.setToolTip(
+            "Kasuje odczytaną wartość w zaznaczonym wierszu — razem z\n"
+            "narysowanym obszarem i ręcznym wpisem. Etykiety zostają."
+        )
+        self.btn_clear_value.clicked.connect(self._clear_row_value)
+        edit_row.addWidget(self.btn_clear_value)
+
         self.btn_clear_all = QPushButton("🧹 Wyczyść wszystkie")
         self.btn_clear_all.setToolTip("Usuwa wszystkie przypisania w tym wzorze")
         self.btn_clear_all.clicked.connect(self._clear_all_rows)
@@ -398,6 +411,43 @@ class WypisProfileDialog(QDialog):
 
         edit_row.addStretch()
         fields_layout.addLayout(edit_row)
+
+        # ── Zarządzanie polami: wypisy z różnych urzędów mają różne rubryki ──
+        pola_row = QHBoxLayout()
+        pola_row.addWidget(QLabel("Pola:"))
+
+        self.btn_field_add = QPushButton("➕ Dodaj pole")
+        self.btn_field_add.setToolTip(
+            "Dodaje własne pole, jeśli w Twoim wypisie jest rubryka,\n"
+            "której program jeszcze nie zna."
+        )
+        self.btn_field_add.clicked.connect(self._add_custom_field)
+        pola_row.addWidget(self.btn_field_add)
+
+        self.btn_field_rename = QPushButton("✏️ Zmień nazwę pola")
+        self.btn_field_rename.setToolTip(
+            "Zmienia nazwę własnego pola (wbudowanych nazw nie zmieniamy)."
+        )
+        self.btn_field_rename.clicked.connect(self._rename_custom_field)
+        pola_row.addWidget(self.btn_field_rename)
+
+        self.btn_field_remove = QPushButton("➖ Usuń pole")
+        self.btn_field_remove.setToolTip(
+            "Chowa niepotrzebne pole z tabeli. Pole wbudowane możesz\n"
+            "przywrócić przyciskiem „Przywróć pola”."
+        )
+        self.btn_field_remove.clicked.connect(self._remove_field)
+        pola_row.addWidget(self.btn_field_remove)
+
+        self.btn_field_restore = QPushButton("↩ Przywróć pola")
+        self.btn_field_restore.setToolTip(
+            "Pokazuje z powrotem wszystkie ukryte pola wbudowane."
+        )
+        self.btn_field_restore.clicked.connect(self._restore_hidden_fields)
+        pola_row.addWidget(self.btn_field_restore)
+
+        pola_row.addStretch()
+        fields_layout.addLayout(pola_row)
 
         self.lbl_summary = QLabel("Wczytaj PDF, aby zobaczyć wynik odczytu.")
         self.lbl_summary.setWordWrap(True)
@@ -691,9 +741,15 @@ class WypisProfileDialog(QDialog):
         self._loading = True
 
         self.markers_edit.setText("; ".join(profile.get("markers", [])))
+        self._skipped_values = {
+            str(k) for k in (profile.get("skipped_values") or [])
+        }
 
-        self.table.setRowCount(len(FIELD_KEYS))
-        for row, (key, label, hint) in enumerate(FIELD_DEFS):
+        # Lista pól zależy od wzoru — użytkownik może dodać własne
+        # i ukryć te, których jego urząd nie używa.
+        widoczne = profile_field_defs(profile)
+        self.table.setRowCount(len(widoczne))
+        for row, (key, label, hint) in enumerate(widoczne):
             name_item = QTableWidgetItem(label)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             name_item.setToolTip(hint)
@@ -758,6 +814,7 @@ class WypisProfileDialog(QDialog):
 
         if tekst:
             self._manual_values[key] = tekst
+            self._skipped_values.discard(key)
             komunikat = f"✏️ Ręcznie ustawiono „{key_item.text()}” = {tekst}"
         else:
             # Pusta komórka = powrót do wartości odczytanej z dokumentu.
@@ -845,6 +902,7 @@ class WypisProfileDialog(QDialog):
             "h": rect.height() / obraz.height() * 100.0,
             "page": self._page_index,
         }
+        self._skipped_values.discard(key)
         self._store_areas_into_profile()
 
         if self.pdf_text:
@@ -952,6 +1010,7 @@ class WypisProfileDialog(QDialog):
             "labels": labels,
             "manual": dict(self._manual_values),
             "areas": {k: dict(v) for k, v in self._areas.items()},
+            "skipped": set(self._skipped_values),
         }
 
     def _remember(self) -> None:
@@ -971,6 +1030,7 @@ class WypisProfileDialog(QDialog):
         self._areas = {
             k: dict(v) for k, v in dict(snapshot.get("areas", {})).items()
         }
+        self._skipped_values = set(snapshot.get("skipped", set()))
 
         self._loading = True
         for row in range(self.table.rowCount()):
@@ -983,6 +1043,7 @@ class WypisProfileDialog(QDialog):
         self._store_table_into_profile()
         self._store_manual_into_profile()
         self._store_areas_into_profile()
+        self._store_skipped_into_profile()
         if self.pdf_text:
             self._analyze()
         if self.pdf_path:
@@ -1019,6 +1080,210 @@ class WypisProfileDialog(QDialog):
         self.btn_redo.setEnabled(bool(self._redo))
 
     # ── Usuwanie przypisań ───────────────────────────────────────────
+
+    def _clear_row_value(self) -> None:
+        """Kasuje odczytaną wartość, zostawiając przypisane etykiety."""
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Zaznacz w tabeli wiersz, którego wartość chcesz usunąć.",
+            )
+            return
+
+        key_item = self.table.item(row, 0)
+        key = key_item.data(Qt.ItemDataRole.UserRole)
+
+        obecna = self.table.item(row, 3)
+        obecna = obecna.text().strip() if obecna else ""
+        if not obecna and key not in self._areas and key not in self._manual_values:
+            return
+
+        self._remember()
+        # Kasujemy wszystkie źródła wartości: obszar, wpis ręczny i odczyt.
+        self._areas.pop(key, None)
+        self._manual_values.pop(key, None)
+        self._skipped_values.add(key)
+        self._store_areas_into_profile()
+        self._store_manual_into_profile()
+        self._store_skipped_into_profile()
+
+        self._loading = True
+        self.table.setItem(row, 3, QTableWidgetItem(""))
+        self._loading = False
+
+        if self.pdf_text:
+            self._analyze()
+        self._refresh_marks()
+        self.lbl_summary.setText(
+            f"🚫 Usunięto wartość pola „{key_item.text()}”. "
+            + self.lbl_summary.text()
+        )
+
+    def _add_custom_field(self) -> None:
+        """Dodaje własne pole — gdy wypis ma rubrykę, której program nie zna."""
+
+        nazwa, ok = QInputDialog.getText(
+            self,
+            "Nowe pole",
+            "Nazwa pola, tak jak ma się pokazywać w programie:",
+        )
+        if not ok:
+            return
+
+        nazwa = str(nazwa or "").strip()
+        if not nazwa:
+            QMessageBox.information(
+                self, "Pusta nazwa", "Podaj nazwę nowego pola."
+            )
+            return
+
+        profile = self.profiles[self._current_index()]
+        wlasne = dict(profile.get("custom_fields") or {})
+        zajete = set(FIELD_KEYS) | set(wlasne)
+        klucz = custom_field_key(nazwa, zajete)
+
+        self._remember()
+        wlasne[klucz] = nazwa
+        profile["custom_fields"] = wlasne
+
+        # Nowe pole nie może zostać ukryte resztką po starym wpisie.
+        ukryte = [k for k in (profile.get("hidden_fields") or []) if k != klucz]
+        profile["hidden_fields"] = ukryte
+
+        self._load_profile_into_table()
+        self._select_row_by_key(klucz)
+        self.lbl_summary.setText(f"➕ Dodano pole „{nazwa}”.")
+
+    def _rename_custom_field(self) -> None:
+        """Zmienia nazwę pola dodanego przez użytkownika."""
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Zaznacz w tabeli pole, któremu chcesz zmienić nazwę.",
+            )
+            return
+
+        key_item = self.table.item(row, 0)
+        key = key_item.data(Qt.ItemDataRole.UserRole)
+        if not is_custom_field(key):
+            QMessageBox.information(
+                self,
+                "Pole wbudowane",
+                "Nazw pól wbudowanych nie zmieniamy — inne części programu "
+                "korzystają z nich pod tymi nazwami.\n\n"
+                "Możesz je ukryć przyciskiem „Usuń pole” i dodać własne.",
+            )
+            return
+
+        nazwa, ok = QInputDialog.getText(
+            self, "Zmiana nazwy pola", "Nowa nazwa:", text=key_item.text()
+        )
+        if not ok:
+            return
+        nazwa = str(nazwa or "").strip()
+        if not nazwa:
+            return
+
+        self._remember()
+        profile = self.profiles[self._current_index()]
+        wlasne = dict(profile.get("custom_fields") or {})
+        wlasne[key] = nazwa
+        profile["custom_fields"] = wlasne
+        self._load_profile_into_table()
+        self._select_row_by_key(key)
+        self.lbl_summary.setText(f"✏️ Zmieniono nazwę pola na „{nazwa}”.")
+
+    def _remove_field(self) -> None:
+        """Chowa pole z tabeli — wbudowane da się przywrócić."""
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Zaznacz w tabeli pole, które chcesz usunąć.",
+            )
+            return
+
+        key_item = self.table.item(row, 0)
+        key = key_item.data(Qt.ItemDataRole.UserRole)
+        nazwa = key_item.text()
+
+        pytanie = (
+            f"Usunąć pole „{nazwa}” z tego wzoru?"
+            if is_custom_field(key)
+            else f"Ukryć pole „{nazwa}”?\n\n"
+            "Pole wbudowane możesz przywrócić przyciskiem „Przywróć pola”."
+        )
+        if QMessageBox.question(
+            self,
+            "Usunięcie pola",
+            pytanie,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        self._remember()
+        profile = self.profiles[self._current_index()]
+
+        if is_custom_field(key):
+            wlasne = dict(profile.get("custom_fields") or {})
+            wlasne.pop(key, None)
+            profile["custom_fields"] = wlasne
+        else:
+            ukryte = list(profile.get("hidden_fields") or [])
+            if key not in ukryte:
+                ukryte.append(key)
+            profile["hidden_fields"] = ukryte
+
+        # Sprzątamy dane, które zostałyby po niewidocznym polu.
+        for slownik in (profile.get("fields"), profile.get("manual_values"),
+                        profile.get("areas")):
+            if isinstance(slownik, dict):
+                slownik.pop(key, None)
+        self._areas.pop(key, None)
+        self._manual_values.pop(key, None)
+
+        self._load_profile_into_table()
+        self.lbl_summary.setText(f"➖ Usunięto pole „{nazwa}”.")
+
+    def _restore_hidden_fields(self) -> None:
+        """Przywraca ukryte pola wbudowane."""
+
+        profile = self.profiles[self._current_index()]
+        ukryte = list(profile.get("hidden_fields") or [])
+        if not ukryte:
+            QMessageBox.information(
+                self, "Nie ma co przywracać", "Żadne pole nie jest ukryte."
+            )
+            return
+
+        self._remember()
+        profile["hidden_fields"] = []
+        self._load_profile_into_table()
+        self.lbl_summary.setText(f"↩ Przywrócono ukryte pola ({len(ukryte)}).")
+
+    def _select_row_by_key(self, key: str) -> None:
+        """Zaznacza w tabeli wiersz o wskazanym kluczu pola."""
+
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == key:
+                self.table.setCurrentCell(row, 1)
+                return
+
+    def _store_skipped_into_profile(self) -> None:
+        """Zapisuje listę pól z celowo skasowaną wartością."""
+
+        index = self._current_index()
+        if index >= 0:
+            self.profiles[index]["skipped_values"] = sorted(self._skipped_values)
 
     def _clear_row(self) -> None:
         """Usuwa etykiety z zaznaczonego pola."""
@@ -1306,14 +1571,15 @@ class WypisProfileDialog(QDialog):
         profile = self._current_profile()
         marks: dict[str, object] = {}
         values: dict[str, object] = {}
-        for key in FIELD_KEYS:
+        etykiety = {k: l for k, l, _h in profile_field_defs(profile)}
+        for key, nazwa in etykiety.items():
             rect, value_rect = self.page_view.label_and_value_rects(
                 profile["fields"].get(key, [])
             )
             if rect is not None:
-                marks[FIELD_LABELS[key]] = rect
+                marks[nazwa] = rect
             if value_rect is not None:
-                values[FIELD_LABELS[key]] = value_rect
+                values[nazwa] = value_rect
         self.page_view.set_marks(marks, values)
 
         # Narysowane obszary przeliczamy z procentów na piksele podglądu.
@@ -1396,6 +1662,7 @@ class WypisProfileDialog(QDialog):
                 return
             self._remember()
             self._manual_values[key] = wpis
+            self._skipped_values.discard(key)
             self._store_manual_into_profile()
             self._loading = True
             self.table.setItem(row, 3, QTableWidgetItem(wpis))
@@ -1481,6 +1748,12 @@ class WypisProfileDialog(QDialog):
             data = rows.get(key, {})
             status = data.get("status", "missing")
 
+            # Wartość skasowana przyciskiem „Usuń wartość” ma zostać pusta,
+            # dopóki użytkownik sam nie wskaże jej na nowo.
+            if key in self._skipped_values:
+                status = "missing"
+                data = {}
+
             # Komórki tworzymy tylko raz — ponowne setItem() na istniejącym
             # elemencie Qt zgłasza ostrzeżenie o zmianie właściciela.
             status_item = self.table.item(row, 2)
@@ -1545,8 +1818,19 @@ class WypisProfileDialog(QDialog):
         self.lbl_summary.setText(summarize(rows.values()))
         self.table.resizeRowsToContents()
 
+    def _selected_text(self) -> str:
+        """Zaznaczony tekst z zakładki tekstowej.
+
+        Qt oddziela wiersze znakiem ``\u2029`` (separator akapitu), a nie
+        zwykłym końcem linii — bez zamiany zaznaczenie obejmujące kilka
+        wierszy nie dawało się z niczym porównać.
+        """
+
+        zaznaczenie = self.text_view.textCursor().selectedText()
+        return zaznaczenie.replace("\u2029", "\n").replace("\u2028", "\n").strip()
+
     def _use_selection_as_label(self):
-        selection = self.text_view.textCursor().selectedText().strip()
+        selection = self._selected_text()
         if not selection:
             QMessageBox.information(
                 self,
@@ -1582,7 +1866,7 @@ class WypisProfileDialog(QDialog):
     def _use_selection_as_value(self):
         """Zaznaczono WARTOŚĆ — program sam szuka stojącej przy niej nazwy."""
 
-        zaznaczenie = self.text_view.textCursor().selectedText().strip()
+        zaznaczenie = self._selected_text()
         if not zaznaczenie:
             QMessageBox.information(
                 self,
@@ -1634,6 +1918,7 @@ class WypisProfileDialog(QDialog):
 
         # Nie ma nazwy przy wartości — zapisujemy ją jako wpis ręczny.
         self._manual_values[key] = zaznaczenie
+        self._skipped_values.discard(key)
         self._store_manual_into_profile()
         self._analyze()
         self._refresh_marks()
@@ -1644,38 +1929,96 @@ class WypisProfileDialog(QDialog):
         self.lbl_text_hint.setStyleSheet("color: #f1c40f;")
 
     def _label_for_value(self, wartosc: str) -> str:
-        """Szuka nazwy pola stojącej przy wskazanej wartości w tekście."""
+        """Szuka nazwy pola stojącej przy wskazanej wartości w tekście.
+
+        Sprawdza po kolei cztery układy spotykane w wypisach:
+        „Nazwa: wartość”, „Nazwa   wartość”, nazwę w wierszu wyżej
+        (tabela w kratkę) oraz nazwę w wierszu wyżej po lewej.
+        """
 
         import re
 
         tekst = self.pdf_text or ""
+        wartosc = str(wartosc or "").strip()
         if not tekst or not wartosc:
             return ""
 
-        for linia in tekst.splitlines():
+        # Wieloliniowe zaznaczenie — bierzemy pierwszy niepusty wiersz.
+        if "\n" in wartosc:
+            czesci = [c.strip() for c in wartosc.split("\n") if c.strip()]
+            if not czesci:
+                return ""
+            wartosc = czesci[0]
+
+        linie = tekst.splitlines()
+        for numer, linia in enumerate(linie):
             if wartosc not in linia:
                 continue
 
             przed = linia.split(wartosc)[0].strip()
-            if not przed:
-                continue
 
-            # „Województwo:  POMORSKIE” — nazwa stoi przed dwukropkiem.
+            # 1. „Województwo: POMORSKIE”
             if przed.endswith(":"):
-                return przed.rstrip(":").strip(" ,;-")
-
-            # „Województwo   POMORSKIE” — nazwa to pierwsza kolumna.
-            kolumny = [
-                czesc.strip()
-                for czesc in re.split(r"\s{2,}", przed)
-                if czesc.strip()
-            ]
-            if kolumny:
-                kandydat = kolumny[-1].strip(" :,;-")
-                # Nazwa pola nie zawiera cyfr.
-                if kandydat and not any(z.isdigit() for z in kandydat):
+                kandydat = przed.rstrip(":").strip(" ,;-")
+                # Przy kilku parach w wierszu bierzemy tę bliżej wartości.
+                kandydat = re.split(r"\s{2,}", kandydat)[-1].strip()
+                if kandydat:
                     return kandydat
+
+            # 2. „Województwo   POMORSKIE” — nazwa to ostatnia kolumna przed.
+            #    Gdy tuż przed wartością stoi dana („0019, BOJANO”),
+            #    cofamy się do wcześniejszej kolumny w tym samym wierszu.
+            if przed:
+                kolumny = [
+                    czesc.strip(" :,;-")
+                    for czesc in re.split(r"\s{2,}", przed)
+                    if czesc.strip(" :,;-")
+                ]
+                for kandydat in reversed(kolumny):
+                    if kandydat and not self._wyglada_na_dane(kandydat):
+                        return kandydat
+
+            # 3. Tabela w kratkę: nazwa kolumny stoi w wierszu wyżej,
+            #    w tym samym miejscu co wartość.
+            poczatek = linia.index(wartosc)
+            koniec = poczatek + len(wartosc)
+            for wyzej in range(numer - 1, max(numer - 4, -1), -1):
+                naglowek = self._kolumna_w_wierszu(
+                    linie[wyzej], poczatek, koniec
+                )
+                if naglowek and not self._wyglada_na_dane(naglowek):
+                    return naglowek
+
         return ""
+
+    @staticmethod
+    def _wyglada_na_dane(tekst: str) -> bool:
+        """Czy tekst wygląda na daną (ma cyfry), a nie na nazwę pola?"""
+
+        return any(znak.isdigit() for znak in str(tekst or ""))
+
+    @staticmethod
+    def _kolumna_w_wierszu(linia: str, od: int, do: int | None = None) -> str:
+        """Zwraca kolumnę wiersza najlepiej pokrywającą się z zakresem.
+
+        Wypisy bywają nierówno wyrównane, więc zamiast wymagać trafienia
+        co do znaku wybieramy kolumnę o największym wspólnym fragmencie.
+        """
+
+        import re
+
+        if not linia.strip():
+            return ""
+
+        do = od + 1 if do is None else do
+        najlepsza, najlepsze_pokrycie = "", 0
+        for dopasowanie in re.finditer(r"\S(?:.*?\S)?(?=\s{2,}|$)", linia):
+            poczatek, koniec = dopasowanie.span()
+            pokrycie = min(koniec, do) - max(poczatek, od)
+            if pokrycie > najlepsze_pokrycie:
+                najlepsze_pokrycie = pokrycie
+                najlepsza = dopasowanie.group().strip(" :,;-")
+        return najlepsza
 
     # ── Zapis ────────────────────────────────────────────────────────
 

@@ -1225,6 +1225,60 @@ jak działało to wcześniej. Domyślnie opcja jest włączona.
 Ustawienie zapisuje się pod kluczem `auto_today_date`, a całą logikę
 trzyma `utils/auto_date.py`, więc łatwo podpiąć ją w kolejnych miejscach.
 
+## 52. Poprawki wzorów odczytu: tekst, kasowanie wartości, własne pola
+
+**Zgłoszenie:** przycisk „Zaznaczenie to WARTOŚĆ" nie działał; brakowało
+możliwości usunięcia odczytanej wartości; stan „nie znaleziono" miał się
+nazywać inaczej; oraz — najważniejsze — program pokazywał pola, których
+w wypisie nie ma, a brakowało tych, które są.
+
+### Zakładka „Tekst dokumentu" — naprawiona i rozbudowana
+
+**Dlaczego nie działała.** Qt oddziela wiersze znakiem `\u2029`
+(separator akapitu), a nie zwykłym końcem linii. Gdy zaznaczenie
+obejmowało więcej niż jeden wiersz, tekst nie pasował do niczego
+w dokumencie i program nic nie znajdował. Teraz zamieniamy ten znak na
+zwykły koniec linii, a przy zaznaczeniu wielu wierszy bierzemy pierwszy
+niepusty.
+
+**Rozpoznawanie nazwy pola** działa teraz w czterech układach zamiast
+jednego:
+
+1. `Województwo: POMORSKIE` — nazwa przed dwukropkiem;
+2. `Województwo   POMORSKIE` — nazwa w kolumnie obok;
+3. `Obręb   0019, BOJANO` — gdy tuż przed wartością stoi dana, program
+   cofa się do wcześniejszej kolumny;
+4. tabela w kratkę — nazwa kolumny stoi w wierszu **wyżej**, a program
+   wybiera tę, która najlepiej pokrywa się z wartością.
+
+### „Usuń wartość"
+
+Nowy przycisk pod tabelą kasuje odczytaną wartość zaznaczonego pola —
+razem z narysowanym obszarem i ręcznym wpisem. Etykiety zostają, więc
+wzór się nie psuje. Program nie wpisuje tam nic z powrotem, dopóki sam
+nie wskażesz wartości na nowo. Cofnięcie (Ctrl+Z) przywraca.
+
+### Stan „nieokreślony"
+
+Zamiast czerwonego „❌ nie znaleziono" jest teraz spokojne
+„➖ nieokreślony" w szarości — brak wartości to zwykły stan pracy,
+a nie błąd.
+
+### Własne pola
+
+Wypisy z różnych urzędów mają różne rubryki, więc lista pól nie jest już
+sztywna. Pod tabelą doszedł rząd **„Pola:"** z czterema przyciskami:
+
+- **➕ Dodaj pole** — wpisujesz nazwę i pole pojawia się w tabeli;
+- **✏️ Zmień nazwę pola** — dla pól dodanych przez Ciebie;
+- **➖ Usuń pole** — chowa niepotrzebne pole (własne znika na stałe,
+  wbudowane tylko się ukrywa);
+- **↩ Przywróć pola** — pokazuje z powrotem ukryte pola wbudowane.
+
+Pola własne zapisują się razem ze wzorem, więc każdy urząd może mieć
+swój zestaw. Nazw pól wbudowanych nie zmieniamy — korzystają z nich inne
+części programu — ale można je ukryć i dodać własne pod swoją nazwą.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
