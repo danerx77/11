@@ -374,6 +374,9 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
                 "w": float(value.get("w", 0.0)),
                 "h": float(value.get("h", 0.0)),
                 "page": int(value.get("page", 0)),
+                # Gdy True, ten sam prostokąt czytamy z KAŻDEJ strony —
+                # przydaje się, gdy kolejne strony mają ten sam układ.
+                "all_pages": bool(value.get("all_pages", False)),
             }
         except (TypeError, ValueError):
             continue

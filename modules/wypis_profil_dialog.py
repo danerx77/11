@@ -1005,6 +1005,23 @@ class WypisProfileDialog(QDialog):
             "page": self._page_index,
         }
         self._skipped_values.discard(key)
+
+        # Przy wielostronicowych wypisach pytamy, czy ten sam prostokąt
+        # ma być czytany również z pozostałych stron.
+        if self._page_total > 1:
+            odpowiedz = QMessageBox.question(
+                self,
+                "Obszar na innych stronach",
+                "Czytać ten sam obszar także z pozostałych stron?\n\n"
+                "Tak — gdy kolejne strony mają ten sam układ.\n"
+                "Nie — gdy obszar dotyczy tylko tej jednej strony.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            self._areas[key]["all_pages"] = (
+                odpowiedz == QMessageBox.StandardButton.Yes
+            )
+
         self._store_areas_into_profile()
 
         if self.pdf_text:
@@ -1057,7 +1074,9 @@ class WypisProfileDialog(QDialog):
         if not obszar or not self.pdf_path:
             return ""
         try:
-            return read_area_value(self.pdf_path, obszar)
+            return read_area_value(
+                self.pdf_path, obszar, page_override=self._page_index
+            )
         except Exception:  # pragma: no cover - zależne od pliku
             return ""
 
@@ -1864,7 +1883,9 @@ class WypisProfileDialog(QDialog):
         if obraz is not None and obraz.width() > 0:
             margines = self.page_view.margin_left
             for key, obszar in self._areas.items():
-                if int(obszar.get("page", 0)) != self._page_index:
+                if not obszar.get("all_pages") and (
+                    int(obszar.get("page", 0)) != self._page_index
+                ):
                     continue
                 obszary[key] = QRectF(
                     float(obszar.get("x", 0)) / 100.0 * obraz.width() + margines,

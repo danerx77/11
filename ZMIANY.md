@@ -1504,6 +1504,31 @@ cyfry, pod którą stoją prawdziwe dane, jest pomijana jako dalszy ciąg
 nagłówka. Wartości tekstowe bez cyfr („Jan Kowalski”) czytają się bez zmian,
 bo pod nimi nie ma już wiersza danych.
 
+## 61. Narysowany obszar może obowiązywać na wszystkich stronach
+
+**Dlaczego kwadrat nie przechodził na następną stronę.** Obszar zapisywał się
+razem z numerem strony, na której go narysowano, i tylko tam był czytany.
+Przy wypisach, w których kolejne strony mają ten sam układ, trzeba było
+rysować ten sam prostokąt od nowa na każdej stronie.
+
+Teraz po narysowaniu prostokąta w dokumencie wielostronicowym program pyta:
+
+> **Czytać ten sam obszar także z pozostałych stron?**
+> Tak — gdy kolejne strony mają ten sam układ.
+> Nie — gdy obszar dotyczy tylko tej jednej strony.
+
+Po wybraniu „Tak” ten sam prostokąt czyta wartość z tej strony, którą właśnie
+oglądasz, a jego ramka jest widoczna na każdej z nich. Po „Nie” zachowuje się
+jak dotąd — działa wyłącznie na swojej stronie.
+
+| Ustawienie | Strona 1 | Strona 2 |
+|---|---|---|
+| na każdej stronie | `27/176` | `99/12` |
+| tylko ta strona | `27/176` | `27/176` |
+
+Wybór zapisuje się we wzorze, więc kolejne wypisy z tego samego urzędu czytają
+się tak samo bez ponownego rysowania.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

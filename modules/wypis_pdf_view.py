@@ -408,7 +408,13 @@ def text_in_rect(page: PageData, rect: QRectF) -> str:
     return " ".join(kawalki).strip(" :,;-")
 
 
-def read_area_value(pdf_path: str, area: dict, *, dpi: int = 96) -> str:
+def read_area_value(
+    pdf_path: str,
+    area: dict,
+    *,
+    dpi: int = 96,
+    page_override: int | None = None,
+) -> str:
     """Odczytuje tekst z obszaru zapisanego we wzorze.
 
     ``area`` trzyma położenie w procentach strony, więc ten sam wzór
@@ -419,6 +425,10 @@ def read_area_value(pdf_path: str, area: dict, *, dpi: int = 96) -> str:
         return ""
 
     strona = int(area.get("page", 0) or 0)
+    # Obszar oznaczony jako „na każdej stronie” czytamy z tej strony,
+    # którą użytkownik właśnie ogląda.
+    if page_override is not None and area.get("all_pages"):
+        strona = int(page_override)
     page = load_page(pdf_path, strona, dpi=dpi)
     if page is None:
         return ""

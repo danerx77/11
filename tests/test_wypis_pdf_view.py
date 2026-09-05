@@ -1833,3 +1833,92 @@ class ZmianaStronyOdczytTests(unittest.TestCase):
         self.dialog._reread_and_analyze()
         self.assertEqual(self._wartosc("Numer działki"), "99/12")
 
+
+class ObszarNaKazdejStronieTests(unittest.TestCase):
+    """Runda 31: narysowany obszar może obowiązywać na wszystkich stronach."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+
+        import fitz
+
+        cls._dir = tempfile.mkdtemp()
+        cls.pdf = str(Path(cls._dir) / "dwie.pdf")
+        doc = fitz.open()
+        for numer, powierzchnia in (("27/176", "0.0235"), ("99/12", "0.9999")):
+            page = doc.new_page()
+            y = 60
+            for linia in (
+                "W Y P I S",
+                "",
+                "Numer dzialki     Powierzchnia",
+                f"{numer}            {powierzchnia}",
+            ):
+                page.insert_text((40, y), linia, fontsize=9)
+                y += 20
+        doc.save(cls.pdf)
+        doc.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+
+        shutil.rmtree(cls._dir, ignore_errors=True)
+
+    def _obszar(self, all_pages: bool) -> dict:
+        from modules.wypis_pdf_view import load_page
+
+        strona = load_page(self.pdf, 0, dpi=96)
+        slowo = next(w for w in strona.words if "27/176" in w.text)
+        rect = slowo.rect
+        szerokosc = strona.image.width()
+        wysokosc = strona.image.height()
+        return {
+            "x": rect.left() / szerokosc * 100.0,
+            "y": rect.top() / wysokosc * 100.0,
+            "w": rect.width() / szerokosc * 100.0,
+            "h": rect.height() / wysokosc * 100.0,
+            "page": 0,
+            "all_pages": all_pages,
+        }
+
+    def test_obszar_tylko_dla_swojej_strony(self):
+        from modules.wypis_pdf_view import read_area_value
+
+        obszar = self._obszar(False)
+        # Mimo prośby o stronę 2 czytamy stronę zapisaną w obszarze.
+        self.assertEqual(
+            read_area_value(self.pdf, obszar, page_override=1), "27/176"
+        )
+
+    def test_obszar_na_kazdej_stronie_czyta_biezaca(self):
+        from modules.wypis_pdf_view import read_area_value
+
+        obszar = self._obszar(True)
+        self.assertEqual(
+            read_area_value(self.pdf, obszar, page_override=0), "27/176"
+        )
+        self.assertEqual(
+            read_area_value(self.pdf, obszar, page_override=1), "99/12"
+        )
+
+    def test_profil_pamieta_ustawienie(self):
+        from utils.wypis_profiles import normalize_profile
+
+        profil = normalize_profile(
+            {"name": "t", "areas": {"area": self._obszar(True)}}
+        )
+        self.assertTrue(profil["areas"]["area"]["all_pages"])
+
+    def test_domyslnie_obszar_dotyczy_jednej_strony(self):
+        from utils.wypis_profiles import normalize_profile
+
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "areas": {"area": {"x": 1, "y": 2, "w": 3, "h": 4, "page": 0}},
+            }
+        )
+        self.assertFalse(profil["areas"]["area"]["all_pages"])
+
