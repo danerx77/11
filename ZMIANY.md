@@ -1319,6 +1319,27 @@ wartości ręczne oraz wymuszony kierunek odczytu, który wraca do „Sam wybier
 Wiersz zostaje pusty także w kolumnie z wartością. Całość cofa się przyciskiem
 „↩ Cofnij”.
 
+## 54. Odczyt także z lewej strony i znad nazwy pola
+
+Kolumna „③ Skąd czytać” dostała dwa kolejne ustawienia. Teraz wartość można
+kazać czytać z każdej strony nazwy pola:
+
+| Ustawienie | Gdzie stoi wartość |
+|---|---|
+| 🔎 **Sam wybierz** | program decyduje sam (ustawienie domyślne) |
+| ➡️ **Obok, z prawej** | po prawej stronie nazwy |
+| ⬅️ **Obok, z lewej** | po lewej stronie nazwy — np. „27/176   Numer działki” |
+| ⬇️ **Pod spodem** | pod nazwą — nagłówki tabelki |
+| ⬆️ **Nad nazwą** | nad nazwą — podpis rubryki stoi pod danymi |
+
+Wymuszony kierunek jest wiążący: gdy ustawisz „z lewej”, a wartość leży
+z prawej, pole zostanie puste. Dzięki temu widać od razu, że ustawienie jest
+nie to, zamiast dostać podstawioną przypadkową daną.
+
+Przycisk „🪄 Wypełnij sam” sprawdza teraz wszystkie cztery strony po kolei —
+z prawej, spod spodu, z lewej i z góry — i zapisuje w polu ten kierunek,
+który dał wynik.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

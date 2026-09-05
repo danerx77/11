@@ -61,7 +61,9 @@ from utils.wypis_profiles import (
     save_settings,
     summarize,
     DIRECTION_AUTO,
+    DIRECTION_ABOVE,
     DIRECTION_BELOW,
+    DIRECTION_LEFT,
     DIRECTION_RIGHT,
     DIRECTIONS,
     custom_field_key,
@@ -1177,8 +1179,9 @@ class WypisProfileDialog(QDialog):
     def _autofill(self) -> None:
         """Wypełnia wszystkie puste pola tym, co program sam znajdzie.
 
-        Dla każdego nieodczytanego pola sprawdza oba kierunki — obok i pod
-        spodem — i zapisuje ten, który dał wynik. Pola już uzupełnione
+        Dla każdego nieodczytanego pola sprawdza po kolei wszystkie
+        kierunki — z prawej, spod spodu, z lewej i z góry — i zapisuje
+        ten, który dał wynik. Pola już uzupełnione
         (ręcznie, obszarem albo odczytem) zostawia w spokoju.
         """
 
@@ -1215,7 +1218,12 @@ class WypisProfileDialog(QDialog):
             if not profile["fields"].get(key):
                 continue          # bez etykiety nie ma czego szukać
 
-            for kierunek in (DIRECTION_RIGHT, DIRECTION_BELOW):
+            for kierunek in (
+                DIRECTION_RIGHT,
+                DIRECTION_BELOW,
+                DIRECTION_LEFT,
+                DIRECTION_ABOVE,
+            ):
                 proba = dict(profile)
                 proba["directions"] = {**kierunki, key: kierunek}
                 if extract_field(self.pdf_text, proba, key).strip():

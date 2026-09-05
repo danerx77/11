@@ -69,11 +69,15 @@ CUSTOM_PREFIX = "custom_"
 DIRECTION_AUTO = "auto"        # program sam decyduje (jak dotąd)
 DIRECTION_RIGHT = "right"      # zawsze z prawej strony
 DIRECTION_BELOW = "below"      # zawsze spod spodu
+DIRECTION_LEFT = "left"        # zawsze obok, po lewej stronie
+DIRECTION_ABOVE = "above"      # zawsze nad nazwą pola
 
 DIRECTIONS: tuple[tuple[str, str], ...] = (
     (DIRECTION_AUTO, "🔎 Sam wybierz"),
     (DIRECTION_RIGHT, "➡️ Obok, z prawej"),
+    (DIRECTION_LEFT, "⬅️ Obok, z lewej"),
     (DIRECTION_BELOW, "⬇️ Pod spodem"),
+    (DIRECTION_ABOVE, "⬆️ Nad nazwą"),
 )
 
 DIRECTION_LABELS: dict[str, str] = dict(DIRECTIONS)
@@ -818,6 +822,12 @@ def extract_field(
     if kierunek == DIRECTION_RIGHT:
         obok_tylko = _extract_from_same_row(lines, labels, profile)
         return obok_tylko[:max_length] if obok_tylko else ""
+    if kierunek == DIRECTION_LEFT:
+        z_lewej = _extract_from_left(lines, labels, profile)
+        return z_lewej[:max_length] if z_lewej else ""
+    if kierunek == DIRECTION_ABOVE:
+        z_gory = _extract_from_above(lines, labels, profile)
+        return z_gory[:max_length] if z_gory else ""
 
     # Pionowa lista pól bez dwukropków — „Województwo   POMORSKIE”.
     # Etykieta jest pierwszą kolumną, wartość następną w TYM SAMYM wierszu.
@@ -972,6 +982,83 @@ def _extract_from_column(
                     wartosc = najlepsza[1]
                 elif pozycja < len(ponizej):
                     wartosc = ponizej[pozycja][1]
+                else:
+                    continue
+
+                wartosc = wartosc.strip(" :,;-")
+                if wartosc and not _looks_like_label(wartosc, profile):
+                    return wartosc
+                break
+    return ""
+
+
+def _extract_from_left(
+    lines: list[str],
+    labels: Iterable[str],
+    profile: Mapping[str, Any] | None,
+) -> str:
+    """Czyta wartość stojącą po LEWEJ stronie etykiety w tym samym wierszu.
+
+    Tak bywa w formularzach, gdzie liczba stoi przed opisem, np.
+    „27/176   Numer działki”.
+    """
+
+    for line in lines:
+        if not line.strip():
+            continue
+        kolumny = _split_columns(line)
+        if len(kolumny) < 2:
+            continue
+
+        for pozycja, (_start, tekst) in enumerate(kolumny):
+            if pozycja == 0:
+                continue                 # po lewej nic już nie ma
+            if not any(_fold(tekst) == _fold(label) for label in labels):
+                continue
+            wartosc = kolumny[pozycja - 1][1].strip(" :,;-")
+            if wartosc and not _looks_like_label(wartosc, profile):
+                return wartosc
+    return ""
+
+
+def _extract_from_above(
+    lines: list[str],
+    labels: Iterable[str],
+    profile: Mapping[str, Any] | None,
+) -> str:
+    """Czyta wartość stojącą NAD etykietą, w tej samej kolumnie.
+
+    Odwrotność tabeli w kratkę: podpis rubryki jest pod danymi, np. suma
+    nad opisem „Powierzchnia razem”.
+    """
+
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        kolumny = _split_columns(line)
+        if not kolumny:
+            continue
+
+        for pozycja, (start, tekst) in enumerate(kolumny):
+            if not any(_fold(tekst) == _fold(label) for label in labels):
+                continue
+
+            # Pierwszy niepusty wiersz powyżej — szukamy w nim kolumny
+            # stojącej w tym samym miejscu co nasza etykieta.
+            for wyzej in reversed(lines[max(0, index - 5): index]):
+                if not wyzej.strip():
+                    continue
+                powyzej = _split_columns(wyzej)
+                if not powyzej:
+                    continue
+
+                najlepsza = min(
+                    powyzej, key=lambda para: abs(para[0] - start), default=None
+                )
+                if najlepsza is not None and abs(najlepsza[0] - start) <= 4:
+                    wartosc = najlepsza[1]
+                elif pozycja < len(powyzej):
+                    wartosc = powyzej[pozycja][1]
                 else:
                     continue
 

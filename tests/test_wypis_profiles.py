@@ -17,7 +17,9 @@ from utils.wypis_profiles import (  # noqa: E402
     FIELD_LABELS,
     analyze_text,
     default_profiles,
+    DIRECTION_ABOVE,
     DIRECTION_BELOW,
+    DIRECTION_LEFT,
     DIRECTION_RIGHT,
     custom_field_key,
     field_direction,
@@ -860,3 +862,61 @@ class KierunekOdczytuTests(unittest.TestCase):
         # wartością Powiatu jest „kartuski”, a nie „Gmina”.
         profil = self._profil("county", "Powiat")
         self.assertEqual(extract_field(self.OBOK, profil, "county"), "kartuski")
+
+
+class KierunekZLewejINadTests(unittest.TestCase):
+    """Runda 24: wartość bywa też po lewej stronie nazwy albo nad nią."""
+
+    LEWO = "27/176   Numer dzialki\n0,4500   Powierzchnia\n"
+    GORA = "27/176      Borkowo\nNumer dzialki   Polozenie\n"
+    PRAWO = "Powiat   kartuski\n"
+
+    def _profil(self, pole, etykieta, kierunek):
+        return normalize_profile(
+            {
+                "name": "t",
+                "fields": {pole: [etykieta]},
+                "directions": {pole: kierunek},
+            }
+        )
+
+    def test_czyta_wartosc_z_lewej_strony(self):
+        profil = self._profil("parcel_number", "Numer dzialki", DIRECTION_LEFT)
+        self.assertEqual(
+            extract_field(self.LEWO, profil, "parcel_number"), "27/176"
+        )
+
+    def test_czyta_z_lewej_takze_dalsze_pole(self):
+        profil = self._profil("area", "Powierzchnia", DIRECTION_LEFT)
+        self.assertEqual(extract_field(self.LEWO, profil, "area"), "0,4500")
+
+    def test_czyta_wartosc_znad_nazwy(self):
+        profil = self._profil("parcel_number", "Numer dzialki", DIRECTION_ABOVE)
+        self.assertEqual(
+            extract_field(self.GORA, profil, "parcel_number"), "27/176"
+        )
+
+    def test_z_lewej_nie_bierze_tego_co_stoi_z_prawej(self):
+        profil = self._profil("county", "Powiat", DIRECTION_LEFT)
+        self.assertEqual(extract_field(self.PRAWO, profil, "county"), "")
+
+    def test_znad_nie_bierze_tego_co_stoi_z_prawej(self):
+        profil = self._profil("county", "Powiat", DIRECTION_ABOVE)
+        self.assertEqual(extract_field(self.PRAWO, profil, "county"), "")
+
+    def test_profil_pamieta_kierunek_z_lewej(self):
+        profil = self._profil("area", "Pow.", DIRECTION_LEFT)
+        self.assertEqual(field_direction(profil, "area"), DIRECTION_LEFT)
+
+    def test_profil_pamieta_kierunek_znad(self):
+        profil = self._profil("area", "Pow.", DIRECTION_ABOVE)
+        self.assertEqual(field_direction(profil, "area"), DIRECTION_ABOVE)
+
+    def test_sa_wszystkie_cztery_kierunki_plus_automat(self):
+        from utils.wypis_profiles import DIRECTIONS
+
+        self.assertEqual(
+            [wartosc for wartosc, _opis in DIRECTIONS],
+            ["auto", "right", "left", "below", "above"],
+        )
+
