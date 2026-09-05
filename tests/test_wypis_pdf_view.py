@@ -380,6 +380,237 @@ class PowiekszenieTests(unittest.TestCase):
         self.assertGreater(len(dialog.page_view.marks), 0)
 
 
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class TabelaWWierszuTests(unittest.TestCase):
+    """Jeden wiersz z dwiema parami: klik ma trafiać dokładnie w swoje pole."""
+
+    WIERSZE = [
+        "Powiat: kartuski          Gmina: Zukowo",
+        "Obreb: 0010 MAKI          Nr obrebu: 0010",
+        "Dzialka nr: 145/7         Pow. [ha]: 0,4500",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.pdf = str(Path(cls._tmp.name) / "tabela.pdf")
+        doc = fitz.open()
+        page = doc.new_page()
+        font = PodgladStronyTests.FONT
+        font = font if Path(font).is_file() else None
+        y = 60
+        for line in cls.WIERSZE:
+            if font:
+                page.insert_text((50, y), line, fontsize=11, fontfile=font, fontname="DJ")
+            else:  # pragma: no cover
+                page.insert_text((50, y), line, fontsize=11)
+            y += 26
+        doc.save(cls.pdf)
+        doc.close()
+        cls.page = load_page(cls.pdf)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def _klik(self, etykieta: str) -> dict:
+        view = WypisPdfView()
+        view.set_page(self.page)
+        rect = view.find_label_rect(etykieta)
+        self.assertIsNotNone(rect, f"nie znaleziono {etykieta!r}")
+        return label_at(
+            self.page, QPoint(int(rect.center().x()), int(rect.center().y()))
+        )
+
+    def test_druga_kolumna_zwraca_swoja_etykiete(self):
+        hit = self._klik("Gmina")
+        self.assertEqual(hit["label"], "Gmina")
+
+    def test_druga_kolumna_zwraca_swoja_wartosc(self):
+        self.assertEqual(self._klik("Gmina")["value"], "Zukowo")
+
+    def test_pierwsza_kolumna_nie_wciaga_drugiej(self):
+        hit = self._klik("Powiat")
+        self.assertEqual(hit["label"], "Powiat")
+        self.assertEqual(hit["value"], "kartuski")
+
+    def test_etykieta_dwuwyrazowa_w_drugiej_kolumnie(self):
+        hit = self._klik("Nr obrebu")
+        self.assertEqual(hit["label"], "Nr obrebu")
+        self.assertEqual(hit["value"], "0010")
+
+    def test_wartosc_wielowyrazowa_w_pierwszej_kolumnie(self):
+        hit = self._klik("Obreb")
+        self.assertEqual(hit["value"], "0010 MAKI")
+
+    def test_etykieta_z_nawiasem_w_drugiej_kolumnie(self):
+        hit = self._klik("Pow. [ha]")
+        self.assertEqual(hit["label"], "Pow. [ha]")
+        self.assertEqual(hit["value"], "0,4500")
+
+    def test_dzialka_nr_nie_wciaga_powierzchni(self):
+        hit = self._klik("Dzialka nr")
+        self.assertEqual(hit["value"], "145/7")
+
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class CofanieIUsuwanieTests(unittest.TestCase):
+    """Cofanie, ponawianie i usuwanie przypisań."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        self._question = QMessageBox.question
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+        QMessageBox.question = staticmethod(
+            lambda *a, **k: QMessageBox.StandardButton.Yes
+        )
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.resize(1200, 800)
+        self.dialog.show()
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+        QMessageBox.question = self._question
+
+    def _wiersz(self, nazwa: str) -> int:
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return row
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def _przypisz(self, etykieta: str, pole: str) -> int:
+        row = self._wiersz(pole)
+        self.dialog.table.setCurrentCell(row, 0)
+        view = self.dialog.page_view
+        rect = view.find_label_rect(etykieta)
+        hit = label_at(view.page, QPoint(int(rect.center().x()), int(rect.center().y())))
+        self.dialog._on_label_clicked(hit)
+        return row
+
+    def test_na_starcie_nie_ma_czego_cofac(self):
+        self.assertFalse(self.dialog.btn_undo.isEnabled())
+        self.assertFalse(self.dialog.btn_redo.isEnabled())
+
+    def test_przypisanie_wlacza_cofanie(self):
+        self._przypisz("Powiat", "Powiat")
+        self.assertTrue(self.dialog.btn_undo.isEnabled())
+
+    def test_cofniecie_przywraca_poprzedni_stan(self):
+        row = self._wiersz("Powiat")
+        przed = self.dialog.table.item(row, 1).text()
+        self._przypisz("Powiat", "Powiat")
+        self.dialog._undo_change()
+        self.assertEqual(self.dialog.table.item(row, 1).text(), przed)
+
+    def test_ponowienie_wraca_do_zmiany(self):
+        row = self._przypisz("Powiat", "Powiat")
+        po_zmianie = self.dialog.table.item(row, 1).text()
+        self.dialog._undo_change()
+        self.dialog._redo_change()
+        self.assertEqual(self.dialog.table.item(row, 1).text(), po_zmianie)
+
+    def test_usuwanie_pola_czysci_etykiety(self):
+        row = self._wiersz("Powiat")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog._clear_row()
+        self.assertEqual(self.dialog.table.item(row, 1).text(), "")
+
+    def test_usuwanie_mozna_cofnac(self):
+        row = self._wiersz("Powiat")
+        przed = self.dialog.table.item(row, 1).text()
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog._clear_row()
+        self.dialog._undo_change()
+        self.assertEqual(self.dialog.table.item(row, 1).text(), przed)
+
+    def test_czyszczenie_wszystkich_we_wlasnym_wzorze(self):
+        from PySide6.QtWidgets import QInputDialog
+
+        oryginal = QInputDialog.getText
+        QInputDialog.getText = staticmethod(lambda *a, **k: ("Mój wzór", True))
+        try:
+            self.dialog._copy_profile()
+        finally:
+            QInputDialog.getText = oryginal
+
+        self.dialog._clear_all_rows()
+        puste = [
+            self.dialog.table.item(r, 1).text()
+            for r in range(self.dialog.table.rowCount())
+        ]
+        self.assertTrue(all(not t for t in puste))
+
+    def test_czyszczenie_wszystkich_mozna_cofnac(self):
+        from PySide6.QtWidgets import QInputDialog
+
+        oryginal = QInputDialog.getText
+        QInputDialog.getText = staticmethod(lambda *a, **k: ("Mój wzór 2", True))
+        try:
+            self.dialog._copy_profile()
+        finally:
+            QInputDialog.getText = oryginal
+
+        ile_przed = sum(
+            1
+            for r in range(self.dialog.table.rowCount())
+            if self.dialog.table.item(r, 1).text()
+        )
+        self.dialog._clear_all_rows()
+        self.dialog._undo_change()
+        ile_po = sum(
+            1
+            for r in range(self.dialog.table.rowCount())
+            if self.dialog.table.item(r, 1).text()
+        )
+        self.assertEqual(ile_po, ile_przed)
+
+    def test_wzoru_wbudowanego_nie_da_sie_wyczyscic(self):
+        self.assertTrue(self.dialog._current_profile().get("builtin"))
+        ile_przed = sum(
+            1
+            for r in range(self.dialog.table.rowCount())
+            if self.dialog.table.item(r, 1).text()
+        )
+        self.dialog._clear_all_rows()
+        ile_po = sum(
+            1
+            for r in range(self.dialog.table.rowCount())
+            if self.dialog.table.item(r, 1).text()
+        )
+        self.assertEqual(ile_po, ile_przed)
+
+    def test_historia_ma_ograniczona_dlugosc(self):
+        for _ in range(60):
+            self.dialog._remember()
+        self.assertLessEqual(len(self.dialog._undo), 40)
+
+    def test_przyciski_maja_skroty(self):
+        self.assertEqual(self.dialog.btn_undo.shortcut().toString(), "Ctrl+Z")
+        self.assertEqual(self.dialog.btn_redo.shortcut().toString(), "Ctrl+Y")
+        self.assertEqual(self.dialog.btn_clear_row.shortcut().toString(), "Del")
+
+
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")
 class SkladanieTekstuTests(unittest.TestCase):
     def test_fold_usuwa_ogonki(self):

@@ -98,6 +98,10 @@ class WypisProfileDialog(QDialog):
         self._page_total = 0
         self._zoom = 100          # procent powiększenia podglądu
         self._fit_zoom = 100      # powiększenie dopasowane do szerokości okna
+        #: Historia zmian etykiet — pozwala cofnąć i ponowić przypisanie.
+        self._undo: list[tuple[str, dict]] = []
+        self._redo: list[tuple[str, dict]] = []
+        self._before_edit: dict | None = None
 
         self._build_ui()
         self._apply_style()
@@ -336,7 +340,47 @@ class WypisProfileDialog(QDialog):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.itemChanged.connect(self._on_label_edited)
+        self.table.itemDoubleClicked.connect(self._before_cell_edit)
+        self.table.currentCellChanged.connect(
+            lambda *_args: self._before_cell_edit(None)
+        )
         fields_layout.addWidget(self.table)
+
+        # ── Cofanie, ponawianie i usuwanie przypisań ──
+        edit_row = QHBoxLayout()
+        edit_row.setSpacing(6)
+
+        self.btn_undo = QPushButton("↩️ Cofnij")
+        self.btn_undo.setToolTip("Cofa ostatnią zmianę przypisań (Ctrl+Z)")
+        self.btn_undo.setShortcut("Ctrl+Z")
+        self.btn_undo.clicked.connect(self._undo_change)
+        self.btn_undo.setEnabled(False)
+        edit_row.addWidget(self.btn_undo)
+
+        self.btn_redo = QPushButton("↪️ Ponów")
+        self.btn_redo.setToolTip("Ponawia cofniętą zmianę (Ctrl+Y)")
+        self.btn_redo.setShortcut("Ctrl+Y")
+        self.btn_redo.clicked.connect(self._redo_change)
+        self.btn_redo.setEnabled(False)
+        edit_row.addWidget(self.btn_redo)
+
+        edit_row.addSpacing(12)
+
+        self.btn_clear_row = QPushButton("🗑️ Usuń z pola")
+        self.btn_clear_row.setToolTip(
+            "Usuwa etykiety przypisane do zaznaczonego wiersza (Delete)"
+        )
+        self.btn_clear_row.setShortcut("Delete")
+        self.btn_clear_row.clicked.connect(self._clear_row)
+        edit_row.addWidget(self.btn_clear_row)
+
+        self.btn_clear_all = QPushButton("🧹 Wyczyść wszystkie")
+        self.btn_clear_all.setToolTip("Usuwa wszystkie przypisania w tym wzorze")
+        self.btn_clear_all.clicked.connect(self._clear_all_rows)
+        edit_row.addWidget(self.btn_clear_all)
+
+        edit_row.addStretch()
+        fields_layout.addLayout(edit_row)
 
         self.lbl_summary = QLabel("Wczytaj PDF, aby zobaczyć wynik odczytu.")
         self.lbl_summary.setWordWrap(True)
@@ -566,6 +610,144 @@ class WypisProfileDialog(QDialog):
         markers = [m.strip() for m in self.markers_edit.text().split(";") if m.strip()]
         self.profiles[index]["markers"] = markers
 
+    def _before_cell_edit(self, _item=None) -> None:
+        """Zapamiętuje treść komórek tuż przed ręczną edycją."""
+
+        if not self._loading:
+            self._before_edit = self._fields_snapshot()
+
+    # ── Cofanie i ponawianie ─────────────────────────────────────────
+
+    def _fields_snapshot(self) -> dict:
+        """Zapamiętuje bieżące przypisania pól wybranego wzoru."""
+
+        snapshot = {}
+        for row in range(self.table.rowCount()):
+            key_item = self.table.item(row, 0)
+            value_item = self.table.item(row, 1)
+            if key_item is None:
+                continue
+            key = key_item.data(Qt.ItemDataRole.UserRole)
+            snapshot[key] = value_item.text() if value_item else ""
+        return snapshot
+
+    def _remember(self) -> None:
+        """Odkłada stan przed zmianą, żeby dało się ją cofnąć."""
+
+        name = str(self.profile_combo.currentData() or "")
+        self._undo.append((name, self._fields_snapshot()))
+        del self._undo[:-40]          # trzymamy ostatnie 40 kroków
+        self._redo.clear()
+        self._update_history_buttons()
+
+    def _apply_snapshot(self, snapshot: dict) -> None:
+        """Przywraca zapamiętane przypisania do tabeli."""
+
+        self._loading = True
+        for row in range(self.table.rowCount()):
+            key_item = self.table.item(row, 0)
+            if key_item is None:
+                continue
+            key = key_item.data(Qt.ItemDataRole.UserRole)
+            self.table.setItem(row, 1, QTableWidgetItem(snapshot.get(key, "")))
+        self._loading = False
+        self._store_table_into_profile()
+        if self.pdf_text:
+            self._analyze()
+        if self.pdf_path:
+            self._refresh_marks()
+
+    def _undo_change(self) -> None:
+        """Cofa ostatnią zmianę przypisań."""
+
+        if not self._undo:
+            return
+        name, snapshot = self._undo.pop()
+        self._redo.append((name, self._fields_snapshot()))
+        if name and name != str(self.profile_combo.currentData() or ""):
+            self._reload_profile_combo(name)
+        self._apply_snapshot(snapshot)
+        self._update_history_buttons()
+        self.lbl_summary.setText("↩️ Cofnięto zmianę.  •  " + self.lbl_summary.text())
+
+    def _redo_change(self) -> None:
+        """Ponawia cofniętą zmianę."""
+
+        if not self._redo:
+            return
+        name, snapshot = self._redo.pop()
+        self._undo.append((name, self._fields_snapshot()))
+        if name and name != str(self.profile_combo.currentData() or ""):
+            self._reload_profile_combo(name)
+        self._apply_snapshot(snapshot)
+        self._update_history_buttons()
+        self.lbl_summary.setText("↪️ Ponowiono zmianę.  •  " + self.lbl_summary.text())
+
+    def _update_history_buttons(self) -> None:
+        self.btn_undo.setEnabled(bool(self._undo))
+        self.btn_redo.setEnabled(bool(self._redo))
+
+    # ── Usuwanie przypisań ───────────────────────────────────────────
+
+    def _clear_row(self) -> None:
+        """Usuwa etykiety z zaznaczonego pola."""
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Zaznacz w tabeli wiersz, którego przypisanie chcesz usunąć.",
+            )
+            return
+
+        item = self.table.item(row, 1)
+        if not (item and item.text().strip()):
+            return
+
+        self._remember()
+        name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+        self._loading = True
+        self.table.setItem(row, 1, QTableWidgetItem(""))
+        self._loading = False
+        self._store_table_into_profile()
+        if self.pdf_text:
+            self._analyze()
+        if self.pdf_path:
+            self._refresh_marks()
+        self.lbl_summary.setText(
+            f"🗑️ Usunięto przypisanie pola „{name}”.  •  " + self.lbl_summary.text()
+        )
+
+    def _clear_all_rows(self) -> None:
+        """Czyści wszystkie przypisania bieżącego wzoru."""
+
+        if self._current_profile().get("builtin"):
+            QMessageBox.information(
+                self,
+                "Wzór wbudowany",
+                "Wzoru wbudowanego nie da się wyczyścić.\n"
+                "Użyj „📄 Kopiuj”, aby zrobić własną wersję do edycji.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Wyczyść wszystkie pola",
+            "Usunąć wszystkie przypisania w tym wzorze?\n"
+            "Zmianę można cofnąć przyciskiem „↩️ Cofnij”.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._remember()
+        self._apply_snapshot({})
+        self.lbl_summary.setText(
+            "🧹 Wyczyszczono wszystkie przypisania.  •  " + self.lbl_summary.text()
+        )
+
     def _store_table_into_profile(self):
         index = self._current_index()
         if index < 0:
@@ -584,6 +766,15 @@ class WypisProfileDialog(QDialog):
     def _on_label_edited(self, item):
         if self._loading or item.column() != 1:
             return
+        # Snapshot pobrany po edycji zawierałby już nową treść, dlatego
+        # odtwarzamy stan sprzed zmiany z zapamiętanej kopii komórki.
+        if self._before_edit is not None:
+            name = str(self.profile_combo.currentData() or "")
+            self._undo.append((name, self._before_edit))
+            del self._undo[:-40]
+            self._redo.clear()
+            self._before_edit = None
+            self._update_history_buttons()
         self._store_table_into_profile()
         if self.pdf_text:
             self._analyze()
@@ -802,6 +993,7 @@ class WypisProfileDialog(QDialog):
             return
 
         item = self.table.item(row, 1)
+        self._remember()
         current = [p.strip() for p in (item.text() if item else "").split(";") if p.strip()]
         if label in current:
             QMessageBox.information(
@@ -924,6 +1116,7 @@ class WypisProfileDialog(QDialog):
         item = self.table.item(row, 1)
         current = [p.strip() for p in (item.text() if item else "").split(";") if p.strip()]
         if label not in current:
+            self._remember()
             current.insert(0, label)
         self.table.setItem(row, 1, QTableWidgetItem("; ".join(current)))
         self._store_table_into_profile()

@@ -103,6 +103,20 @@ def page_count(pdf_path: str) -> int:
         return 0
 
 
+def _column_gap(words: list["Word"]) -> float:
+    """Od jakiej przerwy między słowami zaczyna się nowa kolumna.
+
+    Zwykły odstęp międzywyrazowy jest wąski; kolumny w tabelce wypisu
+    dzieli kilka spacji. Próg liczymy z wysokości tekstu, więc działa
+    niezależnie od powiększenia strony.
+    """
+
+    if not words:
+        return 24.0
+    height = max(w.rect.height() for w in words)
+    return max(height * 1.6, 14.0)
+
+
 def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     """Zwraca słowo (lub grupę słów) wskazane kursorem.
 
@@ -143,39 +157,86 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
 
     index = same_line.index(hit)
 
-    # Etykieta kończy się na dwukropku — „Dzialka nr: 145/7” to etykieta
-    # „Dzialka nr”, nie samo słowo, w które akurat trafił kursor. Jeśli
-    # w linii jest dwukropek, bierzemy wszystko do niego.
-    end = index
-    for position, word in enumerate(same_line):
-        if word.text.endswith(":"):
-            end = position
+    # Jeden wiersz wypisu bywa tabelką: „Powiat: kartuski   Gmina: Zukowo”.
+    # Etykietę liczymy więc **wokół klikniętego słowa**, a nie od początku
+    # linii — inaczej klik w „Gmina” zwracałby „Powiat”.
+
+    # Koniec etykiety: najbliższy dwukropek od miejsca kliknięcia w prawo.
+    end_index = None
+    for position in range(index, len(same_line)):
+        if same_line[position].text.endswith(":"):
+            end_index = position
             break
-    else:
-        end = index
 
-    # Kliknięcie za dwukropkiem (czyli w wartość) nie zmienia etykiety.
-    if index > end:
-        end = end
-    label_words = [w.text for w in same_line[: end + 1]]
-    label = " ".join(label_words).strip().rstrip(":").strip()
-    # Wartość: reszta linii za etykietą.
-    value = " ".join(w.text for w in same_line[end + 1:]).strip(" :,;-")
-    index = end
+    if end_index is None:
+        # Kliknięto w wartość — cofamy się do dwukropka po lewej.
+        for position in range(index, -1, -1):
+            if same_line[position].text.endswith(":"):
+                end_index = position
+                break
+    if end_index is None:
+        end_index = index
 
-    left = min(w.rect.left() for w in same_line[: index + 1])
-    top = min(w.rect.top() for w in same_line[: index + 1])
-    right = max(w.rect.right() for w in same_line[: index + 1])
-    bottom = max(w.rect.bottom() for w in same_line[: index + 1])
+    # Początek etykiety: za poprzednim dwukropkiem…
+    start_index = 0
+    for position in range(end_index - 1, -1, -1):
+        if same_line[position].text.endswith(":"):
+            start_index = position + 1
+            break
+
+    # …a jeśli między słowami jest szeroka przerwa, to znaczy, że zaczyna
+    # się nowa kolumna tabeli — etykieta nie sięga przed tę przerwę.
+    # („Obreb: 0010 MAKI      Nr obrebu: 0010” → etykieta to „Nr obrebu”.)
+    gap = _column_gap(same_line)
+    for position in range(end_index, start_index, -1):
+        odstep = same_line[position].rect.left() - same_line[position - 1].rect.right()
+        if odstep >= gap:
+            start_index = position
+            break
+
+    label_chunk = same_line[start_index: end_index + 1]
+    label = " ".join(w.text for w in label_chunk).strip().rstrip(":").strip()
+
+    # Wartość: słowa za etykietą aż do następnej etykiety w tym wierszu.
+    value_chunk: list[Word] = []
+    previous = same_line[end_index]
+    for position in range(end_index + 1, len(same_line)):
+        word = same_line[position]
+        if word.text.endswith(":"):
+            # Zaczyna się kolejna etykieta. Jej pierwsze słowo leży za
+            # ostatnią szeroką przerwą — wszystko od tego miejsca nie
+            # należy już do naszej wartości.
+            next_start = position
+            for back in range(position, end_index + 1, -1):
+                odstep = (
+                    same_line[back].rect.left() - same_line[back - 1].rect.right()
+                )
+                if odstep >= gap:
+                    next_start = back
+                    break
+            while value_chunk and same_line.index(value_chunk[-1]) >= next_start:
+                value_chunk.pop()
+            break
+        if word.rect.left() - previous.rect.right() >= gap:
+            break            # nowa kolumna tabeli
+        value_chunk.append(word)
+        previous = word
+    value = " ".join(w.text for w in value_chunk).strip(" :,;-")
+
+    left = min(w.rect.left() for w in label_chunk)
+    top = min(w.rect.top() for w in label_chunk)
+    right = max(w.rect.right() for w in label_chunk)
+    bottom = max(w.rect.bottom() for w in label_chunk)
 
     value_rect = None
-    rest = same_line[end + 1:]
-    if rest:
+    if value_chunk:
         value_rect = QRectF(
-            min(w.rect.left() for w in rest),
-            min(w.rect.top() for w in rest),
-            max(w.rect.right() for w in rest) - min(w.rect.left() for w in rest),
-            max(w.rect.bottom() for w in rest) - min(w.rect.top() for w in rest),
+            min(w.rect.left() for w in value_chunk),
+            min(w.rect.top() for w in value_chunk),
+            max(w.rect.right() for w in value_chunk)
+            - min(w.rect.left() for w in value_chunk),
+            max(w.rect.bottom() for w in value_chunk)
+            - min(w.rect.top() for w in value_chunk),
         )
 
     return {

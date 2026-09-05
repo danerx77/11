@@ -464,6 +464,28 @@ def _label_pattern(label: str) -> re.Pattern:
     return re.compile(prefix + body + suffix + r"\s*:?\s*(.*)", re.IGNORECASE)
 
 
+def _value_until_next_column(text: str) -> str:
+    """Zwraca wartość stojącą po etykiecie, bez sąsiedniej kolumny.
+
+    Wiersz wypisu bywa tabelką: ``Powiat: kartuski    Gmina: Żukowo``.
+    Wartością pola „Powiat” jest wyłącznie ``kartuski`` — resztę odcinamy
+    po dużym odstępie albo przed kolejną etykietą z dwukropkiem.
+    """
+
+    value = str(text or "")
+
+    # 1. Dwie lub więcej spacji = następna kolumna.
+    value = re.split(r"\s{2,}", value.strip(), maxsplit=1)[0]
+
+    # 2. Zapas dla wypisów bez wyraźnych odstępów: „kartuski Gmina: Żukowo”.
+    #    Ucinamy przed ostatnim słowem, jeśli po nim stoi dwukropek.
+    match = re.search(r"\s+\S+\s*:(?:\s|$)", value)
+    if match:
+        value = value[: match.start()]
+
+    return re.sub(r"\s+", " ", value).strip(" :,;-")
+
+
 def extract_field(
     text: str,
     profile: Mapping[str, Any] | None,
@@ -481,22 +503,24 @@ def extract_field(
     if not labels or not str(text or "").strip():
         return ""
 
-    lines = [re.sub(r"\s+", " ", line).strip() for line in str(text).split("\n")]
+    # Uwaga: nie zbijamy tu wielokrotnych spacji, bo to one oddzielają
+    # kolumny w wypisach tabelarycznych („Powiat: X    Gmina: Y”).
+    lines = [line.rstrip() for line in str(text).split("\n")]
 
     for label in labels:
         pattern = _label_pattern(label)
         for index, line in enumerate(lines):
-            if not line:
+            if not line.strip():
                 continue
             match = pattern.search(line)
             if not match:
                 continue
-            value = match.group(1).strip(" :,;-")
+            value = _value_until_next_column(match.group(1))
             if value:
                 return value[:max_length]
             # Wartość w kolejnej niepustej linii.
             for nxt in lines[index + 1: index + 3]:
-                candidate = nxt.strip(" :,;-")
+                candidate = _value_until_next_column(nxt)
                 if candidate and not _looks_like_label(candidate, profile):
                     return candidate[:max_length]
     return ""

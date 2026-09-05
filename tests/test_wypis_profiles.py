@@ -21,6 +21,7 @@ from utils.wypis_profiles import (  # noqa: E402
     extract_field,
     find_profile,
     labels_for,
+    _value_until_next_column,
     load_profiles,
     load_settings,
     migrate_from_config,
@@ -399,6 +400,37 @@ class ZgodnoscWsteczTests(unittest.TestCase):
         self.assertFalse(read_profiles_file(self.data_dir)["exists"])
         save_settings(default_profiles(), data_dir=self.data_dir)
         self.assertTrue(read_profiles_file(self.data_dir)["exists"])
+
+
+class WartoscBezSasiedniejKolumnyTests(unittest.TestCase):
+    """Wiersz bywa tabelką: „Powiat: X   Gmina: Y” — bierzemy tylko swoje."""
+
+    def test_odstep_konczy_wartosc(self):
+        self.assertEqual(_value_until_next_column("kartuski    Gmina: Zukowo"), "kartuski")
+
+    def test_pojedyncza_spacja_przed_etykieta(self):
+        self.assertEqual(_value_until_next_column("kartuski Gmina: Zukowo"), "kartuski")
+
+    def test_wartosc_wielowyrazowa_zostaje_cala(self):
+        self.assertEqual(
+            _value_until_next_column("Borkowo, ul. Polna 3"), "Borkowo, ul. Polna 3"
+        )
+
+    def test_wartosc_z_odstepem_i_druga_kolumna(self):
+        self.assertEqual(
+            _value_until_next_column("0010 MAKI     Nr obrebu: 0010"), "0010 MAKI"
+        )
+
+    def test_puste_wejscie(self):
+        self.assertEqual(_value_until_next_column("   "), "")
+
+    def test_extract_field_nie_bierze_sasiedniej_kolumny(self):
+        tekst = "Powiat: kartuski    Gmina: Zukowo\n"
+        profil = normalize_profile(
+            {"name": "T", "fields": {"county": ["Powiat"], "municipality": ["Gmina"]}}
+        )
+        self.assertEqual(extract_field(tekst, profil, "county"), "kartuski")
+        self.assertEqual(extract_field(tekst, profil, "municipality"), "Zukowo")
 
 if __name__ == "__main__":
     unittest.main()

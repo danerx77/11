@@ -811,6 +811,70 @@ strony), prostokąty wartości, rysowanie z podpisami, skracanie długich
 nazw oraz komplet zachowań powiększenia: kroki, zakres 50–300%,
 `Dopasuj` i ukrywanie oznaczeń. Razem **452 testy** (było 434).
 
+## 43. Cofanie zmian i poprawny odczyt wiersza z dwiema kolumnami
+
+**Zgłoszenia:** brakuje cofania i usuwania przypisań; kliknięcie w pole
+odczytuje coś z prawej strony, a nie dokładnie tę rzecz, w którą się
+kliknęło.
+
+### Błąd: kliknięcie brało sąsiednią kolumnę
+
+Wypisy często mają dwie pary w jednym wierszu:
+
+```
+Powiat: kartuski          Gmina: Żukowo
+Obręb: 0010 MAKI          Nr obrębu: 0010
+```
+
+Program szukał **pierwszego dwukropka w całym wierszu**, więc kliknięcie
+w „Gmina” zwracało etykietę `Powiat` i wartość `kartuski Gmina: Żukowo`.
+
+Teraz etykieta liczona jest **wokół miejsca kliknięcia**: najbliższy
+dwukropek w prawo wyznacza jej koniec, a początek — poprzednia wartość
+albo szeroka przerwa między kolumnami. Próg przerwy wynika z wysokości
+tekstu, więc działa przy każdym powiększeniu.
+
+Ten sam błąd siedział w odczycie tekstowym (tabela po lewej i realny
+import wypisu): `re.sub(r"\s+", " ")` zbijało odstępy kolumn, przez co
+wartością „Powiatu” zostawało `kartuski Gmina: Żukowo`. Odstępy są już
+zachowywane, a wartość ucinana przed kolejną kolumną.
+
+Sprawdzone na wypisie tabelarycznym — wszystkie pola trafiają w swoje:
+
+| Kliknięto | Etykieta | Wartość |
+| --- | --- | --- |
+| Powiat | `Powiat` | `kartuski` |
+| Gmina | `Gmina` | `Zukowo` |
+| Obreb | `Obreb` | `0010 MAKI` |
+| Nr obrebu | `Nr obrebu` | `0010` |
+| Dzialka nr | `Dzialka nr` | `145/7` |
+| Pow. [ha] | `Pow. [ha]` | `0,4500` |
+
+### Cofanie, ponawianie i usuwanie
+
+Pod tabelą jest nowy pasek:
+
+| Przycisk | Skrót | Działanie |
+| --- | --- | --- |
+| ↩️ Cofnij | `Ctrl+Z` | cofa ostatnią zmianę przypisań |
+| ↪️ Ponów | `Ctrl+Y` | przywraca cofniętą zmianę |
+| 🗑️ Usuń z pola | `Delete` | czyści etykiety zaznaczonego wiersza |
+| 🧹 Wyczyść wszystkie | — | usuwa wszystkie przypisania wzoru |
+
+Historia obejmuje **wszystkie** sposoby zmiany: klikanie na dokumencie,
+ręczną edycję w tabeli i użycie zaznaczenia tekstu. Pamiętanych jest
+ostatnich 40 kroków. Przyciski są wygaszone, gdy nie ma czego cofnąć.
+
+„Wyczyść wszystkie” pyta o potwierdzenie i nie działa na wzorach
+wbudowanych — od tego jest „📄 Kopiuj”. Każde usunięcie da się cofnąć.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 57 testów (doszło 7 na wiersz z dwiema
+kolumnami i 11 na cofanie/usuwanie), `tests/test_wypis_profiles.py` — 59
+(6 nowych na ucinanie wartości przed kolejną kolumną). Razem
+**476 testów** (było 452).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
