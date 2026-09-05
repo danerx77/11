@@ -1518,3 +1518,66 @@ class UkladTabeliTests(unittest.TestCase):
         widget.setCurrentIndex(widget.findData("auto"))
         self.assertEqual(self.dialog.table.item(row, 4).text(), przed)
 
+
+class NaglowekTabeliTests(unittest.TestCase):
+    """Runda 26: kliknięcie w nagłówek nie zaznacza całej kolumny."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.chk_auto.setChecked(False)
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def test_naglowek_nie_jest_klikalny(self):
+        self.assertFalse(
+            self.dialog.table.horizontalHeader().sectionsClickable()
+        )
+
+    def test_kolumn_nie_da_sie_przestawic(self):
+        self.assertFalse(
+            self.dialog.table.horizontalHeader().sectionsMovable()
+        )
+
+    def test_naglowek_nie_podswietla_sekcji(self):
+        self.assertFalse(
+            self.dialog.table.horizontalHeader().highlightSections()
+        )
+
+    def test_zaznaczenie_obejmuje_caly_wiersz(self):
+        from PySide6.QtWidgets import QAbstractItemView
+
+        self.assertEqual(
+            self.dialog.table.selectionBehavior(),
+            QAbstractItemView.SelectionBehavior.SelectRows,
+        )
+
+    def test_pierwsze_cztery_kolumny_nie_zmieniaja_szerokosci(self):
+        przed = [self.dialog.table.columnWidth(c) for c in range(4)]
+        self.dialog.resize(1200, 700)
+        self.dialog.resize(1480, 940)
+        self.dialog._analyze()
+        self.assertEqual(
+            [self.dialog.table.columnWidth(c) for c in range(4)], przed
+        )
+

@@ -892,7 +892,8 @@ def _extract_from_same_row(
             continue
 
         for pozycja, (_start, tekst) in enumerate(kolumny[:-1]):
-            if not any(_fold(tekst) == _fold(label) for label in labels):
+            goly = tekst.rstrip(" :").strip()
+            if not any(_fold(goly) == _fold(label) for label in labels):
                 continue
             wartosc = kolumny[pozycja + 1][1].strip(" :,;-")
             if not wartosc or _looks_like_label(wartosc, profile):
@@ -975,11 +976,17 @@ def _extract_from_column(
         if not line.strip():
             continue
         kolumny = _split_columns(line)
-        if len(kolumny) < 2:
-            continue                     # to nie wygląda na wiersz tabeli
+        if not kolumny:
+            continue
+        # Uwaga: nazwa pola może stać SAMA w linii, a wartość pod nią —
+        # to najczęstszy układ w wypisach. Wcześniej takie linie były
+        # odrzucane i „⬇️ Pod spodem” nie znajdowało nic.
 
         for pozycja, (start, tekst) in enumerate(kolumny):
-            trafiona = any(_fold(tekst) == _fold(label) for label in labels)
+            goly = tekst.rstrip(" :").strip()
+            trafiona = any(
+                _fold(goly) == _fold(label) for label in labels
+            )
             if not trafiona:
                 continue
 
@@ -1031,7 +1038,8 @@ def _extract_from_left(
         for pozycja, (_start, tekst) in enumerate(kolumny):
             if pozycja == 0:
                 continue                 # po lewej nic już nie ma
-            if not any(_fold(tekst) == _fold(label) for label in labels):
+            goly = tekst.rstrip(" :").strip()
+            if not any(_fold(goly) == _fold(label) for label in labels):
                 continue
             wartosc = kolumny[pozycja - 1][1].strip(" :,;-")
             if wartosc and not _looks_like_label(wartosc, profile):
@@ -1058,7 +1066,8 @@ def _extract_from_above(
             continue
 
         for pozycja, (start, tekst) in enumerate(kolumny):
-            if not any(_fold(tekst) == _fold(label) for label in labels):
+            goly = tekst.rstrip(" :").strip()
+            if not any(_fold(goly) == _fold(label) for label in labels):
                 continue
 
             # Pierwszy niepusty wiersz powyżej — szukamy w nim kolumny

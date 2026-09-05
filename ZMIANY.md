@@ -1362,6 +1362,33 @@ linię w nagłówku. Wszystkie wiersze mają równą wysokość. Długie napisy 
 przycinane wielokropkiem, a pełna treść pokazuje się w podpowiedzi pod
 kursorem.
 
+## 56. „Pod spodem” czyta też nazwy stojące same w linii; nagłówek nie zaznacza kolumn
+
+**„⬇️ Pod spodem” nie widziało wartości, choć była na wierzchu.** Program
+uznawał za tabelę tylko linię, w której stały co najmniej dwie kolumny. Gdy
+nazwa pola stała **sama w linii**, a wartość pod nią — czyli najczęstszy układ
+w wypisach — linia była odrzucana i pole zostawało puste, mimo że wartość
+widniała tuż niżej.
+
+Teraz wszystkie cztery kierunki radzą sobie z każdym układem:
+
+| Układ w dokumencie | Wynik |
+|---|---|
+| `Numer działki` / `27/176` (nazwa sama w linii) | ✅ |
+| `Numer działki:` / `27/176` (nazwa z dwukropkiem) | ✅ |
+| `Numer działki` / *pusta linia* / `27/176` | ✅ |
+| `Numer działki  Położenie` / `27/176  Borkowo` (nagłówki) | ✅ |
+
+Poprawka dotyczy również kierunków „⬆️ Nad nazwą”, „⬅️ Obok, z lewej”
+i „➡️ Obok, z prawej” — wszystkie porównują teraz nazwę pola bez końcowego
+dwukropka, więc `Numer działki:` i `Numer działki` traktowane są tak samo.
+
+**Nagłówek tabeli zaznaczał całe kolumny.** Kliknięcie w pasek z napisami
+„① Pole w programie”, „② Etykiety w PDF” itd. podświetlało całą kolumnę —
+przy pracy z tabelą łatwo w niego trafić. Nagłówek nie reaguje już na
+kliknięcia, kolumn nie da się przestawić ani podświetlić. Przeciąganie linii
+podziału, żeby zmienić szerokość, działa jak dotąd.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

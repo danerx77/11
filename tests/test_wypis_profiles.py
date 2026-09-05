@@ -968,3 +968,63 @@ class ZmianaKierunkuDzialaTests(unittest.TestCase):
         self.assertEqual(self._czytaj(self.Z_DWUKROPKIEM, DIRECTION_LEFT), "")
         self.assertEqual(self._czytaj(self.Z_DWUKROPKIEM, "auto"), "kartuski")
 
+
+class KierunekWKazdymUkladzieTests(unittest.TestCase):
+    """Runda 26: kierunek ma działać też, gdy nazwa stoi sama w linii."""
+
+    def _czytaj(self, tekst, kierunek):
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "fields": {"parcel_number": ["Numer dzialki"]},
+                "directions": {"parcel_number": kierunek},
+            }
+        )
+        return extract_field(tekst, profil, "parcel_number")
+
+    def test_pod_spodem_gdy_nazwa_stoi_sama_w_linii(self):
+        # Najczęstszy układ w wypisach — wcześniej zwracało pustą wartość,
+        # bo linia z jedną kolumną była odrzucana jako „nie tabela”.
+        self.assertEqual(
+            self._czytaj("Numer dzialki\n27/176\n", DIRECTION_BELOW), "27/176"
+        )
+
+    def test_pod_spodem_gdy_nazwa_ma_dwukropek(self):
+        self.assertEqual(
+            self._czytaj("Numer dzialki:\n27/176\n", DIRECTION_BELOW), "27/176"
+        )
+
+    def test_pod_spodem_mimo_pustej_linii(self):
+        self.assertEqual(
+            self._czytaj("Numer dzialki\n\n27/176\n", DIRECTION_BELOW),
+            "27/176",
+        )
+
+    def test_pod_spodem_w_naglowkach_tabeli(self):
+        self.assertEqual(
+            self._czytaj(
+                "Numer dzialki   Polozenie\n27/176   Borkowo\n", DIRECTION_BELOW
+            ),
+            "27/176",
+        )
+
+    def test_nad_nazwa_gdy_nazwa_stoi_sama(self):
+        self.assertEqual(
+            self._czytaj("27/176\nNumer dzialki\n", DIRECTION_ABOVE), "27/176"
+        )
+
+    def test_nad_nazwa_gdy_nazwa_ma_dwukropek(self):
+        self.assertEqual(
+            self._czytaj("27/176\nNumer dzialki:\n", DIRECTION_ABOVE), "27/176"
+        )
+
+    def test_z_lewej_gdy_nazwa_ma_dwukropek(self):
+        self.assertEqual(
+            self._czytaj("27/176   Numer dzialki:\n", DIRECTION_LEFT), "27/176"
+        )
+
+    def test_z_prawej_gdy_nazwa_ma_dwukropek(self):
+        self.assertEqual(
+            self._czytaj("Numer dzialki: 27/176\n", DIRECTION_RIGHT), "27/176"
+        )
+

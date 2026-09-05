@@ -390,6 +390,12 @@ class WypisProfileDialog(QDialog):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         header.setStretchLastSection(True)
+        # Kliknięcie w nagłówek nie ma zaznaczać całej kolumny — przy pracy
+        # z tabelą łatwo trafić w nagłówek i podświetlić kolumnę zamiast
+        # wybrać wiersz. Przeciąganie linii podziału działa dalej.
+        header.setSectionsClickable(False)
+        header.setSectionsMovable(False)
+        header.setHighlightSections(False)
         self.table.itemChanged.connect(self._on_label_edited)
         self.table.itemDoubleClicked.connect(self._before_cell_edit)
         self.table.currentCellChanged.connect(
