@@ -890,6 +890,13 @@ def _extract_from_same_row(
         )
         if nazwy >= 2:
             continue
+        # Nagłówek bywa piętrowy: „Oznaczenie działki | Opis”, a pod spodem
+        # „Numer działki | Numer KW | użytku”. Wzór zna zwykle tylko jedną
+        # z tych nazw, więc licznik wyżej takiego wiersza nie złapie.
+        # Rozpoznajemy go po tym, że pod spodem stoi kolejny wiersz bez
+        # cyfr, a dopiero niżej dane.
+        if _naglowek_pietrowy(lines, numer, profile):
+            continue
 
         for pozycja, (_start, tekst) in enumerate(kolumny[:-1]):
             goly = tekst.rstrip(" :").strip()
@@ -904,6 +911,51 @@ def _extract_from_same_row(
                 continue
             return wartosc
     return ""
+
+
+def _naglowek_pietrowy(
+    lines: list[str],
+    numer: int,
+    profile: Mapping[str, Any] | None,
+) -> bool:
+    """Czy pod tym wierszem stoi jeszcze jedno piętro nagłówka?
+
+    W wypisach nagłówek bywa rozbity na dwie linie („Oznaczenie działki”
+    nad „Numer działki”). Wartość stoi wtedy dopiero pod nimi, więc
+    czytanie „obok” dałoby nazwę sąsiedniej rubryki.
+    """
+
+    kolumny = _split_columns(lines[numer]) if numer < len(lines) else []
+    if len(kolumny) < 2:
+        return False
+
+    for nizej in lines[numer + 1: numer + 3]:
+        if not nizej.strip():
+            continue
+        ponizej = _split_columns(nizej)
+        # Kolejne piętro nagłówka ma WIĘCEJ rubryk niż to nad nim
+        # („Oznaczenie działki | Opis” nad „Numer działki | Numer KW |
+        # użytku”). W pionowej liście pól kolumny są dwie i dwie, więc
+        # ten warunek jej nie dotyczy.
+        if len(ponizej) <= len(kolumny):
+            return False
+        teksty = [tekst for _start, tekst in ponizej]
+        if any(any(znak.isdigit() for znak in tekst) for tekst in teksty):
+            return False          # to już dane, nie nagłówek
+        # Pod spodem muszą stać prawdziwe dane — inaczej to nie tabela.
+        return _ma_dane_ponizej(lines, numer + 1)
+    return False
+
+
+def _ma_dane_ponizej(lines: list[str], od: int) -> bool:
+    """Czy niżej stoi wiersz z danymi (zawierający cyfrę)?"""
+
+    for linia in lines[od + 1: od + 4]:
+        if not linia.strip():
+            continue
+        if any(znak.isdigit() for znak in linia):
+            return True
+    return False
 
 
 def _ma_wiersz_danych_pod(
@@ -1011,10 +1063,41 @@ def _extract_from_column(
                     continue
 
                 wartosc = wartosc.strip(" :,;-")
-                if wartosc and not _looks_like_label(wartosc, profile):
-                    return wartosc
-                break
+                if not wartosc:
+                    continue
+                # Nagłówek bywa piętrowy („Oznaczenie działki” nad „Numer
+                # działki”) albo zawinięty na dwie linie („Opis” / „użytku”).
+                # Wtedy schodzimy niżej, aż trafimy na prawdziwe dane —
+                # wcześniej odczyt zatrzymywał się na drugim nagłówku.
+                if _looks_like_label(wartosc, profile):
+                    continue
+                if _wyglada_na_naglowek(ponizej, profile):
+                    continue
+                return wartosc
     return ""
+
+
+def _wyglada_na_naglowek(
+    kolumny: list[tuple[int, str]],
+    profile: Mapping[str, Any] | None,
+) -> bool:
+    """Czy ten wiersz to kolejne piętro nagłówka, a nie dane?
+
+    Nagłówek poznajemy po tym, że żadna z jego komórek nie zawiera cyfry,
+    a co najmniej jedna jest nazwą rubryki znaną z wzoru.
+    """
+
+    if not kolumny:
+        return False
+    teksty = [tekst for _start, tekst in kolumny]
+    # Dane prawie zawsze mają cyfrę (numer działki, powierzchnia, numer KW).
+    # Wiersz bez jednej cyfry, złożony z kilku krótkich napisów, to kolejne
+    # piętro nagłówka — nie wartość, której szukamy.
+    if any(any(znak.isdigit() for znak in tekst) for tekst in teksty):
+        return False
+    if any(_looks_like_label(tekst, profile) for tekst in teksty):
+        return True
+    return len(teksty) >= 2
 
 
 def _extract_from_left(

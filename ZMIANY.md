@@ -1389,6 +1389,35 @@ przy pracy z tabelą łatwo w niego trafić. Nagłówek nie reaguje już na
 kliknięcia, kolumn nie da się przestawić ani podświetlić. Przeciąganie linii
 podziału, żeby zmienić szerokość, działa jak dotąd.
 
+## 57. Nagłówek piętrowy („GRUNTY” → „Oznaczenie działki” → „Numer działki”)
+
+**Co było nie tak.** W wypisach nagłówek tabeli bywa rozbity na dwa piętra:
+u góry „Oznaczenie działki” i „Opis”, pod spodem „Numer działki”, „Numer KW”
+i „użytku”, a dopiero niżej dane. Program schodził o jedną linię i trafiał
+w drugie piętro nagłówka — dla „Oznaczenie działki” zwracał „Opis”, czyli
+nazwę sąsiedniej rubryki zamiast numeru działki.
+
+Teraz odczyt schodzi **aż do prawdziwych danych**, pomijając kolejne piętra
+nagłówka. Za nagłówek uznaje wiersz bez ani jednej cyfry, mający więcej rubryk
+niż wiersz nad nim, pod którym stoją dane. Działa to zarówno w trybie
+„🔎 Sam wybierz”, jak i przy wymuszonym „⬇️ Pod spodem”, i dla obu pięter
+nagłówka:
+
+| Etykieta we wzorze | Wcześniej | Teraz |
+|---|---|---|
+| `Oznaczenie działki` | ❌ `Opis` | ✅ `27/176` |
+| `Numer działki` | ✅ `27/176` | ✅ `27/176` |
+
+Pionowe listy pól („Powiat kartuski” nad „Gmina Żukowo”) czytają się jak
+dotąd — reguła wymaga, by dolny wiersz miał **więcej** rubryk niż górny, więc
+listy nie dotyczy.
+
+**Nagłówek podświetlał się pod kursorem.** Samo najechanie myszą na pasek
+z napisami „① Pole w programie”, „② Etykiety w PDF” rozjaśniało całą kolumnę.
+Styl wyłącza teraz reakcję nagłówka na kursor i na wciśnięcie, a komórki
+tabeli nie zmieniają tła pod myszą. Podświetlany jest wyłącznie zaznaczony
+wiersz.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

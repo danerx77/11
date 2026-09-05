@@ -1581,3 +1581,45 @@ class NaglowekTabeliTests(unittest.TestCase):
             [self.dialog.table.columnWidth(c) for c in range(4)], przed
         )
 
+
+class PodswietlanieNaglowkaTests(unittest.TestCase):
+    """Runda 27: nagłówek nie ma się podświetlać po najechaniu myszą."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def test_styl_wylacza_podswietlenie_naglowka(self):
+        styl = self.dialog.styleSheet()
+        self.assertIn("QHeaderView::section:hover", styl)
+
+    def test_styl_wylacza_podswietlenie_komorek(self):
+        styl = self.dialog.styleSheet()
+        self.assertIn("QTableWidget::item:hover", styl)
+
+    def test_naglowek_nie_sledzi_myszy(self):
+        self.assertFalse(
+            self.dialog.table.horizontalHeader().sectionsClickable()
+        )
+

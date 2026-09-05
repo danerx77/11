@@ -225,6 +225,18 @@ class WypisProfileDialog(QDialog):
                 padding: 8px 6px;
                 font-weight: 700;
             }
+            /* Nagłówek ma stać spokojnie: bez rozjaśniania pod kursorem
+               i bez reakcji na wciśnięcie. Wcześniej najechanie myszą
+               podświetlało całą kolumnę. */
+            QHeaderView::section:hover,
+            QHeaderView::section:pressed,
+            QHeaderView::section:checked {
+                background: #1e3648;
+                color: #cfe0ee;
+            }
+            QTableWidget::item:hover {
+                background: transparent;
+            }
             QComboBox, QLineEdit, QPlainTextEdit {
                 background: #1a2e3c;
                 color: #e6eef5;

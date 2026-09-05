@@ -1028,3 +1028,51 @@ class KierunekWKazdymUkladzieTests(unittest.TestCase):
             self._czytaj("Numer dzialki: 27/176\n", DIRECTION_RIGHT), "27/176"
         )
 
+
+class NaglowekPietrowyTests(unittest.TestCase):
+    """Runda 27: nagłówek rozbity na dwa piętra („GRUNTY”/„Oznaczenie…”)."""
+
+    GRUNTY = (
+        "G R U N T Y\n"
+        "Oznaczenie dzialki   Opis\n"
+        "Numer dzialki   Numer KW   uzytku\n"
+        "27/176   GD1R/00012345/6   RIVa\n"
+    )
+
+    def _czytaj(self, etykieta, kierunek=None):
+        dane = {"name": "t", "fields": {"parcel_number": [etykieta]}}
+        if kierunek:
+            dane["directions"] = {"parcel_number": kierunek}
+        return extract_field(self.GRUNTY, normalize_profile(dane), "parcel_number")
+
+    def test_gorne_pietro_naglowka_czyta_dane_a_nie_sasiednia_rubryke(self):
+        # Wcześniej zwracało „Opis” — nazwę sąsiedniej kolumny nagłówka.
+        self.assertEqual(self._czytaj("Oznaczenie dzialki"), "27/176")
+
+    def test_gorne_pietro_z_wymuszonym_kierunkiem_w_dol(self):
+        self.assertEqual(
+            self._czytaj("Oznaczenie dzialki", DIRECTION_BELOW), "27/176"
+        )
+
+    def test_dolne_pietro_naglowka_tez_czyta_dane(self):
+        self.assertEqual(self._czytaj("Numer dzialki"), "27/176")
+
+    def test_dolne_pietro_z_wymuszonym_kierunkiem_w_dol(self):
+        self.assertEqual(
+            self._czytaj("Numer dzialki", DIRECTION_BELOW), "27/176"
+        )
+
+    def test_nie_zwraca_nazwy_sasiedniej_rubryki(self):
+        for etykieta in ("Oznaczenie dzialki", "Numer dzialki"):
+            self.assertNotIn(
+                self._czytaj(etykieta), ("Opis", "uzytku", "Numer KW")
+            )
+
+    def test_pionowa_lista_dalej_czyta_wartosc_obok(self):
+        # Kontrola: „Powiat kartuski” nad „Gmina Zukowo” to nie tabela.
+        profil = normalize_profile(
+            {"name": "t", "fields": {"county": ["Powiat"]}}
+        )
+        tekst = "Wojewodztwo   POMORSKIE\nPowiat   kartuski\nGmina   Zukowo\n"
+        self.assertEqual(extract_field(tekst, profil, "county"), "kartuski")
+
