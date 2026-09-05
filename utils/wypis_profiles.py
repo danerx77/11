@@ -757,6 +757,39 @@ def extract_field(
     # Najdłuższe najpierw: „Nr obrębu” zanim „Nr”.
     inne_etykiety.sort(key=len, reverse=True)
 
+    # Kierunek wymuszony ręcznie w kolumnie „③ Skąd czytać” rozstrzygamy
+    # NAJPIERW. Inaczej zwykłe dopasowanie „Etykieta: wartość” zwracałoby
+    # to samo niezależnie od ustawienia i zmiana nic by nie dawała.
+    kierunek = field_direction(profile, field)
+    if kierunek != DIRECTION_AUTO:
+        czytaj = {
+            DIRECTION_RIGHT: _extract_from_same_row,
+            DIRECTION_LEFT: _extract_from_left,
+            DIRECTION_BELOW: _extract_from_column,
+            DIRECTION_ABOVE: _extract_from_above,
+        }.get(kierunek)
+        if czytaj is None:
+            return ""
+        wynik = czytaj(lines, labels, profile)
+        if wynik:
+            return wynik[:max_length]
+        # Etykieta z dwukropkiem („Powiat: kartuski”) tworzy jedną kolumnę,
+        # więc podział na kolumny jej nie rozdzieli. Dla kierunku „z prawej”
+        # dobieramy jeszcze wartość stojącą tuż za dwukropkiem.
+        if kierunek == DIRECTION_RIGHT:
+            for label in sorted(labels, key=len, reverse=True):
+                wzor = _label_pattern(label)
+                for line in lines:
+                    trafienie = wzor.search(line)
+                    if not trafienie:
+                        continue
+                    wartosc = _value_until_next_column(
+                        trafienie.group(1), inne_etykiety
+                    )
+                    if wartosc and not _looks_like_label(wartosc, profile):
+                        return wartosc[:max_length]
+        return ""
+
     # Najdłuższe etykiety sprawdzamy najpierw, inaczej „Pow.” dopasowałoby
     # się wewnątrz „Pow. [ha]” i zwróciło „[ha]” jako wartość.
     for label in sorted(labels, key=len, reverse=True):
@@ -813,21 +846,6 @@ def extract_field(
                     candidate = _value_until_next_column(nxt, inne_etykiety)
                     if candidate and not _looks_like_label(candidate, profile):
                         return candidate[:max_length]
-
-    # Kierunek wymuszony ręcznie przez użytkownika w kolumnie „Skąd".
-    kierunek = field_direction(profile, field)
-    if kierunek == DIRECTION_BELOW:
-        ponizej = _extract_from_column(lines, labels, profile)
-        return ponizej[:max_length] if ponizej else ""
-    if kierunek == DIRECTION_RIGHT:
-        obok_tylko = _extract_from_same_row(lines, labels, profile)
-        return obok_tylko[:max_length] if obok_tylko else ""
-    if kierunek == DIRECTION_LEFT:
-        z_lewej = _extract_from_left(lines, labels, profile)
-        return z_lewej[:max_length] if z_lewej else ""
-    if kierunek == DIRECTION_ABOVE:
-        z_gory = _extract_from_above(lines, labels, profile)
-        return z_gory[:max_length] if z_gory else ""
 
     # Pionowa lista pól bez dwukropków — „Województwo   POMORSKIE”.
     # Etykieta jest pierwszą kolumną, wartość następną w TYM SAMYM wierszu.

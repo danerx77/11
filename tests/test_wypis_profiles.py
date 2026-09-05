@@ -920,3 +920,51 @@ class KierunekZLewejINadTests(unittest.TestCase):
             ["auto", "right", "left", "below", "above"],
         )
 
+
+class ZmianaKierunkuDzialaTests(unittest.TestCase):
+    """Runda 25: zmiana „Skąd czytać” ma naprawdę zmieniać odczyt."""
+
+    Z_DWUKROPKIEM = "Powiat: kartuski\nGmina: Zukowo\n"
+    BEZ_DWUKROPKA = "Powiat   kartuski\nGmina   Zukowo\n"
+
+    def _czytaj(self, tekst, kierunek):
+        profil = normalize_profile(
+            {
+                "name": "t",
+                "fields": {"county": ["Powiat"]},
+                "directions": {"county": kierunek},
+            }
+        )
+        return extract_field(tekst, profil, "county")
+
+    def test_kierunki_daja_rozne_wyniki_mimo_dwukropka(self):
+        # Wcześniej „Powiat: kartuski” zwracało to samo dla każdego
+        # ustawienia, bo zwykłe dopasowanie wyprzedzało wybór kierunku.
+        wyniki = {
+            kierunek: self._czytaj(self.Z_DWUKROPKIEM, kierunek)
+            for kierunek in ("right", "left", "below", "above")
+        }
+        self.assertEqual(wyniki["right"], "kartuski")
+        self.assertEqual(wyniki["left"], "")
+        self.assertEqual(wyniki["below"], "")
+        self.assertEqual(wyniki["above"], "")
+
+    def test_z_dwukropkiem_kierunek_w_prawo_nadal_czyta(self):
+        self.assertEqual(
+            self._czytaj(self.Z_DWUKROPKIEM, DIRECTION_RIGHT), "kartuski"
+        )
+
+    def test_bez_dwukropka_kierunki_tez_sie_roznia(self):
+        self.assertEqual(
+            self._czytaj(self.BEZ_DWUKROPKA, DIRECTION_RIGHT), "kartuski"
+        )
+        self.assertEqual(self._czytaj(self.BEZ_DWUKROPKA, DIRECTION_LEFT), "")
+
+    def test_tryb_automatyczny_dalej_znajduje_wartosc(self):
+        for tekst in (self.Z_DWUKROPKIEM, self.BEZ_DWUKROPKA):
+            self.assertEqual(self._czytaj(tekst, "auto"), "kartuski")
+
+    def test_powrot_do_automatu_przywraca_odczyt(self):
+        self.assertEqual(self._czytaj(self.Z_DWUKROPKIEM, DIRECTION_LEFT), "")
+        self.assertEqual(self._czytaj(self.Z_DWUKROPKIEM, "auto"), "kartuski")
+

@@ -1449,3 +1449,72 @@ class KierunekWTabeliTests(unittest.TestCase):
         self.dialog._autofill()
         self.assertEqual(self.dialog.table.item(row, 4).text(), przed)
 
+
+class UkladTabeliTests(unittest.TestCase):
+    """Runda 25: tabela nie ma sama przestawiać kolumn ani wierszy."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.chk_auto.setChecked(False)
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _szerokosci(self):
+        return [self.dialog.table.columnWidth(c) for c in range(5)]
+
+    def test_szerokosci_kolumn_nie_zmieniaja_sie_po_odczycie(self):
+        przed = self._szerokosci()
+        for _ in range(3):
+            self.dialog._analyze()
+        self.assertEqual(self._szerokosci(), przed)
+
+    def test_wiersze_maja_rowna_wysokosc(self):
+        wysokosci = {
+            self.dialog.table.rowHeight(r)
+            for r in range(min(10, self.dialog.table.rowCount()))
+        }
+        self.assertEqual(len(wysokosci), 1)
+
+    def test_zmiana_kierunku_nie_rusza_kolumn(self):
+        przed = self._szerokosci()
+        widget = self.dialog.table.cellWidget(1, 2)
+        widget.setCurrentIndex(widget.findData("below"))
+        self.assertEqual(self._szerokosci(), przed)
+
+    def test_zmiana_kierunku_zmienia_odczytana_wartosc(self):
+        row = next(
+            r
+            for r in range(self.dialog.table.rowCount())
+            if self.dialog.table.item(r, 0).text() == "Powiat"
+        )
+        widget = self.dialog.table.cellWidget(row, 2)
+        przed = self.dialog.table.item(row, 4).text()
+        self.assertTrue(przed)
+
+        widget.setCurrentIndex(widget.findData("left"))
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "")
+
+        widget.setCurrentIndex(widget.findData("auto"))
+        self.assertEqual(self.dialog.table.item(row, 4).text(), przed)
+

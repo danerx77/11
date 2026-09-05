@@ -1340,6 +1340,28 @@ Przycisk „🪄 Wypełnij sam” sprawdza teraz wszystkie cztery strony po kole
 z prawej, spod spodu, z lewej i z góry — i zapisuje w polu ten kierunek,
 który dał wynik.
 
+## 55. Zmiana „Skąd czytać” działa naprawdę; tabela stoi spokojnie
+
+**Zmiana kierunku nic nie dawała.** Przy polach zapisanych z dwukropkiem
+(„Powiat: kartuski” — czyli w większości wypisów) program i tak zwracał tę
+samą wartość, niezależnie od tego, co wybrałeś w kolumnie „③ Skąd czytać”.
+Zwykłe dopasowanie „nazwa: wartość” wykonywało się wcześniej niż sprawdzenie
+kierunku, więc wybór użytkownika był po prostu pomijany.
+
+Teraz wymuszony kierunek rozstrzyga się **jako pierwszy**. Każde ustawienie
+daje inny wynik, a powrót na „🔎 Sam wybierz” przywraca odczyt automatyczny.
+Tryb automatyczny działa jak dotąd — zmiana dotyczy tylko ustawień ręcznych.
+
+**Tabela sama przestawiała kolumny.** Kolumny „Pole w programie” i „Stan”
+miały tryb „dopasuj do treści”, więc Qt przeliczał ich szerokość po każdym
+odczycie i linie podziału skakały w bok w trakcie pracy. Do tego zawijanie
+tekstu zmieniało wysokość wierszy, przez co całość „oddychała”.
+
+Teraz szerokości są stałe i zmienia je wyłącznie użytkownik, przeciągając
+linię w nagłówku. Wszystkie wiersze mają równą wysokość. Długie napisy są
+przycinane wielokropkiem, a pełna treść pokazuje się w podpowiedzi pod
+kursorem.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

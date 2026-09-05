@@ -361,8 +361,10 @@ class WypisProfileDialog(QDialog):
         self.table.horizontalHeaderItem(1).setToolTip(
             "Nazwy pól używane w Twoim PDF. Kilka wariantów oddziel średnikiem."
         )
-        self.table.setColumnWidth(1, 190)
-        self.table.setColumnWidth(2, 150)
+        self.table.setColumnWidth(0, 155)
+        self.table.setColumnWidth(1, 125)
+        self.table.setColumnWidth(2, 138)
+        self.table.setColumnWidth(3, 105)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
@@ -370,13 +372,24 @@ class WypisProfileDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.setWordWrap(True)
+        # Bez zawijania: wiersze mają zostać równej wysokości. Przy
+        # zawijaniu tabela zmieniała układ po każdym odczycie i wyglądało
+        # to, jakby sama się przestawiała. Pełny tekst jest w podpowiedzi.
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Fixed
+        )
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Szerokości są stałe i zmienia je tylko użytkownik, przeciągając
+        # linię nagłówka. Tryb „dopasuj do treści” przeliczał je przy każdym
+        # odczycie, przez co kolumny same skakały w bok podczas pracy.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(True)
         self.table.itemChanged.connect(self._on_label_edited)
         self.table.itemDoubleClicked.connect(self._before_cell_edit)
         self.table.currentCellChanged.connect(
@@ -802,7 +815,7 @@ class WypisProfileDialog(QDialog):
             )
             # Lista ma się mieścić w swojej kolumnie, a nie zachodzić
             # na sąsiednie — inaczej trudno odczytać stan pola.
-            wybor.setMaximumWidth(146)
+            wybor.setMaximumWidth(134)
             wybor.setSizeAdjustPolicy(
                 QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
             )
@@ -836,7 +849,7 @@ class WypisProfileDialog(QDialog):
         }
 
         self._loading = False
-        self.table.resizeRowsToContents()
+
         if self.pdf_text:
             self._analyze()
         if getattr(self, "page_view", None) is not None and self.pdf_path:
@@ -1985,10 +1998,14 @@ class WypisProfileDialog(QDialog):
                 status_item.setForeground(QColor(STATUS_COLORS["manual"]))
                 status_item.setToolTip(STATUS_HINTS["manual"])
             else:
-                value_item.setText(data.get("value", ""))
+                odczyt = data.get("value", "")
+                value_item.setText(odczyt)
                 value_item.setForeground(QColor("#e8eef4"))
+                # Długie wartości są przycinane w tabeli, więc pełną treść
+                # pokazujemy w podpowiedzi pod kursorem.
                 value_item.setToolTip(
-                    "Kliknij dwa razy, aby poprawić wartość ręcznie."
+                    (f"{odczyt}\n\n" if odczyt else "")
+                    + "Kliknij dwa razy, aby poprawić wartość ręcznie."
                 )
             pogrubienie = status == "ok" or reczna is not None
             value_item.setFont(
@@ -1997,7 +2014,7 @@ class WypisProfileDialog(QDialog):
         self._loading = False
 
         self.lbl_summary.setText(summarize(rows.values()))
-        self.table.resizeRowsToContents()
+
 
     def _selected_text(self) -> str:
         """Zaznaczony tekst z zakładki tekstowej.
