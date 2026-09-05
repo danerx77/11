@@ -155,73 +155,51 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     ]
     same_line.sort(key=lambda w: w.rect.left())
 
-    index = same_line.index(hit)
-
-    # Jeden wiersz wypisu bywa tabelką: „Powiat: kartuski   Gmina: Zukowo”.
-    # Etykietę liczymy więc **wokół klikniętego słowa**, a nie od początku
-    # linii — inaczej klik w „Gmina” zwracałby „Powiat”.
-
-    # Koniec etykiety: najbliższy dwukropek od miejsca kliknięcia w prawo.
-    end_index = None
-    for position in range(index, len(same_line)):
-        if same_line[position].text.endswith(":"):
-            end_index = position
-            break
-
-    if end_index is None:
-        # Kliknięto w wartość — cofamy się do dwukropka po lewej.
-        for position in range(index, -1, -1):
-            if same_line[position].text.endswith(":"):
-                end_index = position
-                break
-    if end_index is None:
-        end_index = index
-
-    # Początek etykiety: za poprzednim dwukropkiem…
-    start_index = 0
-    for position in range(end_index - 1, -1, -1):
-        if same_line[position].text.endswith(":"):
-            start_index = position + 1
-            break
-
-    # …a jeśli między słowami jest szeroka przerwa, to znaczy, że zaczyna
-    # się nowa kolumna tabeli — etykieta nie sięga przed tę przerwę.
-    # („Obreb: 0010 MAKI      Nr obrebu: 0010” → etykieta to „Nr obrebu”.)
+    # ── Wiersz dzielimy na komórki ────────────────────────────────────
+    # Wypis bywa tabelką: „Powiat: kartuski     Gmina: Żukowo”. Szeroka
+    # przerwa rozdziela kolumny, więc każdą obsługujemy osobno. Dzięki
+    # temu klik w „kartuski” nie ucieka do sąsiedniej pary.
     gap = _column_gap(same_line)
-    for position in range(end_index, start_index, -1):
-        odstep = same_line[position].rect.left() - same_line[position - 1].rect.right()
-        if odstep >= gap:
-            start_index = position
-            break
-
-    label_chunk = same_line[start_index: end_index + 1]
-    label = " ".join(w.text for w in label_chunk).strip().rstrip(":").strip()
-
-    # Wartość: słowa za etykietą aż do następnej etykiety w tym wierszu.
-    value_chunk: list[Word] = []
-    previous = same_line[end_index]
-    for position in range(end_index + 1, len(same_line)):
-        word = same_line[position]
-        if word.text.endswith(":"):
-            # Zaczyna się kolejna etykieta. Jej pierwsze słowo leży za
-            # ostatnią szeroką przerwą — wszystko od tego miejsca nie
-            # należy już do naszej wartości.
-            next_start = position
-            for back in range(position, end_index + 1, -1):
-                odstep = (
-                    same_line[back].rect.left() - same_line[back - 1].rect.right()
-                )
-                if odstep >= gap:
-                    next_start = back
-                    break
-            while value_chunk and same_line.index(value_chunk[-1]) >= next_start:
-                value_chunk.pop()
-            break
+    cells: list[list[Word]] = [[same_line[0]]]
+    for previous, word in zip(same_line, same_line[1:]):
         if word.rect.left() - previous.rect.right() >= gap:
-            break            # nowa kolumna tabeli
-        value_chunk.append(word)
-        previous = word
-    value = " ".join(w.text for w in value_chunk).strip(" :,;-")
+            cells.append([word])
+        else:
+            cells[-1].append(word)
+
+    cell_index = next(i for i, cell in enumerate(cells) if hit in cell)
+    cell = cells[cell_index]
+
+    def _text(words: list[Word]) -> str:
+        return " ".join(w.text for w in words).strip()
+
+    # ── W komórce szukamy dwukropka: przed nim etykieta, za nim wartość ──
+    colon = next(
+        (i for i, w in enumerate(cell) if w.text.endswith(":")),
+        None,
+    )
+
+    if colon is not None:
+        label_chunk = cell[: colon + 1]
+        value_chunk = cell[colon + 1:]
+        # Układ kolumnowy: „Powiat:” w jednej komórce, wartość w drugiej.
+        if not value_chunk and cell_index + 1 < len(cells):
+            nastepna = cells[cell_index + 1]
+            if not any(w.text.endswith(":") for w in nastepna):
+                value_chunk = nastepna
+    else:
+        # Komórka bez dwukropka. Jeśli poprzednia kończy się dwukropkiem,
+        # to kliknięto w wartość — etykieta stoi w tamtej komórce.
+        poprzednia = cells[cell_index - 1] if cell_index else []
+        if poprzednia and poprzednia[-1].text.endswith(":"):
+            label_chunk = poprzednia
+            value_chunk = cell
+        else:
+            label_chunk = cell
+            value_chunk = []
+
+    label = _text(label_chunk).rstrip(":").strip()
+    value = _text(value_chunk).strip(" :,;-")
 
     left = min(w.rect.left() for w in label_chunk)
     top = min(w.rect.top() for w in label_chunk)

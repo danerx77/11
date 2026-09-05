@@ -153,12 +153,23 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         if text and text not in clean_markers:
             clean_markers.append(text)
 
+    # Wartości poprawione ręcznie przez użytkownika — mają pierwszeństwo
+    # przed tym, co program odczyta z dokumentu.
+    raw_manual = source.get("manual_values")
+    raw_manual = raw_manual if isinstance(raw_manual, Mapping) else {}
+    manual_values = {
+        str(key): str(value).strip()
+        for key, value in raw_manual.items()
+        if str(key) in FIELD_KEYS and str(value or "").strip()
+    }
+
     return {
         "name": str(source.get("name", "") or "Nowy profil").strip() or "Nowy profil",
         "builtin": bool(source.get("builtin", False)),
         "override": bool(source.get("override", True)),
         "markers": clean_markers,
         "fields": fields,
+        "manual_values": manual_values,
     }
 
 

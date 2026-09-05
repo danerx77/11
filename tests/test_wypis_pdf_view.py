@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - brak biblioteki
     fitz = None
 
 try:
-    from PySide6.QtCore import QPoint
+    from PySide6.QtCore import QPoint, Qt
     from PySide6.QtWidgets import QApplication
 except Exception:  # pragma: no cover - brak Qt
     QApplication = None
@@ -609,6 +609,129 @@ class CofanieIUsuwanieTests(unittest.TestCase):
         self.assertEqual(self.dialog.btn_undo.shortcut().toString(), "Ctrl+Z")
         self.assertEqual(self.dialog.btn_redo.shortcut().toString(), "Ctrl+Y")
         self.assertEqual(self.dialog.btn_clear_row.shortcut().toString(), "Del")
+
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class KlikWWartoscTests(unittest.TestCase):
+    """Klik w samą wartość ma zwracać jej etykietę, a nie sąsiednią kolumnę."""
+
+    @classmethod
+    def setUpClass(cls):
+        TabelaWWierszuTests.setUpClass()
+        cls.page = TabelaWWierszuTests.page
+
+    @classmethod
+    def tearDownClass(cls):
+        TabelaWWierszuTests.tearDownClass()
+
+    def _klik_w_wartosc(self, tekst: str) -> dict:
+        slowo = next(w for w in self.page.words if w.text.strip() == tekst)
+        return label_at(
+            self.page,
+            QPoint(int(slowo.rect.center().x()), int(slowo.rect.center().y())),
+        )
+
+    def test_wartosc_pierwszej_kolumny(self):
+        hit = self._klik_w_wartosc("kartuski")
+        self.assertEqual(hit["label"], "Powiat")
+        self.assertEqual(hit["value"], "kartuski")
+
+    def test_wartosc_drugiej_kolumny(self):
+        hit = self._klik_w_wartosc("Zukowo")
+        self.assertEqual(hit["label"], "Gmina")
+
+    def test_wartosc_z_nawiasem_w_etykiecie(self):
+        self.assertEqual(self._klik_w_wartosc("0,4500")["label"], "Pow. [ha]")
+
+    def test_wartosc_z_ukosnikiem(self):
+        self.assertEqual(self._klik_w_wartosc("145/7")["label"], "Dzialka nr")
+
+    def test_drugie_slowo_wartosci_wielowyrazowej(self):
+        hit = self._klik_w_wartosc("MAKI")
+        self.assertEqual(hit["label"], "Obreb")
+        self.assertEqual(hit["value"], "0010 MAKI")
+
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class RecznaWartoscTests(unittest.TestCase):
+    """Kolumna „Odczytana wartość” daje się poprawić ręcznie."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _wiersz(self, nazwa: str) -> int:
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return row
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def test_kolumna_wartosci_jest_edytowalna(self):
+        row = self._wiersz("Powiat")
+        item = self.dialog.table.item(row, 3)
+        self.assertTrue(item.flags() & Qt.ItemFlag.ItemIsEditable)
+
+    def test_kolumna_stanu_nie_jest_edytowalna(self):
+        row = self._wiersz("Powiat")
+        item = self.dialog.table.item(row, 2)
+        self.assertFalse(item.flags() & Qt.ItemFlag.ItemIsEditable)
+
+    def test_wpisana_wartosc_zostaje_zapamietana(self):
+        row = self._wiersz("Powiat")
+        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.assertEqual(self.dialog._manual_values.get("county"), "wejherowski")
+
+    def test_wpisana_wartosc_zmienia_stan(self):
+        row = self._wiersz("Powiat")
+        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.assertIn("ręcznie", self.dialog.table.item(row, 2).text())
+
+    def test_ponowna_analiza_nie_kasuje_recznej_wartosci(self):
+        row = self._wiersz("Powiat")
+        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.dialog._analyze()
+        self.assertEqual(self.dialog.table.item(row, 3).text(), "wejherowski")
+
+    def test_skasowanie_wraca_do_odczytu(self):
+        row = self._wiersz("Powiat")
+        odczyt = self.dialog.table.item(row, 3).text()
+        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.dialog.table.item(row, 3).setText("")
+        self.assertEqual(self.dialog.table.item(row, 3).text(), odczyt)
+        self.assertNotIn("county", self.dialog._manual_values)
+
+    def test_wartosc_trafia_do_wzoru(self):
+        row = self._wiersz("Powiat")
+        self.dialog.table.item(row, 3).setText("wejherowski")
+        index = self.dialog._current_index()
+        zapisane = self.dialog.profiles[index].get("manual_values", {})
+        self.assertEqual(zapisane.get("county"), "wejherowski")
 
 
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")

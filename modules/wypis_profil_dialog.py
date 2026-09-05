@@ -56,12 +56,14 @@ from utils.wypis_profiles import (
 )
 
 STATUS_COLORS = {
+    "manual": "#f1c40f",
     "ok": "#2ecc71",
     "found": "#f1c40f",
     "missing": "#e74c3c",
 }
 
 STATUS_TEXTS = {
+    "manual": "✏️ wpisano ręcznie",
     "ok": "✅ odczytano",
     "found": "⚠️ brak wartości",
     "missing": "❌ nie znaleziono",
@@ -69,6 +71,7 @@ STATUS_TEXTS = {
 
 #: Pełne wyjaśnienia statusów — pokazywane jako podpowiedź.
 STATUS_HINTS = {
+    "manual": "Wartość poprawiona ręcznie — program nie nadpisze jej odczytem z PDF.",
     "ok": "Program znalazł etykietę i odczytał wartość.",
     "found": "Etykieta jest w dokumencie, ale nie ma przy niej wartości.",
     "missing": "Nie znaleziono tej etykiety — wskaż ją na dokumencie.",
@@ -102,6 +105,8 @@ class WypisProfileDialog(QDialog):
         self._undo: list[tuple[str, dict]] = []
         self._redo: list[tuple[str, dict]] = []
         self._before_edit: dict | None = None
+        #: Wartości poprawione ręcznie: {klucz pola: tekst}.
+        self._manual_values: dict[str, str] = {}
 
         self._build_ui()
         self._apply_style()
@@ -388,9 +393,11 @@ class WypisProfileDialog(QDialog):
 
         hint = QLabel(
             "Jak przypisać pole: <b>1.</b> kliknij wiersz w tabeli, "
-            "<b>2.</b> kliknij nazwę tego pola na dokumencie po prawej. "
-            "Gotowe. Etykiety można też wpisać ręcznie w kolumnie "
-            "„Etykiety w PDF”, oddzielając je średnikami."
+            "<b>2.</b> kliknij na dokumencie nazwę pola <b>albo samą "
+            "wartość</b> — program rozpozna jedno i drugie. Kolumnę "
+            "<b>④ Odczytana wartość</b> poprawisz dwuklikiem; wpisana "
+            "ręcznie wartość ma pierwszeństwo, a skasowanie jej wraca "
+            "do odczytu z dokumentu."
         )
         hint.setObjectName("muted_hint")
         hint.setWordWrap(True)
@@ -406,9 +413,9 @@ class WypisProfileDialog(QDialog):
         page_layout.setContentsMargins(6, 6, 6, 6)
 
         page_hint = QLabel(
-            "Kliknij w dokumencie nazwę pola (np. „Powiat”), a program "
-            "przypisze ją do wiersza zaznaczonego w tabeli po lewej. "
-            "Podświetlenie pokazuje, w co trafisz."
+            "Kliknij w dokumencie nazwę pola (np. „Powiat”) <b>lub jego "
+            "wartość</b> — program przypisze ją do wiersza zaznaczonego "
+            "w tabeli po lewej. Podświetlenie pokazuje, w co trafisz."
         )
         page_hint.setObjectName("muted_hint")
         page_hint.setWordWrap(True)
@@ -591,10 +598,22 @@ class WypisProfileDialog(QDialog):
             )
             self.table.setItem(row, 1, label_item)
 
-            for column in (2, 3):
-                item = QTableWidgetItem("")
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, column, item)
+            # Kolumna „Stan” jest tylko do odczytu…
+            status_item = QTableWidgetItem("")
+            status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 2, status_item)
+
+            # …a „Odczytana wartość” daje się poprawić ręcznie.
+            value_item = QTableWidgetItem("")
+            value_item.setToolTip("Kliknij dwa razy, aby poprawić wartość ręcznie.")
+            self.table.setItem(row, 3, value_item)
+
+        # Ręczne poprawki zapisane wcześniej w tym wzorze.
+        self._manual_values = {
+            str(k): str(v)
+            for k, v in dict(profile.get("manual_values") or {}).items()
+            if str(v).strip()
+        }
 
         self._loading = False
         self.table.resizeRowsToContents()
@@ -609,6 +628,36 @@ class WypisProfileDialog(QDialog):
             return
         markers = [m.strip() for m in self.markers_edit.text().split(";") if m.strip()]
         self.profiles[index]["markers"] = markers
+
+    def _on_value_edited(self, item) -> None:
+        """Zapisuje wartość poprawioną ręcznie w kolumnie „Odczytana wartość”."""
+
+        row = item.row()
+        key_item = self.table.item(row, 0)
+        if key_item is None:
+            return
+        key = key_item.data(Qt.ItemDataRole.UserRole)
+        tekst = item.text().strip()
+
+        if tekst:
+            self._manual_values[key] = tekst
+            komunikat = f"✏️ Ręcznie ustawiono „{key_item.text()}” = {tekst}"
+        else:
+            # Pusta komórka = powrót do wartości odczytanej z dokumentu.
+            self._manual_values.pop(key, None)
+            komunikat = f"↺ Przywrócono odczyt z dokumentu dla „{key_item.text()}”"
+
+        self._store_manual_into_profile()
+        if self.pdf_text:
+            self._analyze()
+        self.lbl_summary.setText(komunikat + "  •  " + self.lbl_summary.text())
+
+    def _store_manual_into_profile(self) -> None:
+        """Zapisuje ręczne poprawki we wzorze, by przetrwały zamknięcie okna."""
+
+        index = self._current_index()
+        if index >= 0:
+            self.profiles[index]["manual_values"] = dict(self._manual_values)
 
     def _before_cell_edit(self, _item=None) -> None:
         """Zapamiętuje treść komórek tuż przed ręczną edycją."""
@@ -764,7 +813,14 @@ class WypisProfileDialog(QDialog):
         self.profiles[index]["fields"] = fields
 
     def _on_label_edited(self, item):
-        if self._loading or item.column() != 1:
+        if self._loading:
+            return
+
+        if item.column() == 3:
+            self._on_value_edited(item)
+            return
+
+        if item.column() != 1:
             return
         # Snapshot pobrany po edycji zawierałby już nową treść, dlatego
         # odtwarzamy stan sprzed zmiany z zapamiętanej kopii komórki.
@@ -1079,10 +1135,33 @@ class WypisProfileDialog(QDialog):
             value_item = self.table.item(row, 3)
             if value_item is None:
                 value_item = QTableWidgetItem()
-                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                value_item.setToolTip(
+                    "Kliknij dwa razy, aby poprawić wartość ręcznie."
+                )
                 self.table.setItem(row, 3, value_item)
-            value_item.setText(data.get("value", ""))
-            value_item.setFont(QFont("", -1, QFont.Weight.Bold if status == "ok" else QFont.Weight.Normal))
+
+            # Ręczna poprawka użytkownika jest ważniejsza niż odczyt z PDF.
+            reczna = self._manual_values.get(key)
+            if reczna is not None:
+                value_item.setText(reczna)
+                value_item.setForeground(QColor("#f1c40f"))
+                value_item.setToolTip(
+                    "Wartość wpisana ręcznie.\n"
+                    "Wyczyść komórkę, aby wrócić do odczytu z dokumentu."
+                )
+                status_item.setText(STATUS_TEXTS["manual"])
+                status_item.setForeground(QColor(STATUS_COLORS["manual"]))
+                status_item.setToolTip(STATUS_HINTS["manual"])
+            else:
+                value_item.setText(data.get("value", ""))
+                value_item.setForeground(QColor("#e8eef4"))
+                value_item.setToolTip(
+                    "Kliknij dwa razy, aby poprawić wartość ręcznie."
+                )
+            pogrubienie = status == "ok" or reczna is not None
+            value_item.setFont(
+                QFont("", -1, QFont.Weight.Bold if pogrubienie else QFont.Weight.Normal)
+            )
         self._loading = False
 
         self.lbl_summary.setText(summarize(rows.values()))

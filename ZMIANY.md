@@ -875,6 +875,51 @@ kolumnami i 11 na cofanie/usuwanie), `tests/test_wypis_profiles.py` — 59
 (6 nowych na ucinanie wartości przed kolejną kolumną). Razem
 **476 testów** (było 452).
 
+## 44. Klikanie w wartość i ręczne poprawianie odczytu
+
+**Zgłoszenie:** „powinna być odczytywana wartość wskazana i możliwość
+edytowania”.
+
+### Klik w wartość, nie tylko w nazwę pola
+
+Wcześniej trzeba było trafić dokładnie w **nazwę** pola. Klik w samą
+wartość dawał przypadkowy wynik — np. klik w `kartuski` zwracał `Gmina`
+i `Żukowo`, czyli sąsiednią kolumnę.
+
+Rozpoznawanie wiersza zostało przepisane: wiersz dzielony jest na
+**komórki** po szerokich przerwach, a dopiero w komórce szukany jest
+dwukropek. Dzięki temu działa jedno i drugie:
+
+| Kliknięto | Rozpoznana etykieta | Wartość |
+| --- | --- | --- |
+| `Powiat` (nazwa) | `Powiat` | `kartuski` |
+| `kartuski` (wartość) | `Powiat` | `kartuski` |
+| `Zukowo` (wartość) | `Gmina` | `Zukowo` |
+| `MAKI` (drugie słowo wartości) | `Obreb` | `0010 MAKI` |
+| `0,4500` (wartość) | `Pow. [ha]` | `0,4500` |
+
+Obsłużony jest też układ, w którym nazwa pola i wartość stoją w osobnych
+kolumnach tabeli.
+
+### Ręczne poprawianie odczytanej wartości
+
+Kolumna **④ Odczytana wartość** była zablokowana. Teraz:
+
+* dwuklik pozwala **wpisać własną wartość**,
+* wpisana wartość jest żółta i ma stan **✏️ wpisano ręcznie**,
+* ma **pierwszeństwo** — ponowna analiza dokumentu jej nie nadpisze,
+* **skasowanie komórki** wraca do wartości odczytanej z dokumentu,
+* poprawki zapisują się we wzorze (`manual_values`), więc są dostępne po
+  ponownym otwarciu programu.
+
+To domyka scenariusz „program źle odczytał jedno pole” — nie trzeba już
+walczyć z etykietami, można po prostu wpisać poprawną wartość.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 69 testów (+5 na klik w wartość, +7 na
+ręczną edycję). Razem **488 testów** (było 476).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
