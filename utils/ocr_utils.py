@@ -1,13 +1,42 @@
 """
 ocr_utils.py – Narzędzia OCR (EasyOCR + Tesseract)
 """
+import os
 import re
 from pathlib import Path
+
+
+def _easyocr_reader_options() -> dict:
+    """Zwraca opcje modelu dla przenośnego wydania PyInstaller.
+
+    build_windows.ps1 pakuje wcześniej przygotowane modele do katalogu aplikacji.
+    Nie pozwalamy wtedy EasyOCR pobierać brakujących plików do potencjalnie
+    tylko-do-odczytu katalogu programu; przy niekompletnej paczce nastąpi
+    kontrolowane przejście do awaryjnego OCR Tesseract.
+    """
+    bundled_model_dir = os.environ.get("ENERGODOK_EASYOCR_MODEL_DIR", "").strip()
+    if not bundled_model_dir:
+        # Zgodność ze starszym wydaniem programu.
+        bundled_model_dir = os.environ.get(
+            "PYSILDE6_EASYOCR_MODEL_DIR", ""
+        ).strip()
+    if bundled_model_dir:
+        return {
+            "model_storage_directory": bundled_model_dir,
+            "download_enabled": False,
+        }
+    return {}
+
 
 def run_ocr_on_image(image_path: str = None, image_array=None, lang: str = 'pl') -> str:
     try:
         import easyocr
-        reader = easyocr.Reader(['pl', 'en'], gpu=False, verbose=False)
+        reader = easyocr.Reader(
+            ['pl', 'en'],
+            gpu=False,
+            verbose=False,
+            **_easyocr_reader_options(),
+        )
         if image_array is not None:
             results = reader.readtext(image_array, detail=0, paragraph=True)
         else:

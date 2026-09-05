@@ -1,0 +1,1493 @@
+# Wykonane zmiany
+
+Poniżej opis dziewięciu zgłoszonych punktów. Wszystko jest już w gałęzi
+`arena/01a06823-11`. Testy: **153 przechodzą** (wcześniej było 48).
+
+---
+
+## 1. Ikona programu
+
+Program ma teraz własną ikonę aplikacji, a nie tylko ikonkę na zakładce.
+
+* `assets/energodok.ico` — rozmiary 16, 20, 24, 32, 40, 48, 64, 96, 128, 256 px
+  (Windows sam dobiera właściwy do paska zadań, Alt+Tab i podglądu pliku).
+* `tools/make_app_icon.py` — generator ikony. Korzysta wyłącznie z Pillow,
+  które jest już w `requirements-windows.txt`. Aby wygenerować ponownie:
+  `python tools/make_app_icon.py`.
+* Ikona jest ustawiana w trzech miejscach:
+  * `QApplication.setWindowIcon(...)` — pasek zadań i okna dialogowe,
+  * `MainWindow.setWindowIcon(...)` — belka okna,
+  * `--icon assets/energodok.ico` w PyInstallerze — sam plik EXE.
+* Dodatkowo ustawiany jest `AppUserModelID`. Bez tego Windows pokazywałby na
+  pasku zadań ikonę Pythona zamiast ikony programu.
+* Aby użyć własnej grafiki, wystarczy podmienić `assets/energodok.ico` —
+  skrypt budujący nie nadpisuje istniejącego pliku.
+
+## 2. Powrót nazwy `eKW` na `KW2`
+
+Karta modułu nazywa się znowu **KW2**. Zapisany układ zakładek nie ginie:
+nazwy `eKW`, `KW 2`, `📖 KW 2 — ręcznie` i `📖 KW 2 — ręczne przeglądanie` są
+nadal rozpoznawane jako ta sama karta. Ikonka karty pokazuje teraz `KW2`.
+Nazwa portalu Ministerstwa Sprawiedliwości („Otwórz portal eKW”) celowo
+została, bo tak nazywa się sam serwis.
+
+## 3. Nowy moduł „Wskaźnik”
+
+Nowa zakładka `🔢 Wskaźnik` z listą działek i ich identyfikatorami
+ewidencyjnymi (`221001_1.0001.12/3`).
+
+* **Filtr listą działek** — w polu „Pokaż tylko działki” można wkleić
+  `1/1, 1/2` (przecinki, spacje, średniki, nowe wiersze — dowolnie) i tabela
+  pokazuje wyłącznie te działki. Program informuje, których działek z filtra
+  nie ma na liście.
+* **Import TXT/CSV i wklejanie** — plik lub wklejony tekst może mieć postać
+  `1/2  221001_1.0001.1/2`, `1/2;221001_1.0001.1/2;Polki` albo sam
+  identyfikator (numer działki zostanie z niego odczytany). Rozdzielać można
+  tabulatorem, średnikiem, kreską pionową, znakiem `=` lub dwiema spacjami;
+  wiersze z `#` są pomijane.
+* **Rozszerzenia, o które prosiłeś**: pobranie działek z zakładki „Lista
+  działek”, uzupełnienie danych z wypisów, wyszukiwarka w tabeli, filtr
+  „tylko bez identyfikatora”, sortowanie (naturalne po numerze, po
+  identyfikatorze, obrębie, gminie), ręczna edycja i dodawanie wierszy,
+  wykrywanie powtórzonych identyfikatorów, kopiowanie widoku i samych
+  identyfikatorów oraz eksport do CSV/TXT. Lista zapisuje się w projekcie
+  (`wskaznik_state.json`).
+
+## 4. Ustawienia — schematy nazw plików
+
+Nowa sekcja **„Nazewnictwo plików — Oświadczenia i Pisma (PSM)”**.
+
+* **Domyślnie nic się nie zmienia** — nazwy plików są dokładnie takie jak do
+  tej pory.
+* Dopisek numeru działki jest opcją: *nigdy* / *tylko gdy właściciel ma
+  dokładnie jedną działkę* / *zawsze* / *do ustalonej liczby, potem „i inne”*.
+* Dodatkowo konfigurowalne: gotowe warianty nazw, własny wzór z polami
+  (`{nazwisko}`, `{typ}`, `{dzialki}`, `{projekt}`, `{data}`, `{obreb}`,
+  `{gmina}`, `{miejscowosc}` i inne), sposób zapisu nazwiska (`J.Kowalski`,
+  `Jan Kowalski`, `Kowalski Jan`, `Kowalski`), zamiana spacji na `_` lub `-`
+  oraz usuwanie polskich znaków.
+* Pod spodem jest **podgląd na żywo** obu nazw i przycisk „Przywróć
+  dotychczasowe nazwy”.
+* Ukośnik z numeru działki zamienia się w myślnik (`12/3` → `12-3`), bo
+  Windows nie dopuszcza `/` w nazwie pliku.
+
+## 5. Oświadczenia — lista postaci urządzeń
+
+Wybór z listy **od razu** wpisuje treść do pola obok. Przyczyną błędu było
+podpięcie się pod `currentTextChanged`, który nie zgłasza ponownego wyboru tej
+samej pozycji, a lista była czyszczona przy każdym odświeżeniu przykładów.
+Teraz używany jest sygnał `activated`, lista zachowuje wybraną pozycję po
+odświeżeniu, a wiersz zachęty („— wybierz postać urządzenia —”) nie nadpisuje
+tego, co wpisałeś ręcznie.
+
+## 6. Druczki — plik daje się edytować
+
+Druczki z Poczty Polskiej mają ustawione hasło właściciela i ograniczone
+uprawnienia, które PyMuPDF przepisywał do pliku wynikowego. Teraz szablon jest
+otwierany pustym hasłem, a wynik zapisywany jawnie bez szyfrowania i z pełnymi
+uprawnieniami (edycja, kopiowanie, komentarze, druk). Plik dostaje też zwykłe
+prawa zapisu. Jest na to test na faktycznie zabezpieczonym PDF.
+
+## 7. Wypisy — kilka obrębów w jednym pliku
+
+`Obręb ewidencyjny`, `Jednostka ewidencyjna`, `Powiat` i `Województwo` są
+odczytywane **osobno dla każdej działki**, zamiast brania pierwszej wartości z
+pliku. Każda działka dostaje wartości ze swojej sekcji dokumentu, a właściciel
+z działkami w dwóch obrębach ma w polu Obręb obie nazwy (`Polki, Borkowo`).
+Okno po imporcie pokazuje raport z liczbą różnych wartości i przypisaniem
+obrębu do poszczególnych działek.
+
+## 8. Historia — kolory i pełna historia
+
+* Kolumna „Status Poczty Polskiej” jest kolorowana według kategorii zdarzenia:
+  doręczona — zielony, w doręczeniu — jasnoniebieski, w transporcie —
+  niebieski, nadana — żółty, awizowana — pomarańczowy, zwrot/problem —
+  czerwony. Żaden status nie jest już szary. Przed tekstem jest ikonka.
+* Nowy przycisk **„🕘 Pełna historia zdarzeń”** (działa też dwuklik na kolumnie
+  statusu) otwiera okno z całą historią z Poczty Polskiej: numer kolejny, data
+  i godzina, zdarzenie, placówka i przyczyna, z możliwością skopiowania
+  historii i przejścia do emonitoringu.
+
+## 9. Historia — kolejność i mapowanie statusu
+
+* Zdarzenia są ułożone **od najwcześniejszego do najnowszego** — w oknie
+  historii, w podpowiedzi i przy kopiowaniu. Zdarzenia bez daty trafiają na
+  koniec.
+* Status **„udostępniono podpis odbioru”** (oraz pokrewne sformułowania, np.
+  „potwierdzenie odbioru”, „pokwitowanie odbioru”) liczy się teraz jako
+  **doręczona / odebrana**.
+
+---
+
+# Poprawki po pierwszych testach
+
+## 10. Kolejność zakładek
+
+* **„↕️ Sortuj działki”** i **„🔢 Wskaźnik”** stoją teraz tuż przed
+  **„⚙️ Ustawienia”**, na końcu paska.
+* Jeżeli masz zapisany starszy układ kart, program **jednorazowo sam go
+  poprawi** przy pierwszym uruchomieniu — nie trzeba nic przestawiać ręcznie.
+  Twoja własna kolejność pozostałych zakładek zostaje nienaruszona.
+
+## 11. Ikonka przy module KW2
+
+* Rysowana ikonka na zakładce **KW2 została usunięta**. Karta nazywa się
+  teraz **„📖 KW2”** — emotka w nazwie, dokładnie jak w pozostałych modułach.
+* Stare zapisane układy z nazwami „eKW”, „KW 2” czy „KW2” nadal są
+  rozpoznawane.
+
+## 12. Czytelność w trybie nocnym
+
+* Sekcja **„Nazewnictwo plików”** w Ustawieniach była na sztywno jasna i w
+  trybie nocnym praktycznie nie dało się jej odczytać. Podgląd nazw,
+  podpowiedź u góry i lista dostępnych pól **dopasowują się teraz do motywu** —
+  jasny tekst na ciemnym tle w nocy, ciemny na jasnym w dzień.
+
+## 13. Domyślny limit działek = 1
+
+* Ustawienie **„limit działek”** (Oświadczenia i Pisma) ma teraz domyślnie
+  **1** zamiast 3 — zarówno w Ustawieniach, jak i w samej logice nazw plików.
+
+## 14. Opis odmiany miejscowości
+
+* Pole wyboru nie powtarza już nazwy tagu. Czytasz po prostu:
+  **„Odmieniaj tag <Miejscowość działki:> (np. Gdańsk → Gdańsku,
+  Sopot → Sopocie)”**, a informacja o zapisie bez dwukropka i bez polskich
+  znaków przeniosła się do dymka.
+
+---
+
+# Trzecia tura poprawek
+
+## 15. Nowa nazwa programu — EnergoDok
+
+* Pasek okna pokazuje teraz po prostu **„EnergoDok”** (wcześniej „Pysilde 6 –
+  Zarządzanie Inwestycjami Elektroenergetycznymi”). Po wybraniu projektu:
+  **„EnergoDok – [Projekt: OBI/123/2026]”**.
+* Plik programu nazywa się **`EnergoDok.exe`** i powstaje w katalogu
+  **`dist\EnergoDok`**. Ikona to `assets/energodok.ico` (litera **E** pasuje
+  do nowej nazwy).
+* Nazwa siedzi w **jednym miejscu** w kodzie (`APP_NAME` w `main.py`), więc
+  przy kolejnej zmianie nie trzeba jej poprawiać w kilkunastu plikach.
+* Program nadal wczyta ikonę ze starego wydania, jeśli gdzieś zostanie —
+  nic się nie wysypie po aktualizacji.
+
+## 16. Ramka „Zestawienie działek” w trybie nocnym
+
+* Niebieska ramka z opisem na górze modułu **Wskaźnik** była na sztywno
+  biało-kremowa i w trybie nocnym raziła w oczy. Teraz ma ciemne tło i jasny
+  tekst, a w trybie dziennym wygląda jak dotąd.
+* Ta sama poprawka objęła **wszystkie takie ramki w programie**, nie tylko
+  jedną: opis w module **KW2**, ramkę reguł pism w **Ustawieniach** oraz
+  podgląd druczka i grupy pól w **Druczkach** — one też świeciły na biało.
+
+---
+
+# Czwarta tura poprawek
+
+## 17. Projekty — schematy nazwy folderu
+
+* W **Ustawieniach** jest nowa sekcja **„Projekty — nazwa folderu nowego
+  projektu”** z podglądem na żywo. Do wyboru 9 gotowych wariantów albo własny
+  wzór z pól `{nazwa}`, `{symbol}`, `{miasto}`, `{termin}`.
+* Osobno ustawiasz, **czym zastąpić ukośnik** w numerze projektu:
+  `OBI.23.23220` (jak dotąd), `OBI-23-23220`, `OBI_23_23220`, ze spacją albo
+  bez separatora.
+* Dodatkowo: zapis terminu (5 wariantów, np. `04-12-2026`, `2026-12-04`) oraz
+  zamiana spacji na myślnik lub podkreślnik.
+* Ten sam schemat podpowiada się w oknie **„Nowy projekt”**, gdzie pod polem
+  formatu widać **gotową nazwę folderu**, zanim klikniesz OK.
+* Bez zmiany ustawień nazwa wygląda jak dotąd:
+  **`Maki OBI.23.23220 04-12-2026`**.
+
+## 18. Wypisy — jednostka ewidencyjna na trzy sposoby
+
+W Ustawieniach, sekcja **„Wypisy — odczyt danych z dokumentu”**:
+
+1. **Tak jak w wypisie** — `Maki - G`, `Maki - M` (ustawienie domyślne).
+2. **Tylko miejscowość** — zawsze `Maki`.
+3. **Miejscowość, ale zostaw „- M”** — gmina traci oznaczenie (`Maki`),
+   miasto je zachowuje (`Maki - M`).
+
+Gdy wypis podaje kilka jednostek po przecinku, każda jest formatowana osobno,
+a powtórki są usuwane.
+
+## 19. Wypisy — kropki w identyfikatorze działki
+
+* Identyfikator rozdzielony spacjami jest teraz zapisywany prawidłowo:
+  * `110101 2 0010 202` → **`110101_2.0010.202`**
+  * `110101 2 0010 22 21` → **`110101_2.0010.22/21`**
+* Poprawka działa w czterech miejscach, w których program czyta identyfikator
+  z PDF, oraz w module **Wskaźnik**. Zapis już poprawny zostaje bez zmian.
+
+## 20. Wypisy — nowa kolumna „Forma władania”
+
+* Program odczytuje z wypisu formę władania i pokazuje ją w nowej kolumnie
+  obok „Udziału”: *współwłasność*, *wspólność ustawowa*, *użytkowanie
+  wieczyste*, *udział łączny*, *trwały zarząd* i podobne.
+* Kolumnę można poprawić ręcznie, tak jak pozostałe.
+
+## 21. Wskaźnik — „Pobierz z listy działek” z pełnymi danymi
+
+* Wcześniej przycisk pobierał **same numery** działek, bo lista działek nie zna
+  identyfikatorów — te są w Wypisach. Teraz jednym kliknięciem program
+  **łączy oba źródła**: numery z listy działek, a identyfikator, obręb, gminę,
+  powiat i województwo z wypisów.
+* Po pobraniu widać podsumowanie: ile działek ma identyfikator, a ile nie —
+  i co zrobić z brakami.
+
+## 22. Oświadczenia i Pisma — jedno pole zamiast dwóch
+
+* Dwa mylące pola („Pokaż tylko grupę” + „Wszystkie bez działek z grup”)
+  zastąpiło **jedno**: **„Pokaż i generuj tylko wybraną grupę”**.
+* Włączone przy wybranej grupie — widać **wyłącznie działki tej grupy**, także
+  w kolumnie „Działki”. Działki z innych grup znikają z listy.
+* Włączone przy „Wszystkie działki” — program ukrywa działki, które trafiły
+  już do nazwanych grup.
+
+## 23. Oświadczenia — „Generuj automatycznie wszystkie” tylko dla grupy
+
+* Przycisk **⚡ GENERUJ AUTOMATYCZNIE WSZYSTKIE** respektuje teraz filtr grupy:
+  generuje dokumenty **tylko dla działek z widocznej grupy**, a nie dla
+  wszystkich grup naraz.
+* Naprawiony błąd: **postać urządzeń ustawiona przy grupie nie trafiała do
+  dokumentu**. Teraz opis z grupy ma pierwszeństwo przed tym, co akurat
+  zostało w formularzu — osobno dla budowy i demontażu.
+* Gdy w grupie nie ma żadnego właściciela, program mówi to wprost, zamiast
+  generować cokolwiek.
+
+## 24. Pisma — nazwa przycisku jak w Oświadczeniach
+
+* **„GENERUJ WSZYSTKIE BEZ PTASZKA”** → **„⚡ GENERUJ AUTOMATYCZNIE
+  WSZYSTKIE”**, tak samo jak w Oświadczeniach. Filtr grupy obowiązuje tu
+  dokładnie tak samo.
+
+---
+
+# Piąta tura poprawek
+
+## 25. Forma władania — teraz naprawdę czytana z PDF
+
+* **Przyczyna błędu:** wypisy są drukowane **bez polskich znaków**
+  (`udzial laczny`, `wspolnosc ustawowa`), a program szukał wyłącznie zapisu
+  z ogonkami — więc nie znajdował nic i kolumna zostawała pusta.
+* Rozpoznawanie działa teraz **niezależnie od ogonków i wielkości liter**,
+  a wynik zawsze zapisuje się poprawną polszczyzną:
+  `udzial laczny` → **udział łączny**, `wspolnosc ustawowa` →
+  **wspólność ustawowa**, `WSPOLWLASNOSC` → **współwłasność**.
+* Wypis potrafi rozbić opis na kilka wierszy (`udzial laczny` / `14/48` /
+  `wspólwłasność`). Program czyta **cały blok** i skleja obie informacje:
+  **„udział łączny, współwłasność”** — dokładnie jak na Twoim zrzucie.
+* „Współwłasność” nie jest już mylona ze „własnością”.
+
+## 26. Forma władania w szczegółach właściciela
+
+* Pozycja **„Forma władania”** pojawia się w panelu szczegółów pod
+  „Udziałem”.
+* Pole jest też w oknie **dodawania i edycji właściciela**, więc można je
+  poprawić ręcznie.
+
+## 27. Nowy projekt — wybór separatora w numerze
+
+* W oknie **„Nowy projekt”** doszło pole **„Ukośnik w numerze zamień na:”**
+  z wyborem: kropka (jak dotąd), **myślnik**, **podkreślnik**, spacja albo bez
+  separatora.
+* Podgląd nazwy folderu zmienia się od razu, a utworzony folder ma dokładnie
+  taką nazwę, jaka była w podglądzie.
+
+## 28. Wskaźnik — eksport z wyborem kolumn
+
+* Przycisk **„Eksportuj widok”** otwiera teraz okno wyboru zawartości pliku:
+  * **Nr działki i identyfikator** (domyślnie),
+  * **Same numery działek**,
+  * **Same identyfikatory**,
+  * **Wszystkie kolumny** — tak jak działało dotychczas,
+  * albo własny wybór dowolnych kolumn.
+* Dodatkowo: wybór znaku rozdzielającego (tabulator, średnik, przecinek,
+  spacja, myślnik) i decyzja, czy dopisać wiersz z nazwami kolumn.
+* Widać **podgląd**, jak będzie wyglądał plik, a wybór jest zapamiętywany na
+  następny raz. Zapis działa zarówno do TXT, jak i CSV.
+
+---
+
+## 29. Projekty — nowe projekty w folderze „Projekty”
+
+Nowy projekt nie zaśmieca już katalogu głównego programu. Domyślnie
+powstaje w podfolderze **`Projekty`** obok pliku programu.
+
+Miejsce wybierasz w **Ustawieniach**, w polu *„Folder Główny dla NOWYCH
+projektów”* — gdy je wypełnisz, projekty trafiają dokładnie tam. Gdy
+zostawisz je puste, program sam utworzy folder `Projekty`. Wskazana
+ścieżka podpowiada się w oknie „Nowy projekt”, gdzie nadal możesz ją
+zmienić dla pojedynczego projektu.
+
+## 30. Projekty — osobne usuwanie z listy i z dysku
+
+Zamiast jednego przycisku są teraz dwa:
+
+- **🗑️ Usuń projekt z listy (Delete)** — znika tylko wpis w programie,
+  folder z dokumentami zostaje nietknięty na dysku.
+- **💣 Usuń projekt z listy i dysku** — kasuje też folder projektu wraz z
+  całą zawartością.
+
+Drugi przycisk jest czerwony i przed usunięciem pokazuje listę folderów
+do skasowania wraz z ostrzeżeniem, że operacji nie da się cofnąć. Po
+zakończeniu dostajesz podsumowanie: ile folderów usunięto, których nie
+było i których nie udało się skasować (np. gdy plik jest otwarty).
+
+## 31. Gotowe dokumenty zapisują się same w folderze projektu
+
+Program nie pyta już o folder przy każdym generowaniu. Pliki trafiają do
+podfolderów aktywnego projektu:
+
+| Moduł | Podfolder |
+| --- | --- |
+| Oświadczenia woli | `Oswiadczenia` |
+| Pisma przewodnie | `Pisma` |
+| Druczki pocztowe | `Druczki` |
+| Wydziel działki (PDF) | `Wydzielone dzialki` |
+| Tytuły prawne | `Tytuly prawne` |
+
+Folder tworzy się sam przy pierwszym zapisie. W **Ustawieniach**, w
+sekcji *„Foldery na gotowe dokumenty (w folderze projektu)”*, każdy moduł
+ma własny przełącznik i własne pole z nazwą podfolderu:
+
+- **zaznaczony** — zapis automatyczny (ustawienie domyślne),
+- **odznaczony** — program pyta o folder, dokładnie jak dotychczas.
+
+Nazwę podfolderu możesz zmienić na dowolną. Gdy żaden projekt nie jest
+otwarty, program i tak zapyta o folder, więc nic nie ginie.
+
+## 32. Historia — szczegóły statusu pokazują wszystkie osoby
+
+W zakładce *Podsumowanie statusów* kolumna szczegółów wymieniała tylko
+czterech pierwszych adresatów i dopisek „… i 7 kolejnych”. Teraz
+wypisuje **wszystkie osoby** z danym statusem.
+
+Po wybraniu konkretnego statusu z listy każda osoba jest w osobnej,
+ponumerowanej linii — łatwo policzyć i przeczytać, kogo dotyczy np.
+status „Awizowana”. Nagłówek kolumny zmienił się z „Przykładowe
+przesyłki” na „Adresaci (wszyscy)”.
+
+## 33. Tytuły prawne — Tabela 4 widoczna w mniejszym oknie
+
+Przy mniejszym oknie programu pola do wpisywania w *Tabeli 4 — Metryka*
+(TABELA, TEMAT, NR OBI, PROJEKTANT, LOKALIZACJA, INWESTOR) były ucinane
+i nie dało się do nich dostać.
+
+Cała zakładka ma teraz pionowe przewijanie, sama Metryka też, a obszar
+zakładek nie kurczy się już poniżej użytecznej wysokości. Panele
+„Dane z bazy” i „Eksport” nie odbierają miejsca tabelom. Sprawdzone przy
+szerokości okna 560 px — wszystkie sześć pól jest dostępnych.
+
+## 34. Wypisy — kolumna „Identyfikator działki” już nie znika
+
+Przy większej liczbie działek kolumna *Identyfikator działki* potrafiła
+zniknąć z tabeli. Powód: program odtwarzał układ nagłówka zapisany przez
+starszą wersję, która miała o jedną kolumnę mniej — nowa kolumna zostawała
+ukryta albo o zerowej szerokości.
+
+Program zapamiętuje teraz, dla ilu kolumn zapisano układ. Gdy zapis nie
+pasuje do obecnej tabeli, buduje układ od nowa zamiast go odtwarzać. Poza
+tym po każdym starcie sprawdza, czy któraś kolumna nie jest ukryta lub
+za wąska, i przywraca jej sensowną szerokość — kolumny z długą treścią
+(Działki, Identyfikator działki) dostają więcej miejsca. Twoje własne
+szerokości i kolejność kolumn pozostają zachowane.
+
+## 35. Wypisy — miejscowość i ulica działki rozdzielane automatycznie
+
+Wypis zapisuje położenie działki w jednej linii, np. `MAKI, WYBICKIEGO
+J. 50`. Program rozbija je teraz na dwa osobne pola:
+
+| Zapis w wypisie | Miejscowośc działki | Ulica Działki |
+| --- | --- | --- |
+| `MAKI, WYBICKIEGO J. 50` | Maki | Wybickiego J. 50 |
+| `Maki, ul. Górna 42` | Maki | ul. Górna 42 |
+| `Maki ul. Górna 42` | Maki | ul. Górna 42 |
+| `ul. Górna 42` | *(puste)* | ul. Górna 42 |
+| `MAKI` | Maki | *(puste)* |
+| `MAKI, GÓRNA 12A` | Maki | Górna 12A |
+
+Rozpoznawane są przedrostki `ul.`, `al.`, `os.`, `pl.`, `rondo`, `skwer`
+i podobne, a także adresy bez przedrostka zakończone numerem domu
+(`Górna 42`, `Górna 12/3`). Zapis WERSALIKAMI jest zamieniany na normalny
+(`MAKI` → `Maki`), przy czym numery domów zachowują wielką literę
+(`12A`), a inicjały kropkę (`J.`).
+
+Zasada jest zachowawcza — gdy nie da się bezpiecznie orzec, gdzie kończy
+się miejscowość, tekst zostaje w polu ulicy zamiast być błędnie rozcięty.
+`Maki, gmina Żukowo` daje samą miejscowość, bo „gmina Żukowo” nie wygląda
+na ulicę. To, co wpiszesz ręcznie, nigdy nie jest nadpisywane.
+
+**Przy okazji naprawiony błąd:** kolumna „Miejscowośc działki” była
+zapisywana dwa razy — najpierw miejscowością, zaraz potem ulicą — przez
+co miejscowość znikała, a kolumna „Ulica Działki” zostawała pusta.
+
+## 36. Tytuły prawne — źródło miejscowości dla Tabeli 5
+
+Obok istniejącego *„Źródło ulicy T5”* doszło **„Źródło miejscowości T5”**
+z trzema wariantami:
+
+1. **Miejscowość z projektu (domyślnie)** — z danych wpisanego projektu.
+2. **Miejscowośc działki z wypisu** — z kolumny „Miejscowośc działki”.
+3. **Adres właściciela – miejscowość** — z adresu korespondencyjnego.
+
+Gdy wybrane źródło jest puste, program sięga po miejscowość projektu,
+więc kolumna nie zostaje pusta przez przypadek.
+
+W pasku edytora Tytułów prawnych, obok *„Zaciągaj ulicę do T5”*, jest
+teraz **„Zaciągaj miejscowość do T5”**. Oba przełączniki działają tak
+samo i są zsynchronizowane z oknem Ustawień w obie strony. Podgląd
+Tabeli 5 w Ustawieniach od razu pokazuje efekt wyboru.
+
+Poprawiona została też opcja *„Ulica działki z wypisu”*: skoro wypis
+trzyma miejscowość i ulicę razem, do kolumny Ulica trafia teraz sama
+ulica (`Wybickiego J. 50`), a nie całe `MAKI, WYBICKIEGO J. 50`.
+
+## 37. Drukuj — lista z zaznaczaniem dokumentów
+
+Lista drukowania została przebudowana. **Każdy dokument ma pole wyboru**,
+więc wprost decydujesz, co ma pójść na drukarkę. Kliknięcie właściciela
+zaznacza lub odznacza wszystkie jego pliki naraz, a pole właściciela
+pokazuje stan pośredni, gdy wybrana jest tylko część.
+
+Doszły kolumny **Typ** (Budowa / Demontaż / Pismo / Koperta / Inny) oraz
+**Rozmiar**, a pod listą licznik: *„Do druku zaznaczono 7 z 12 widocznych
+dokumentów”*.
+
+Nad listą znajdziesz przyciski **✅ Wszystko**, **⬜ Nic**, **🔄 Odwróć**
+oraz wybór rodzaju z przyciskiem **Zaznacz** — jednym kliknięciem
+zaznaczysz np. same Pisma. Pasek „Pokaż” rozdziela teraz Oświadczenia,
+Pisma, Koperty i Inne dokumenty, doszło też **pole wyszukiwania** po
+nazwisku lub nazwie pliku.
+
+Dodatkowo: **spacja** przełącza zaznaczenie podświetlonych pozycji, prawy
+przycisk myszy otwiera menu podręczne, a odznaczenia **przetrwają zmianę
+filtra** — po wyszukaniu i wyczyszczeniu pola Twój wybór jest zachowany.
+
+Przyciski druku rozróżniają teraz dwa tryby: *„Drukuj podświetlone”*
+(zaznaczone myszą) i *„Drukuj zaznaczone ✅”* (z pól wyboru). Przy
+wydruku ponad 20 dokumentów program prosi o potwierdzenie.
+
+## 38. Wypisy — wzory odczytu PDF („co jest czym”)
+
+Wypisy z różnych urzędów mają inne nazwy pól: jeden pisze „Bliższe
+określenie położenia”, drugi „Adres nieruchomości”, trzeci „Położenie”.
+Dotąd wszystkie warianty były zaszyte w programie, więc nietypowy wypis
+odczytywał się niepełnie albo błędnie.
+
+W **Ustawieniach → Wypisy** jest teraz przycisk **„🧩 Wzory odczytu
+wypisów (PDF)…”**, który otwiera osobne okno.
+
+### Co pokazuje okno
+
+Po wczytaniu przykładowego wypisu program wyświetla tabelę **co jest
+czym** — dla każdego z 13 pól widać:
+
+| Pole w programie | Etykiety w PDF | Rozpoznano | Odczytana wartość |
+| --- | --- | --- | --- |
+| Powiat | `Powiat` | ✅ odczytano | kartuski |
+| Położenie działki | `Adres nieruchomości` | ✅ odczytano | MAKI, WYBICKIEGO J. 50 |
+| Udział | `Udział` | ❌ nie znaleziono | |
+
+Kolory mówią od razu, co wymaga uwagi: zielony — pole odczytane, żółty —
+etykieta jest, ale brakuje wartości, czerwony — nie znaleziono. Pod
+tabelą jest podsumowanie w rodzaju *„Odczytano 7 z 13 pól”*. Obok
+wyświetlany jest pełny tekst dokumentu.
+
+### Tryb automatyczny i ręczny
+
+- **Automatyczny** (domyślnie) — program porównuje treść PDF ze
+  znacznikami wszystkich wzorów i sam wybiera najlepiej pasujący.
+- **Ręczny** — po odznaczeniu przełącznika zawsze używany jest wzór
+  wybrany z listy.
+
+Znaczniki to fragmenty nagłówka, po których poznajemy wydawcę, np.
+`STAROSTWO POWIATOWE W KARTUZACH`. Wpisujesz je w polu obok.
+
+### Własne wzory dla nietypowych wypisów
+
+Przyciskami **Nowy / Kopiuj / Zmień nazwę / Usuń** tworzysz własne wzory.
+Etykiety przypisujesz na dwa sposoby:
+
+1. wpisując je wprost w kolumnie „Etykiety w PDF” (kilka wariantów
+   oddziel średnikiem),
+2. zaznaczając nazwę pola w tekście dokumentu i klikając **„⬅️ Użyj
+   zaznaczenia jako etykiety”**.
+
+Wzory zapisują się w osobnym pliku `dane/wypis_profiles.json` (opis
+w punkcie 39), więc kolejny wypis z tego samego urzędu odczyta się już
+poprawnie — bez ponownego ustawiania.
+
+### Wzór własny poprawia też błędny odczyt
+
+Wzory **wbudowane** jedynie uzupełniają pola, których standardowy odczyt
+nie znalazł — dzięki temu włączenie ich nie zmienia wyników tam, gdzie
+wszystko działało.
+
+Wzór **własny** działa mocniej: skoro sam opisałeś dokument ze swojego
+urzędu, program traktuje Twoje przypisania jako nadrzędne i poprawia
+także wartości odczytane błędnie. W teście na wypisie ze Starostwa
+Kartuzy pole „Powiat” odczytywało się jako `OWE W KARTUZACH, kartuski`;
+po dodaniu własnego wzoru daje poprawne `kartuski`.
+
+Wzoru wbudowanego nie da się usunąć ani zmienić mu nazwy — od tego jest
+przycisk „Kopiuj”, który robi Twoją własną wersję do edycji.
+
+## 39. Wzory odczytu wypisów w osobnym pliku z danymi
+
+**Prośba:** żeby wzory z okna „🧩 Wzory odczytu wypisów (PDF)” były
+zapisane w osobnym pliku, a nie razem z ustawieniami programu.
+
+### Co się zmieniło
+
+Wzory nie trafiają już do `app_config.json`. Mają własny plik:
+
+```
+dane/wypis_profiles.json
+```
+
+Program pokazuje tę ścieżkę w dwóch miejscach, żeby nie trzeba jej było
+szukać: w oknie wzorów (pod nagłówkiem) oraz w Ustawieniach obok
+przycisku.
+
+### Budowa pliku
+
+Plik jest czytelny i można go otworzyć zwykłym notatnikiem:
+
+```json
+{
+  "version": 1,
+  "active": "Starostwo Kartuzy",
+  "auto": false,
+  "profiles": [
+    {
+      "name": "Starostwo Kartuzy",
+      "builtin": false,
+      "override": true,
+      "markers": ["STAROSTWO POWIATOWE W KARTUZACH"],
+      "fields": { "county": ["Powiat"], "municipality": ["Gmina"] }
+    }
+  ]
+}
+```
+
+Zapisujemy tu komplet ustawień odczytu: same wzory, wybrany wzór
+(`active`) oraz tryb pracy (`auto`). Dzięki temu wystarczy skopiować ten
+jeden plik, aby przenieść całą konfigurację odczytu wypisów na inny
+komputer albo przekazać ją współpracownikowi.
+
+### Stare wzory przenoszą się same
+
+Jeżeli używałeś już wzorów zapisanych w `app_config.json`, program
+przy pierwszym uruchomieniu po aktualizacji przepisze je do nowego pliku
+i usunie stare wpisy z konfiguracji. Nic nie trzeba robić ręcznie i nic
+nie ginie — sprawdzone na pełnym cyklu: wzór, wybrany tryb ręczny oraz
+nazwa aktywnego wzoru trafiają do nowego pliku, a pozostałe ustawienia
+programu (motyw, dane nadawcy) zostają nietknięte.
+
+Gdyby plik z wzorami już istniał, to on ma pierwszeństwo — migracja nie
+nadpisze nowszych ustawień starymi.
+
+### Odporność na błędy
+
+- Uszkodzony lub ręcznie źle poprawiony plik nie wywraca programu —
+  wracają wtedy wzory wbudowane.
+- Nieudany zapis (np. folder tylko do odczytu) pokazuje czytelny
+  komunikat ze ścieżką pliku, zamiast po cichu gubić zmiany.
+- Odczyt wypisu korzysta z pliku również wtedy, gdy wywołanie nie
+  przekazało konfiguracji — wzory działają w całym programie tak samo.
+
+### Dlaczego akurat tak
+
+Program trzymał już w ten sposób inne ustawienia narzędzi
+(`stamp_profiles.json`, `druczek_profile.json`, `envelope_preferences.json`),
+więc wzory wypisów dołączyły do tej samej, sprawdzonej konwencji zamiast
+tworzyć osobny mechanizm.
+
+### Przy okazji
+
+Zniknęło ostrzeżenie Qt (`cannot insert an item that is already owned by
+another QTableWidget`) pojawiające się przy ponownej analizie dokumentu —
+komórki tabeli są teraz tworzone raz i tylko aktualizowane.
+
+## 40. Sekcja „Wypisy” w Ustawieniach — osobny plik z kodem
+
+**Prośba:** żeby kod sekcji „Wypisy” (z przyciskiem „🧩 Wzory odczytu
+wypisów (PDF)”) był w osobnym pliku Pythona, a nie w pliku ogólnych
+ustawień.
+
+### Co się zmieniło
+
+Cała sekcja „Wypisy — odczyt danych z dokumentu” wyprowadziła się do
+własnego pliku:
+
+```
+modules/ustawienia_wypisy.py
+```
+
+Plik `modules/ustawienia.py` schudł z **2188 do 2083 linii**, a nowy
+moduł ma 211 linii i zawiera wyłącznie sprawy wypisów.
+
+### Co jest w nowym pliku
+
+Klasa `WypisSettingsSection` (zwykły `QGroupBox`) trzyma w jednym miejscu
+komplet: pola widoczne na ekranie, ich odczyt z konfiguracji i zapis z
+powrotem.
+
+| Metoda | Do czego służy |
+| --- | --- |
+| `load_from_config(config)` | ustawia pola według zapisanej konfiguracji |
+| `settings()` | zwraca wybrane ustawienia jako słownik |
+| `save_to_config(config)` | przepisuje ustawienia do konfiguracji |
+| `refresh_profiles_label(config)` | opis wzorów: ile, jaki tryb, jaki plik |
+| `open_profiles_dialog(config)` | otwiera okno „Wzory odczytu wypisów (PDF)” |
+
+Klucze konfiguracji też są opisane w tym pliku (`FIX_IDENTIFIER_KEY`,
+`READ_OWNERSHIP_KEY`, `DEFAULTS`), więc dodanie nowej opcji odczytu
+wypisów nie wymaga już zaglądania do pliku ogólnych ustawień.
+
+### Po stronie Ustawień zostały trzy linijki
+
+Zakładka Ustawienia nie zna już żadnego z tych kluczy — tworzy sekcję,
+a przy wczytywaniu i zapisie oddaje jej sterowanie:
+
+```python
+self.wypis_section = WypisSettingsSection(self)   # budowa
+self.wypis_section.load_from_config(self.config)  # wczytanie
+self.wypis_section.save_to_config(self.config)    # zapis
+```
+
+### Dla użytkownika nic się nie zmienia
+
+Sekcja wygląda i działa tak samo, w tym samym miejscu. Sprawdzone na
+uruchomionym programie: 19 zakładek, zapis ustawień odkłada
+`wypis_fix_identifier`, `wypis_read_ownership` i tryb jednostki
+ewidencyjnej dokładnie jak wcześniej, ponowne wczytanie przywraca stan,
+a okno wzorów otwiera się zarówno z Ustawień, jak i wprost z sekcji.
+
+Przy okazji same wzory odczytu (te „co jest czym”) dostały wcześniej
+osobny plik z danymi — `dane/wypis_profiles.json`, punkt 39. Teraz
+osobny jest też kod obsługujący tę część ustawień.
+
+### Testy
+
+Nowy plik `tests/test_ustawienia_wypisy.py` — 15 testów: budowa pól,
+wartości domyślne, pełny obieg odczyt→zapis oraz sprawdzenie, że w
+`ustawienia.py` faktycznie nie ma już kodu pól wypisów. Razem
+**411 testów** (było 385).
+
+## 41. Wypisy na górze Ustawień i wskazywanie pól myszą
+
+**Prośby:** sekcja „Wzory odczytu wypisów (PDF)” ma być **u góry**
+Ustawień, a nie gdzieś na dole; wskazywanie „co jest czym” ma być
+**graficzne** — normalne klikanie po dokumencie, nie wpisywanie tekstu.
+
+### Sekcja przeniesiona na samą górę
+
+„Wypisy — odczyt danych z dokumentu” stoi teraz **jako pierwsza**, zaraz
+pod nagłówkiem „⚙️ Ustawienia Aplikacji” — przed wyglądem zakładek,
+nazewnictwem plików i folderami. Wcześniej trzeba było przewinąć przez
+kilkanaście ramek.
+
+### Wskazywanie pól myszą
+
+Prawa strona okna wzorów ma teraz dwie zakładki:
+
+| Zakładka | Do czego służy |
+| --- | --- |
+| **🖱️ Wskaż na dokumencie** | prawdziwa strona wypisu — klikasz po niej |
+| **📄 Tekst dokumentu** | dotychczasowy widok tekstowy, jako zapas |
+
+Domyślnie otwiera się widok graficzny. Przypisanie pola to teraz dwa
+kliknięcia:
+
+1. klikasz wiersz w tabeli (np. „Położenie działki”),
+2. klikasz tę nazwę **na dokumencie** — i gotowe.
+
+### Co widać na dokumencie
+
+- **Żółte podświetlenie** pod kursorem pokazuje, w co trafisz, zanim
+  klikniesz. Podpowiedź obok podaje pełną nazwę.
+- **Zielone ramki** z podpisem oznaczają pola już przypisane — od razu
+  widać, co jest rozpoznane, a czego brakuje.
+- Przełącznik „Pokaż przypisane pola” chowa ramki, gdyby zasłaniały
+  dokument.
+- Strzałki **◀ Poprzednia / Następna ▶** przechodzą po stronach
+  wielostronicowego wypisu.
+
+Program sam odczytuje przy kliknięciu nie tylko etykietę, ale i wartość
+stojącą obok, więc od razu widzisz w tabeli, co się z danego pola
+wyciągnie.
+
+### Rozpoznawanie etykiet
+
+Kilka rzeczy, które musiały zadziałać, żeby klikanie było wygodne:
+
+- **Etykieta kończy się na dwukropku.** Kliknięcie w „Dzialka” z linii
+  `Dzialka nr: 145/7` daje etykietę `Dzialka nr` i wartość `145/7`,
+  a nie samo słowo, w które akurat trafił kursor.
+- **Kliknięcie w wartość też działa** — program cofa się do etykiety
+  z tej samej linii.
+- **Trafienie w odstęp** między słowami nie jest błędem; brane jest
+  najbliższe słowo w tej samej linii.
+- **Ogonki nie mają znaczenia** — wypis drukowany jako „Wojewodztwo”
+  dopasuje się do pola „Województwo”.
+- Przy kilku wariantach wygrywa **najdłuższy** — `Pow. [ha]` zamiast
+  krótszego `Pow.`.
+
+Strona dopasowuje szerokość do panelu, więc nie trzeba przewijać w bok.
+
+### Nowy plik
+
+Kod podglądu mieszka osobno w `modules/wypis_pdf_view.py` — renderowanie
+strony, położenie słów i rysowanie ramek. Okno wzorów tylko z niego
+korzysta.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 21 testów: renderowanie strony, odczyt
+położenia słów, klikanie w etykietę, w wartość i w odstęp, ogonki,
+najdłuższe dopasowanie oraz zachowanie przy braku pliku. Doszedł też test
+kolejności sekcji w Ustawieniach. Razem **434 testy** (było 411).
+
+## 42. Podgląd wypisu — powiększanie, czytelne oznaczenia, nowy wygląd
+
+**Prośby:** poprawić wielkość podglądu, wyraźniej oznaczać co jest czym
+i co się odczytuje, oraz unowocześnić i powiększyć okno.
+
+### Powiększanie podglądu
+
+Nad dokumentem jest pasek sterowania:
+
+| Element | Działanie |
+| --- | --- |
+| `−` / `+` | zmiana o 25% |
+| suwak | płynnie od 50% do 300% |
+| `Dopasuj` | wraca do szerokości okna (100%) |
+| **Ctrl + kółko myszy** | powiększanie wprost na dokumencie |
+
+Bieżąca wartość jest widoczna obok suwaka. Powiększenie 100% oznacza
+stronę dopasowaną do szerokości panelu, więc nic nie ucieka w bok.
+
+### Wyraźniejsze „co jest czym”
+
+Wcześniej podpisy pól rysowały się **na dokumencie** i zasłaniały tekst,
+który użytkownik chciał przeczytać. Teraz:
+
+- nazwy pól stoją **na marginesie obok strony**, połączone z polem
+  cienką linią — treść wypisu pozostaje w całości czytelna,
+- podpisy układają się jeden pod drugim i nie nachodzą na siebie,
+- za długie nazwy są skracane wielokropkiem,
+- **zielona ramka** = etykieta przypisana, **niebieska przerywana** =
+  odczytana wartość, **żółta** = pole pod kursorem,
+- pod paskiem narzędzi jest legenda tych trzech kolorów,
+- podpowiedź pod kursorem pokazuje nie tylko nazwę etykiety, ale też
+  wartość, która zostanie z niej odczytana.
+
+Dzięki ramkom wartości od razu widać **co program wyciągnie**, a nie
+tylko gdzie znalazł nazwę pola.
+
+### Nowocześniejsze i większe okno
+
+- Okno otwiera się w rozmiarze **1480 × 940** (wcześniej 1180 × 780),
+  z minimalnym rozmiarem 1000 × 640 i uchwytem do zmiany wielkości.
+- Spójny ciemny motyw: zaokrąglone ramki, wyraźne zakładki z podkreśleniem
+  aktywnej, przyciski z podświetleniem pod kursorem, akcent na przyciskach
+  głównych.
+- Tabela bez siatki, z wyższymi wierszami i czytelnym nagłówkiem;
+  kolumny ponumerowane `① Pole w programie`, `② Etykiety w PDF`,
+  `③ Stan`, `④ Odczytana wartość` — widać kolejność pracy.
+- Statusy skrócone (`⚠️ brak wartości` zamiast długiego opisu), a pełne
+  wyjaśnienie przeniesione do podpowiedzi.
+- Nagłówek okna skrócony do jednego zdania, żeby zostawić miejsce na
+  dokument.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` urósł do 39 testów — doszły margines
+i przesunięcie współrzędnych (klikanie musi trafiać mimo przesunięcia
+strony), prostokąty wartości, rysowanie z podpisami, skracanie długich
+nazw oraz komplet zachowań powiększenia: kroki, zakres 50–300%,
+`Dopasuj` i ukrywanie oznaczeń. Razem **452 testy** (było 434).
+
+## 43. Cofanie zmian i poprawny odczyt wiersza z dwiema kolumnami
+
+**Zgłoszenia:** brakuje cofania i usuwania przypisań; kliknięcie w pole
+odczytuje coś z prawej strony, a nie dokładnie tę rzecz, w którą się
+kliknęło.
+
+### Błąd: kliknięcie brało sąsiednią kolumnę
+
+Wypisy często mają dwie pary w jednym wierszu:
+
+```
+Powiat: kartuski          Gmina: Żukowo
+Obręb: 0010 MAKI          Nr obrębu: 0010
+```
+
+Program szukał **pierwszego dwukropka w całym wierszu**, więc kliknięcie
+w „Gmina” zwracało etykietę `Powiat` i wartość `kartuski Gmina: Żukowo`.
+
+Teraz etykieta liczona jest **wokół miejsca kliknięcia**: najbliższy
+dwukropek w prawo wyznacza jej koniec, a początek — poprzednia wartość
+albo szeroka przerwa między kolumnami. Próg przerwy wynika z wysokości
+tekstu, więc działa przy każdym powiększeniu.
+
+Ten sam błąd siedział w odczycie tekstowym (tabela po lewej i realny
+import wypisu): `re.sub(r"\s+", " ")` zbijało odstępy kolumn, przez co
+wartością „Powiatu” zostawało `kartuski Gmina: Żukowo`. Odstępy są już
+zachowywane, a wartość ucinana przed kolejną kolumną.
+
+Sprawdzone na wypisie tabelarycznym — wszystkie pola trafiają w swoje:
+
+| Kliknięto | Etykieta | Wartość |
+| --- | --- | --- |
+| Powiat | `Powiat` | `kartuski` |
+| Gmina | `Gmina` | `Zukowo` |
+| Obreb | `Obreb` | `0010 MAKI` |
+| Nr obrebu | `Nr obrebu` | `0010` |
+| Dzialka nr | `Dzialka nr` | `145/7` |
+| Pow. [ha] | `Pow. [ha]` | `0,4500` |
+
+### Cofanie, ponawianie i usuwanie
+
+Pod tabelą jest nowy pasek:
+
+| Przycisk | Skrót | Działanie |
+| --- | --- | --- |
+| ↩️ Cofnij | `Ctrl+Z` | cofa ostatnią zmianę przypisań |
+| ↪️ Ponów | `Ctrl+Y` | przywraca cofniętą zmianę |
+| 🗑️ Usuń z pola | `Delete` | czyści etykiety zaznaczonego wiersza |
+| 🧹 Wyczyść wszystkie | — | usuwa wszystkie przypisania wzoru |
+
+Historia obejmuje **wszystkie** sposoby zmiany: klikanie na dokumencie,
+ręczną edycję w tabeli i użycie zaznaczenia tekstu. Pamiętanych jest
+ostatnich 40 kroków. Przyciski są wygaszone, gdy nie ma czego cofnąć.
+
+„Wyczyść wszystkie” pyta o potwierdzenie i nie działa na wzorach
+wbudowanych — od tego jest „📄 Kopiuj”. Każde usunięcie da się cofnąć.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 57 testów (doszło 7 na wiersz z dwiema
+kolumnami i 11 na cofanie/usuwanie), `tests/test_wypis_profiles.py` — 59
+(6 nowych na ucinanie wartości przed kolejną kolumną). Razem
+**476 testów** (było 452).
+
+## 44. Klikanie w wartość i ręczne poprawianie odczytu
+
+**Zgłoszenie:** „powinna być odczytywana wartość wskazana i możliwość
+edytowania”.
+
+### Klik w wartość, nie tylko w nazwę pola
+
+Wcześniej trzeba było trafić dokładnie w **nazwę** pola. Klik w samą
+wartość dawał przypadkowy wynik — np. klik w `kartuski` zwracał `Gmina`
+i `Żukowo`, czyli sąsiednią kolumnę.
+
+Rozpoznawanie wiersza zostało przepisane: wiersz dzielony jest na
+**komórki** po szerokich przerwach, a dopiero w komórce szukany jest
+dwukropek. Dzięki temu działa jedno i drugie:
+
+| Kliknięto | Rozpoznana etykieta | Wartość |
+| --- | --- | --- |
+| `Powiat` (nazwa) | `Powiat` | `kartuski` |
+| `kartuski` (wartość) | `Powiat` | `kartuski` |
+| `Zukowo` (wartość) | `Gmina` | `Zukowo` |
+| `MAKI` (drugie słowo wartości) | `Obreb` | `0010 MAKI` |
+| `0,4500` (wartość) | `Pow. [ha]` | `0,4500` |
+
+Obsłużony jest też układ, w którym nazwa pola i wartość stoją w osobnych
+kolumnach tabeli.
+
+### Ręczne poprawianie odczytanej wartości
+
+Kolumna **④ Odczytana wartość** była zablokowana. Teraz:
+
+* dwuklik pozwala **wpisać własną wartość**,
+* wpisana wartość jest żółta i ma stan **✏️ wpisano ręcznie**,
+* ma **pierwszeństwo** — ponowna analiza dokumentu jej nie nadpisze,
+* **skasowanie komórki** wraca do wartości odczytanej z dokumentu,
+* poprawki zapisują się we wzorze (`manual_values`), więc są dostępne po
+  ponownym otwarciu programu.
+
+To domyka scenariusz „program źle odczytał jedno pole” — nie trzeba już
+walczyć z etykietami, można po prostu wpisać poprawną wartość.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 69 testów (+5 na klik w wartość, +7 na
+ręczną edycję). Razem **488 testów** (było 476).
+
+## 45. Wybór: klikam etykietę czy wartość + poprawka „Nr”
+
+**Zgłoszenia:** „dalej nie mogę wskazać odczytywanej wartości, dalej to
+się wpisuje do etykiety w PDF” oraz „w niektórych miejscach źle
+odczytuje”.
+
+### Przełącznik trybu klikania
+
+Kliknięcie w dokument **zawsze** dopisywało tekst do kolumny
+② Etykiety w PDF. Dlatego w kolumnie etykiet lądowały wartości, np.
+`221509_2, Szemud; Nr obrębu; Numer obrębu`.
+
+Nad podglądem jest teraz lista wyboru **„Kliknięcie w dokument:”**:
+
+| Tryb | Co robi kliknięcie |
+| --- | --- |
+| 🏷️ uczy nazwy pola (etykieta) | dopisuje nazwę do kolumny ②, wzór rozpozna ją w kolejnych wypisach — zachowanie domyślne |
+| ✏️ wpisuje odczytaną wartość | wstawia kliknięty tekst wprost do kolumny ④, **nie ruszając etykiet** |
+
+Wartość wskazana myszką dostaje stan ✏️ wpisano ręcznie, ma pierwszeństwo
+przed odczytem, zapisuje się we wzorze i da się cofnąć (`Ctrl+Z`).
+
+### Błąd: wartość „Nr” zamiast numeru
+
+Wiersz `Nr obrębu: 0019` dawał wartość `Nr`. Winna była heurystyka z
+sekcji 43: ucinała tekst przed **każdym** słowem zakończonym dwukropkiem,
+więc rozbijała etykiety wielowyrazowe.
+
+Teraz cięcie następuje wyłącznie przed etykietą, którą wzór **rzeczywiście
+zna** (dłuższe sprawdzane są pierwsze, więc „Nr obrębu” wygrywa z „Nr”).
+Podział po szerokim odstępie działa jak dotąd.
+
+Sprawdzone na układzie ze zgłoszenia:
+
+| Pole | Wartość przed | Wartość teraz |
+| --- | --- | --- |
+| Jednostka ewidencyjna / Gmina | `Nr` | `221509_2, Szemud` |
+| Obręb | `Nr` | `Nr 0019, BOJANO` |
+| Nr obrębu | `Nr` | `0019` |
+
+### Cofanie obejmuje też wartości
+
+`_fields_snapshot` zapamiętuje teraz etykiety **i** ręczne wartości, więc
+`Ctrl+Z` cofa również wskazanie wartości myszką.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 76 testów (+7 na tryb klikania),
+`tests/test_wypis_profiles.py` — 62 (+3 na cięcie kolumn). Razem
+**498 testów** (było 488).
+
+## 46. Tabela w kratkę i wyraźny wybór trybu klikania
+
+**Zgłoszenia:** „dane się zlewają, żółte są innymi danymi”, „dalej nie
+mogę wskazać wartości odczytywanej, a dalej etykieta się wpisuje”.
+
+### Główna przyczyna: tabela w kratkę bez dwukropków
+
+Wcześniejsze poprawki zakładały układ `Etykieta: wartość`. W wypisach
+z **tabelą w kratkę** (kolumny `Obręb | Nr działki | Pow. [ha] | Opis
+użytku`) dwukropków nie ma wcale — nazwa kolumny stoi **nad** wartością.
+
+Program brał wtedy klikniętą liczbę za nazwę pola, więc `0.0235`
+lądowało w kolumnie „Etykiety w PDF”, a oznaczenia pokazywały nie te
+dane, co trzeba.
+
+Nowa funkcja `_header_above()` idzie **w górę kolumny** aż do wiersza
+nagłówka i bierze z niego całą komórkę:
+
+| Kliknięto | Rozpoznana nazwa | Wartość |
+| --- | --- | --- |
+| `0.0235` | `Pow. [ha]` | `0.0235` |
+| `0.1120` (drugi wiersz) | `Pow. [ha]` | `0.1120` |
+| `145/8` | `Nr dzialki` | `145/8` |
+| `BOJANO` | `Obreb` | `0019, BOJANO` |
+| `RIVa` | `Opis uzytku` | `RIVa` |
+
+Wędrówka w górę rozwiązuje przypadek drugiego i dalszych wierszy (brały
+wcześniej wiersz danych nad sobą), a podział nagłówka na komórki chroni
+nazwy wielowyrazowe („Opis użytku” nie skraca się już do „Opis”).
+
+### Wybór trybu widoczny na pierwszy rzut oka
+
+Lista rozwijana z sekcji 45 była zbyt dyskretna. Zastąpiły ją dwa duże
+przyciski **„🏷️ NAZWĘ POLA”** i **„✏️ WARTOŚĆ”**; aktywny świeci na
+zielono. Pod nimi pasek tekstem mówi, co zrobi kliknięcie — żółty dla
+trybu wartości, zielony dla trybu nazwy.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 82 testy (+6 na tabelę w kratkę).
+Razem **504 testy** (było 498).
+
+## 47. Prawdziwy odczyt z tabeli w kratkę (bez ręcznego wpisywania)
+
+**Zgłoszenie:** „nie ma być ręcznie wpisany tylko dokładnie odczytany,
+nie pokazują się pola, nic”.
+
+### Przyczyna: program czytał tabelę pionowo
+
+`page.get_text()` z PyMuPDF wypisuje tabelę w kratkę **komórka po
+komórce, każda w osobnej linii**:
+
+```
+Obreb
+Nr dzialki
+Pow. [ha]
+0019, BOJANO
+145/7
+0.0235
+```
+
+Nagłówek tracił związek z wartością, więc odczyt nie znajdował **niczego**
+— stąd puste pola. Dlatego wcześniejsze poprawki nic nie dawały: naprawiały
+klikanie, a nie odczyt.
+
+Nowa funkcja `read_pdf_text()` składa tekst ze słów: te o zbliżonej
+wysokości trafiają do jednego wiersza, a szerokie przerwy zostają jako
+odstępy kolumn:
+
+```
+Obreb   Nr dzialki   Pow. [ha]   Opis uzytku
+0019, BOJANO   145/7   0.0235   dr
+```
+
+### Odczyt z nagłówka kolumny
+
+`extract_field` dostał `_extract_from_column()`: gdy etykieta stoi jako
+osobna kolumna wiersza, wartość brana jest z wiersza **poniżej**, z tej
+samej pozycji znakowej. Wiersz nagłówków jest rozpoznawany i pomijany,
+więc sąsiedni nagłówek nie trafia już jako wartość.
+
+| Pole | Odczytana wartość |
+| --- | --- |
+| Obręb | `0019, BOJANO` |
+| Nr działki | `145/7` |
+| Powierzchnia | `0.0235` |
+| Opis użytku | `dr` |
+
+### „Pow.” nie łapie się w „Pow. [ha]”
+
+Etykieta kończąca się kropką dopasowywała się w środku dłuższej nazwy i
+zwracała `[ha]`. `_label_pattern` ma teraz po kropce warunek, że nie może
+po niej stać dalszy ciąg nazwy. Etykiety sprawdzane są od najdłuższej.
+
+### Wskazanie wartości = nauka, nie wpisanie
+
+Tryb „✏️ WARTOŚĆ” **nie wpisuje** już tekstu na sztywno. Zapamiętuje nazwę
+pola (nagłówek kolumny albo tekst przed dwukropkiem) i pozwala programowi
+**odczytać** wartość — stan pokazuje **✅ odczytano**, a wzór zadziała na
+kolejnych wypisach z tego urzędu. Ręczny wpis pozostaje tylko awaryjnie,
+gdy nazwy nie da się ustalić.
+
+### Testy
+
+`tests/test_wypis_profiles.py` — 69 testów (+7 na odczyt kolumnowy),
+`tests/test_wypis_pdf_view.py` — 83. Razem **512 testów** (było 504).
+
+## 48. Zaznaczanie obszaru myszką — odczyt bez dopasowywania tekstu
+
+**Zgłoszenie:** „zrób tak, że wybieram odczytaną wartość i program ma
+umożliwić narysowanie pola zaznaczenia, z którego ta wartość ma zostać
+odczytana”.
+
+Dopasowywanie po tekście zawodzi na nietypowych wypisach. Doszedł więc
+tryb, w którym użytkownik **sam rysuje prostokąt** i to on decyduje, skąd
+brana jest wartość — bez żadnego zgadywania.
+
+### Jak to działa
+
+1. Zaznacz wiersz w tabeli po lewej.
+2. Wciśnij **🔲 OBSZAR (rysuj)** nad podglądem.
+3. Przeciągnij myszką prostokąt wokół wartości na dokumencie.
+
+Wartość pojawia się od razu w kolumnie ④ ze stanem **🔲 z obszaru**.
+Obszar rysowany jest pomarańczową ramką, a ten dla zaznaczonego wiersza
+jest podświetlony mocniej.
+
+### Co doszło w kodzie
+
+| Element | Rola |
+| --- | --- |
+| `text_in_rect(page, rect)` | składa tekst ze słów, których ponad połowa mieści się w prostokącie |
+| `read_area_value(pdf, area)` | czyta wartość z obszaru zapisanego we wzorze |
+| `WypisPdfView.set_draw_mode()` | przełącza podgląd w rysowanie (kursor krzyżykowy) |
+| sygnał `area_selected` | niesie narysowany prostokąt i odczytany tekst |
+| `profile["areas"]` | obszary zapisane **w procentach strony** |
+
+Zapis w procentach sprawia, że wzór działa niezależnie od powiększenia
+i rozdzielczości — obszar zapisany przy 100% czyta się poprawnie także
+przy 200%.
+
+### Pierwszeństwo i zarządzanie
+
+Obszar **wygrywa** ze zwykłym dopasowaniem tekstu, bo użytkownik wskazał
+źródło wprost. Obszary zapisują się we wzorze (działają na kolejnych
+wypisach z tego urzędu), da się je cofnąć (`Ctrl+Z`) i usunąć przyciskiem
+„🗑️ Usuń z pola”. Bardzo mały prostokąt jest traktowany jak kliknięcie
+i rozszerzany do słowa pod kursorem, żeby dało się wskazać jedną liczbę.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 97 testów (+14 na obszary). Razem
+**526 testów** (było 512).
+
+## 49. Koniec z „blokowaniem" na polu wyżej + rysowanie etykiety
+
+**Zgłoszenie:** przy polach wypisanych jedno pod drugim („Województwo",
+„Powiat", „Gmina", „Jednostka ewidencyjna", „Obręb") najechanie na
+„Obręb" podświetlało **„Województwo"**, a podpowiedź pokazywała inną
+wartość niż ta pod kursorem. Druga prośba: żeby prostokąt dało się
+narysować także wokół **etykiety**, nie tylko wokół wartości.
+
+**Co było nie tak.** Program szukał nazwy pola nad kliknięciem (to jest
+potrzebne w tabelach w kratkę) i w pionowej liście brał pierwszy wiersz
+z góry — czyli zawsze „Województwo". Dodatkowo wiersz wyznaczany był po
+numerze linii z PDF-a, a w wielu wypisach etykieta i wartość to osobne
+linie, więc „Województwo" i „POMORSKIE" nie trafiały do jednego wiersza.
+
+**Poprawki:**
+
+- Wiersz wyznaczamy teraz **po wysokości na stronie**, a nie po numerze
+  linii — etykieta i wartość z tej samej wysokości trafiają razem.
+- Nazwy pola szukamy nad kliknięciem **tylko w tabeli**: wiersz musi mieć
+  co najmniej dwie kolumny, a jego pierwsza komórka musi wyglądać na daną
+  (zawierać cyfrę). W pionowej liście pierwsza komórka to nazwa pola,
+  więc etykieta brana jest **z lewej strony tego samego wiersza**.
+- Klik w sam nagłówek tabeli zwraca **ten** nagłówek, a nie sąsiedni.
+- Odczyt tekstu rozumie układ „etykieta   wartość" bez dwukropka i nie
+  bierze nazwy kolejnego pola jako wartości (dawniej „Gmina" potrafiła
+  wczytać „Jednostka ewidencyjna").
+
+**Nowy tryb „🏷️🔲 ETYKIETA (rysuj)".** Czwarty przycisk nad podglądem.
+Przeciągasz prostokąt wokół nazwy pola na dokumencie, a jej tekst trafia
+do kolumny **② Etykiety w PDF** zaznaczonego wiersza. Działa też tam,
+gdzie dopasowanie po tekście zawodzi — bo liczy się to, co zaznaczysz,
+a nie to, co program zgadnie.
+
+## 50. Więcej pól wypisu + wskazywanie po tekście
+
+**Zgłoszenie:** program nie miał wszystkich pól, jakie są na wypisie —
+brakowało m.in. ulicy. Druga sprawa: żeby w trzeciej zakładce („Tekst
+dokumentu") dało się na podstawie tekstu wskazać, czym jest dany fragment,
+i na tej podstawie poprawić odczyt.
+
+### Pola — z 13 na 24
+
+Doszło jedenaście pozycji, których wcześniej nie dało się przypisać:
+
+| Nowe pole | Po co |
+|---|---|
+| Miejscowość działki | osobno od ulicy — program i tak rozdziela je do kolumn „Miejscowość działki" i „Ulica Działki" |
+| **Ulica działki** | to, czego brakowało |
+| Opis użytku | RIVa, dr, Bi — z tabeli użytków |
+| Adres właściciela | adres zamieszkania lub siedziby |
+| Miejscowość właściciela | do pism i kopert |
+| PESEL, NIP, REGON | kolumny, które program już miał w tabeli właścicieli |
+| Data wypisu | data sporządzenia |
+| Numer wypisu | znak sprawy |
+| Urząd wydający | starostwo lub urząd |
+
+Wbudowane wzory („Standardowy (EGiB)" i „Wypis uproszczony") znają już
+typowe nazwy tych pól, więc czytają się same, bez ustawiania.
+
+### Zakładka „Tekst dokumentu" — dwa przyciski zamiast jednego
+
+Wcześniej dało się tam tylko przypisać **nazwę** pola. Teraz są dwa:
+
+- **🏷️ Zaznaczenie to NAZWA pola** — jak dotąd.
+- **👁️ Zaznaczenie to WARTOŚĆ** — zaznaczasz samą wartość (np. „ul. Polna 3").
+  Program sam znajduje stojącą przy niej nazwę („Ulica"), zapamiętuje ją
+  i od tej pory czyta to pole **z każdego kolejnego wypisu** z tego urzędu.
+  Gdy przy wartości nie ma żadnej nazwy, zapisuje ją jako wpis ręczny.
+
+Pod przyciskami pojawia się zielona informacja, co zostało przypisane
+i po jakiej nazwie — widać od razu, czy program dobrze zrozumiał.
+
+## 51. Data sporządzenia wstawia się sama
+
+**Zgłoszenie:** żeby data sporządzenia wstawiała się automatycznie —
+aktualna data z komputera — z możliwością włączenia i wyłączenia tego
+w Ustawieniach, ale też z możliwością ręcznej zmiany.
+
+**Co się zmieniło.** Pola dat w pismach same wypełniają się dzisiejszą
+datą przy otwarciu zakładki:
+
+- **Pisma przewodnie** → „Data sporządzenia"
+- **Oświadczenia woli** → „Data"
+
+Format jak dotąd: `05.09.2026` (dzień i miesiąc zawsze dwucyfrowe).
+
+**Ręczna zmiana ma pierwszeństwo.** Wpisana data zostaje — program jej
+nie nadpisuje ani przy generowaniu pisma, ani przy przełączaniu
+właścicieli. Jeśli chcesz wystawić pismo z inną datą, po prostu ją
+wpisujesz. Podpowiedź pod kursorem przypomina, że datę można zmienić
+i gdzie wyłączyć automat.
+
+**Włącznik w Ustawieniach.** Nowa sekcja **„Data w pismach"** z jednym
+ptaszkiem: „Wstawiaj dzisiejszą datę automatycznie". Opis pokazuje, jaka
+data zostałaby dziś wpisana. Po odznaczeniu pola dat zostają puste — tak
+jak działało to wcześniej. Domyślnie opcja jest włączona.
+
+Ustawienie zapisuje się pod kluczem `auto_today_date`, a całą logikę
+trzyma `utils/auto_date.py`, więc łatwo podpiąć ją w kolejnych miejscach.
+
+## 52. Poprawki wzorów odczytu: tekst, kasowanie wartości, własne pola
+
+**Zgłoszenie:** przycisk „Zaznaczenie to WARTOŚĆ" nie działał; brakowało
+możliwości usunięcia odczytanej wartości; stan „nie znaleziono" miał się
+nazywać inaczej; oraz — najważniejsze — program pokazywał pola, których
+w wypisie nie ma, a brakowało tych, które są.
+
+### Zakładka „Tekst dokumentu" — naprawiona i rozbudowana
+
+**Dlaczego nie działała.** Qt oddziela wiersze znakiem `\u2029`
+(separator akapitu), a nie zwykłym końcem linii. Gdy zaznaczenie
+obejmowało więcej niż jeden wiersz, tekst nie pasował do niczego
+w dokumencie i program nic nie znajdował. Teraz zamieniamy ten znak na
+zwykły koniec linii, a przy zaznaczeniu wielu wierszy bierzemy pierwszy
+niepusty.
+
+**Rozpoznawanie nazwy pola** działa teraz w czterech układach zamiast
+jednego:
+
+1. `Województwo: POMORSKIE` — nazwa przed dwukropkiem;
+2. `Województwo   POMORSKIE` — nazwa w kolumnie obok;
+3. `Obręb   0019, BOJANO` — gdy tuż przed wartością stoi dana, program
+   cofa się do wcześniejszej kolumny;
+4. tabela w kratkę — nazwa kolumny stoi w wierszu **wyżej**, a program
+   wybiera tę, która najlepiej pokrywa się z wartością.
+
+### „Usuń wartość"
+
+Nowy przycisk pod tabelą kasuje odczytaną wartość zaznaczonego pola —
+razem z narysowanym obszarem i ręcznym wpisem. Etykiety zostają, więc
+wzór się nie psuje. Program nie wpisuje tam nic z powrotem, dopóki sam
+nie wskażesz wartości na nowo. Cofnięcie (Ctrl+Z) przywraca.
+
+### Stan „nieokreślony"
+
+Zamiast czerwonego „❌ nie znaleziono" jest teraz spokojne
+„➖ nieokreślony" w szarości — brak wartości to zwykły stan pracy,
+a nie błąd.
+
+### Własne pola
+
+Wypisy z różnych urzędów mają różne rubryki, więc lista pól nie jest już
+sztywna. Pod tabelą doszedł rząd **„Pola:"** z czterema przyciskami:
+
+- **➕ Dodaj pole** — wpisujesz nazwę i pole pojawia się w tabeli;
+- **✏️ Zmień nazwę pola** — dla pól dodanych przez Ciebie;
+- **➖ Usuń pole** — chowa niepotrzebne pole (własne znika na stałe,
+  wbudowane tylko się ukrywa);
+- **↩ Przywróć pola** — pokazuje z powrotem ukryte pola wbudowane.
+
+Pola własne zapisują się razem ze wzorem, więc każdy urząd może mieć
+swój zestaw. Nazw pól wbudowanych nie zmieniamy — korzystają z nich inne
+części programu — ale można je ukryć i dodać własne pod swoją nazwą.
+
+## 53. Odczyt wartości spod nazwy pola, wybór kierunku i „Wypełnij sam”
+
+**Co było nie tak.** Program szukał wartości tylko *obok* nazwy pola — po jej
+prawej stronie. W wypisach, gdzie „Numer działki” i „Bliższe określenie
+położenia” stoją jako nagłówki tabelki, a `27/176` leży **pod spodem**, pola
+zostawały puste. Nie było też jak temu zaradzić ręcznie ani jednym ruchem
+uzupełnić tego, co program potrafi znaleźć sam.
+
+**Wartość pod nazwą pola.** Odczyt rozpoznaje teraz oba układy — wartość obok
+nazwy i wartość pod nią. Działa to zarówno przy klikaniu w dokument, jak i przy
+odczycie z tekstu. Program pilnuje, żeby nie pomylić tabelki z pionową listą:
+przy „Powiat  kartuski” nad „Gmina  Żukowo” nadal czyta „kartuski”, a nie
+„Gmina”. Za tabelkę uznaje dopiero wiersz stojący dokładnie pod rubrykami,
+w tych samych kolumnach, zaczynający się od danej (z cyfrą).
+
+**Nowa kolumna „③ Skąd czytać”.** Każde pole ma własną listę wyboru:
+
+| Ustawienie | Co robi |
+|---|---|
+| 🔎 **Sam wybierz** | program decyduje sam (ustawienie domyślne) |
+| ➡️ **Obok, z prawej** | wartość zawsze po prawej stronie nazwy |
+| ⬇️ **Pod spodem** | wartość zawsze pod nazwą — dla tabelek |
+
+Wybór zapisuje się we wzorze, więc kolejne wypisy z tego samego urzędu czytają
+się już poprawnie. Gdy program czyta nie z tego miejsca, wystarczy przestawić
+listę — bez rysowania prostokątów.
+
+**Nowy przycisk „🪄 Wypełnij sam”.** Bierze wszystkie pola, które mają
+przypisaną etykietę, ale pustą wartość, i próbuje odczytać je raz obok nazwy,
+raz spod spodu. Kierunek, który zadziałał, zapisuje w polu. Na końcu pisze,
+ile pól udało się uzupełnić. Nie rusza pól już wypełnionych, wpisanych ręcznie
+ani mających narysowany obszar.
+
+**„Usuń z pola” sprząta do końca.** Przycisk kasuje teraz wszystko, co wiąże
+pole z dokumentem — etykiety wpisane ręcznie, etykiety wskazane kliknięciem,
+etykiety narysowane w trybie „🏷️🔲 ETYKIETA (rysuj)”, narysowane obszary,
+wartości ręczne oraz wymuszony kierunek odczytu, który wraca do „Sam wybierz”.
+Wiersz zostaje pusty także w kolumnie z wartością. Całość cofa się przyciskiem
+„↩ Cofnij”.
+
+## 54. Odczyt także z lewej strony i znad nazwy pola
+
+Kolumna „③ Skąd czytać” dostała dwa kolejne ustawienia. Teraz wartość można
+kazać czytać z każdej strony nazwy pola:
+
+| Ustawienie | Gdzie stoi wartość |
+|---|---|
+| 🔎 **Sam wybierz** | program decyduje sam (ustawienie domyślne) |
+| ➡️ **Obok, z prawej** | po prawej stronie nazwy |
+| ⬅️ **Obok, z lewej** | po lewej stronie nazwy — np. „27/176   Numer działki” |
+| ⬇️ **Pod spodem** | pod nazwą — nagłówki tabelki |
+| ⬆️ **Nad nazwą** | nad nazwą — podpis rubryki stoi pod danymi |
+
+Wymuszony kierunek jest wiążący: gdy ustawisz „z lewej”, a wartość leży
+z prawej, pole zostanie puste. Dzięki temu widać od razu, że ustawienie jest
+nie to, zamiast dostać podstawioną przypadkową daną.
+
+Przycisk „🪄 Wypełnij sam” sprawdza teraz wszystkie cztery strony po kolei —
+z prawej, spod spodu, z lewej i z góry — i zapisuje w polu ten kierunek,
+który dał wynik.
+
+## 55. Zmiana „Skąd czytać” działa naprawdę; tabela stoi spokojnie
+
+**Zmiana kierunku nic nie dawała.** Przy polach zapisanych z dwukropkiem
+(„Powiat: kartuski” — czyli w większości wypisów) program i tak zwracał tę
+samą wartość, niezależnie od tego, co wybrałeś w kolumnie „③ Skąd czytać”.
+Zwykłe dopasowanie „nazwa: wartość” wykonywało się wcześniej niż sprawdzenie
+kierunku, więc wybór użytkownika był po prostu pomijany.
+
+Teraz wymuszony kierunek rozstrzyga się **jako pierwszy**. Każde ustawienie
+daje inny wynik, a powrót na „🔎 Sam wybierz” przywraca odczyt automatyczny.
+Tryb automatyczny działa jak dotąd — zmiana dotyczy tylko ustawień ręcznych.
+
+**Tabela sama przestawiała kolumny.** Kolumny „Pole w programie” i „Stan”
+miały tryb „dopasuj do treści”, więc Qt przeliczał ich szerokość po każdym
+odczycie i linie podziału skakały w bok w trakcie pracy. Do tego zawijanie
+tekstu zmieniało wysokość wierszy, przez co całość „oddychała”.
+
+Teraz szerokości są stałe i zmienia je wyłącznie użytkownik, przeciągając
+linię w nagłówku. Wszystkie wiersze mają równą wysokość. Długie napisy są
+przycinane wielokropkiem, a pełna treść pokazuje się w podpowiedzi pod
+kursorem.
+
+## 56. „Pod spodem” czyta też nazwy stojące same w linii; nagłówek nie zaznacza kolumn
+
+**„⬇️ Pod spodem” nie widziało wartości, choć była na wierzchu.** Program
+uznawał za tabelę tylko linię, w której stały co najmniej dwie kolumny. Gdy
+nazwa pola stała **sama w linii**, a wartość pod nią — czyli najczęstszy układ
+w wypisach — linia była odrzucana i pole zostawało puste, mimo że wartość
+widniała tuż niżej.
+
+Teraz wszystkie cztery kierunki radzą sobie z każdym układem:
+
+| Układ w dokumencie | Wynik |
+|---|---|
+| `Numer działki` / `27/176` (nazwa sama w linii) | ✅ |
+| `Numer działki:` / `27/176` (nazwa z dwukropkiem) | ✅ |
+| `Numer działki` / *pusta linia* / `27/176` | ✅ |
+| `Numer działki  Położenie` / `27/176  Borkowo` (nagłówki) | ✅ |
+
+Poprawka dotyczy również kierunków „⬆️ Nad nazwą”, „⬅️ Obok, z lewej”
+i „➡️ Obok, z prawej” — wszystkie porównują teraz nazwę pola bez końcowego
+dwukropka, więc `Numer działki:` i `Numer działki` traktowane są tak samo.
+
+**Nagłówek tabeli zaznaczał całe kolumny.** Kliknięcie w pasek z napisami
+„① Pole w programie”, „② Etykiety w PDF” itd. podświetlało całą kolumnę —
+przy pracy z tabelą łatwo w niego trafić. Nagłówek nie reaguje już na
+kliknięcia, kolumn nie da się przestawić ani podświetlić. Przeciąganie linii
+podziału, żeby zmienić szerokość, działa jak dotąd.
+
+## 57. Nagłówek piętrowy („GRUNTY” → „Oznaczenie działki” → „Numer działki”)
+
+**Co było nie tak.** W wypisach nagłówek tabeli bywa rozbity na dwa piętra:
+u góry „Oznaczenie działki” i „Opis”, pod spodem „Numer działki”, „Numer KW”
+i „użytku”, a dopiero niżej dane. Program schodził o jedną linię i trafiał
+w drugie piętro nagłówka — dla „Oznaczenie działki” zwracał „Opis”, czyli
+nazwę sąsiedniej rubryki zamiast numeru działki.
+
+Teraz odczyt schodzi **aż do prawdziwych danych**, pomijając kolejne piętra
+nagłówka. Za nagłówek uznaje wiersz bez ani jednej cyfry, mający więcej rubryk
+niż wiersz nad nim, pod którym stoją dane. Działa to zarówno w trybie
+„🔎 Sam wybierz”, jak i przy wymuszonym „⬇️ Pod spodem”, i dla obu pięter
+nagłówka:
+
+| Etykieta we wzorze | Wcześniej | Teraz |
+|---|---|---|
+| `Oznaczenie działki` | ❌ `Opis` | ✅ `27/176` |
+| `Numer działki` | ✅ `27/176` | ✅ `27/176` |
+
+Pionowe listy pól („Powiat kartuski” nad „Gmina Żukowo”) czytają się jak
+dotąd — reguła wymaga, by dolny wiersz miał **więcej** rubryk niż górny, więc
+listy nie dotyczy.
+
+**Nagłówek podświetlał się pod kursorem.** Samo najechanie myszą na pasek
+z napisami „① Pole w programie”, „② Etykiety w PDF” rozjaśniało całą kolumnę.
+Styl wyłącza teraz reakcję nagłówka na kursor i na wciśnięcie, a komórki
+tabeli nie zmieniają tła pod myszą. Podświetlany jest wyłącznie zaznaczony
+wiersz.
+
+## 58. Ciasne kolumny nie sklejają się; wypisy wielostronicowe
+
+**Numer działki sklejał się z numerem księgi wieczystej.** W ciasno złożonych
+tabelach sąsiednie komórki dzieli przerwa niewiele większa od zwykłej spacji.
+Program uznawał je wtedy za jeden napis i pole „Powierzchnia” dostawało
+wartość `0.0235 KW GD1R/00012345/6` zamiast samego `0.0235`.
+
+Teraz granice kolumn rozpoznajemy z układu całej strony: miejsce jest granicą
+wtedy, gdy w **sąsiednim wierszu** — bezpośrednio nad albo pod — zaczyna się
+tam kolejna komórka. Tak stoją rubryki tabeli. Przypadkowy odstęp między
+słowami jednej nazwy („Anna Nowak”) nie powtarza się w wierszu obok, więc
+takie napisy pozostają w całości.
+
+| Fragment tabeli | Wcześniej | Teraz |
+|---|---|---|
+| `0.0235   GD1R/00012345/6` | ❌ jedna wartość | ✅ dwie kolumny |
+| `Właściciel   Anna Nowak` | ✅ | ✅ `Anna Nowak` razem |
+
+**Wypisy na kilku stronach.** Tekst dokumentu zawierał wszystkie strony
+sklejone jedna za drugą, bez śladu, gdzie kończy się która. Teraz w zakładce
+„📄 Tekst dokumentu” każda strona zaczyna się widocznym paskiem
+`──────── STRONA 2 ────────`, a przyciski ◀ ▶ nad podglądem przewijają tekst
+do tej samej strony, którą oglądasz. W podpowiedzi odczytanej wartości
+dopisujemy, na której stronie ją znaleziono.
+
+Odczyt pól obejmuje **cały dokument**, nie tylko pierwszą stronę — wartości
+z dalszych stron trafiają do tabeli tak samo jak te z pierwszej.
+
+## 59. Dwie nowe pozycje w „Skąd czytać”; „Sprawdź ponownie” czyta plik od nowa
+
+**Nowe pozycje w kolumnie „③ Skąd czytać”.** Lista ma teraz siedem ustawień:
+
+| Ustawienie | Gdzie stoi wartość |
+|---|---|
+| 🔎 **Sam wybierz** | program decyduje sam (domyślnie) |
+| ➡️ **Obok, z prawej** | po prawej stronie nazwy |
+| ⬅️ **Obok, z lewej** | po lewej stronie nazwy |
+| ⬇️ **Pod spodem** | w pierwszym wierszu danych pod nazwą |
+| ⬇️⬇️ **Dwa pod spodem** | w **drugim** wierszu danych — gdy tabela ma kilka pozycji |
+| ⬆️ **Nad nazwą** | nad nazwą pola |
+| 🎯 **Wybrana pozycja** | w kolumnie, którą sam wskażesz |
+
+Po wybraniu „🎯 Wybrana pozycja” program pyta, **która wartość z wiersza** jest
+tą właściwą, i pokazuje przy tym ponumerowaną zawartość wiersza z dokumentu.
+Rozwiązuje to układy, w których pod jedną nazwą stoi kilka liczb obok siebie
+(„POWIERZCHNIA w ha” nad „Użytków i klas” oraz „Działki”) — każde pole można
+wtedy wskazać osobno. Numer kolumny zapisuje się we wzorze.
+
+**„🔄 Sprawdź ponownie” nie czytało dokumentu na nowo.** Przycisk analizował
+tekst zapamiętany przy wczytaniu pliku, więc po przełączeniu strony albo
+zmianie czegokolwiek pokazywał stare wartości. Teraz otwiera PDF ponownie,
+odświeża zakładkę tekstową i przelicza wszystkie pola, meldując „🔄 Odczytano
+dokument od nowa”.
+
+**Nagłówek nadal podświetlał się pod kursorem.** Poprzednia poprawka
+(wyłączenie w arkuszu stylów) nie wystarczyła — motyw Qt zapala flagę
+śledzenia myszy z powrotem. Teraz zdarzenia najechania są przechwytywane
+filtrem, zanim dotrą do tabeli, więc nic się nie rozjaśnia.
+
+**Paski „STRONA n” nie są mylone z danymi.** W wypisach wielostronicowych
+odczyt pomija linie oddzielające strony, zamiast brać je za wartość pola.
+
+## Uwagi techniczne
+
+* Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
+  `document_naming.py`, `wypis_metadata.py`, `shipment_tracking.py`), dzięki
+  czemu jest pokryta testami bez uruchamiania okien.
+* Nowe pliki testów: `test_parcel_indicators.py`, `test_document_naming.py`,
+  `test_wypis_metadata.py`, `test_wypis_pdf_multi_meta.py`,
+  `test_pdf_editable_output.py`, `test_tab_naming.py`, `test_app_icon.py`.
+* Uruchomienie testów: `python -m unittest discover -s tests -v`.
+* Skrypt `build_windows.ps1` pozostaje czystym ASCII z BOM (zgodność z
+  Windows PowerShell 5.1) i sam wygeneruje ikonę, jeśli jej zabraknie.

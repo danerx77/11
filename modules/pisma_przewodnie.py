@@ -16,6 +16,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
+from utils.output_paths import project_output_dir
+from utils.document_naming import cover_letter_filename
+from utils.auto_date import initial_date_text
+
+from utils.generation_targets import cover_generation_exclusion_reason
+
 # Konfiguracja logera
 def get_log_dir():
     if getattr(sys, 'frozen', False):
@@ -247,6 +253,14 @@ class CoverLetterWidget(QWidget):
         meta_form = QFormLayout(meta_box)
         self.date_edit = QLineEdit()
         self.date_edit.setPlaceholderText('np. 20.10.2026')
+        # Dzisiejsza data wstawia się sama, o ile nie wyłączono tego
+        # w Ustawieniach. Wpisaną ręcznie zmianę program zostawia.
+        self.date_edit.setText(initial_date_text(self.config))
+        self.date_edit.setToolTip(
+            'Data z komputera wstawia się sama.\n'
+            'Możesz ją zmienić — wpisana data zostanie zachowana.\n'
+            'Automat włączysz i wyłączysz w Ustawieniach.'
+        )
         meta_form.addRow('Data sporządzenia:', self.date_edit)
         self.sender_place_edit = QLineEdit(self.config.get('sender', {}).get('city', ''))
         self.sender_place_edit.setPlaceholderText('np. Gdańsk')
@@ -286,13 +300,14 @@ class CoverLetterWidget(QWidget):
         self.group_combo.setMinimumWidth(180)
         self.group_combo.currentTextChanged.connect(self._on_group_changed)
         group_layout.addWidget(self.group_combo)
-        self.chk_show_only_group = QCheckBox('Pokaż tylko grupę')
+        self.chk_show_only_group = QCheckBox('Pokaż i generuj tylko wybraną grupę')
+        self.chk_show_only_group.setToolTip(
+            'Jedno pole na wszystko: lista pokazuje wyłącznie właścicieli i '
+            'działki z wybranej grupy, a generowanie obejmuje tylko te działki.\n'
+            'Przy „Wszystkie działki” ukrywa działki przypisane do innych grup.'
+        )
         self.chk_show_only_group.stateChanged.connect(self._refresh_owners_table)
         group_layout.addWidget(self.chk_show_only_group)
-        self.chk_exclude_grouped_from_all = QCheckBox('Wszystkie bez działek z grup')
-        self.chk_exclude_grouped_from_all.setToolTip('Gdy wybierzesz "Wszystkie działki", działki użyte w innych grupach nie będą pokazywane.')
-        self.chk_exclude_grouped_from_all.stateChanged.connect(self._refresh_owners_table)
-        group_layout.addWidget(self.chk_exclude_grouped_from_all)
         btn_group_create = QPushButton('➕ Utwórz z ptaszków')
         btn_group_create.clicked.connect(self._create_group_from_checked)
         group_layout.addWidget(btn_group_create)
@@ -444,7 +459,7 @@ class CoverLetterWidget(QWidget):
         self.btn_generate_sel = QPushButton('⚙️ Generuj dla ZAZNACZONYCH (z ptaszkiem)')
         self.btn_generate_sel.clicked.connect(self._generate_selected)
         gen_row.addWidget(self.btn_generate_sel)
-        self.btn_generate_all = QPushButton('⚡ GENERUJ WSZYSTKIE BEZ PTASZKA')
+        self.btn_generate_all = QPushButton('⚡ GENERUJ AUTOMATYCZNIE WSZYSTKIE')
         self.btn_generate_all.setObjectName('btn_accent')
         self.btn_generate_all.clicked.connect(self._generate_all)
         gen_row.addWidget(self.btn_generate_all)
@@ -626,7 +641,7 @@ class CoverLetterWidget(QWidget):
         name = self.group_combo.currentText()
         if name == 'Wszystkie działki':
             all_nums = set(self._all_project_parcels())
-            if hasattr(self, 'chk_exclude_grouped_from_all') and self.chk_exclude_grouped_from_all.isChecked():
+            if hasattr(self, 'chk_show_only_group') and self.chk_show_only_group.isChecked():
                 used = set()
                 for group in self.parcel_groups.values():
                     used.update(group.get('parcels', []))
@@ -634,6 +649,25 @@ class CoverLetterWidget(QWidget):
             return all_nums
         group = self.parcel_groups.get(name, {})
         return set(group.get('parcels', []))
+
+    def _group_parcel_filter(self):
+        """Numery działek wybranej grupy albo ``None``, gdy filtr wyłączony."""
+        if not hasattr(self, 'chk_show_only_group'):
+            return None
+        if not self.chk_show_only_group.isChecked():
+            return None
+        return self._selected_group_parcels()
+
+    @staticmethod
+    def _parcel_number(parcel):
+        return str(parcel.get('number', parcel)) if isinstance(parcel, dict) else str(parcel)
+
+    def _filter_parcels_to_group(self, parcels):
+        """Zostawia tylko działki należące do wybranej grupy."""
+        allowed = self._group_parcel_filter()
+        if allowed is None:
+            return list(parcels or [])
+        return [p for p in (parcels or []) if self._parcel_number(p) in allowed]
 
     def _all_project_parcels(self):
         nums = set()
@@ -788,16 +822,16 @@ class CoverLetterWidget(QWidget):
                 
                 fmt = self.config.get('couple_format_cover', 0)
                 display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
-                parcels_str = ', '.join([str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])])
+                visible_parcels = self._filter_parcels_to_group(o.get('parcels', []))
+                if not visible_parcels and self._group_parcel_filter() is not None:
+                    continue
+                parcels_str = ', '.join(
+                    self._parcel_number(p) for p in visible_parcels
+                )
                 if hasattr(self, 'chk_show_only_group') and self.chk_show_only_group.isChecked():
                     wanted_owner_keys = self._selected_group_owner_keys()
                     if wanted_owner_keys:
                         if self._owner_group_key(o, specific_addr) not in wanted_owner_keys:
-                            continue
-                    else:
-                        wanted_group = self._selected_group_parcels()
-                        owner_nums = {str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])}
-                        if wanted_group and not (owner_nums & wanted_group):
                             continue
                 if filter_text:
                     search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
@@ -834,6 +868,14 @@ class CoverLetterWidget(QWidget):
                 
                 it_name = QTableWidgetItem(f"{flag_str}{display_name}")
                 it_name.setData(Qt.ItemDataRole.UserRole, (idx, specific_addr))
+                can_generate, exclusion_reason = self._is_valid_for_gen(o, specific_addr)
+                if can_generate:
+                    it_name.setToolTip("Pismo może zostać wygenerowane seryjnie.")
+                else:
+                    it_name.setToolTip(
+                        "Pismo zostanie pominięte w generowaniu seryjnym: "
+                        f"{exclusion_reason}. Zmień regułę w Ustawieniach."
+                    )
                 if o.get('is_dead'): it_name.setForeground(QColor("#e74c3c"))
                 elif o.get('is_institution'): it_name.setForeground(QColor("#9b5de5"))
                 elif o.get('is_spolka'): it_name.setForeground(QColor("#2980b9"))
@@ -873,16 +915,24 @@ class CoverLetterWidget(QWidget):
         self._refresh_owners_table()
 
     def set_parcels(self, parcels: list): self.parcels = parcels
+    def _resolve_output_dir(self, title: str) -> str:
+        """Folder docelowy pism: automatycznie w projekcie albo ręcznie."""
+        auto_dir = project_output_dir(
+            self.config,
+            'cover_letters',
+            self.active_project_path or self.config.get('last_project_path', ''),
+        )
+        if auto_dir is not None:
+            return str(auto_dir)
+        return QFileDialog.getExistingDirectory(self, title) or ''
+
     def set_project(self, project: dict):
         self.active_project_path = project.get('path', '')
         self._load_groups()
 
     def _is_valid_for_gen(self, o: dict, specific_addr: str) -> tuple[bool, str]:
-        if o.get('is_dead'): return False, "Osoba zmarła"
-        if o.get('is_institution') or o.get('is_church'): return False, "Instytucja/Gmina/Parafia"
-        if not specific_addr.strip(): return False, "Brak adresu"
-        if not re.search(r'\d{2}-\d{3}', specific_addr): return False, "Brak kodu pocztowego"
-        return True, "OK"
+        """Stosuje reguły seryjnego generowania ustawione w Ustawieniach."""
+        return cover_generation_exclusion_reason(o, specific_addr, self.config)
 
     def _get_short_name(self, fn: str, ln: str) -> str:
         if ' i ' in fn.lower():
@@ -972,17 +1022,42 @@ class CoverLetterWidget(QWidget):
         self.ownership_edit.setText(phrase)
 
     def _browse_template(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Wybierz szablon', '', 'Word (*.docx)')
-        if path: self.template_edit.setText(path)
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key='path_przyklady',
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=self.template_edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Wybierz szablon',
+            str(start_dir),
+            'Word (*.docx)',
+        )
+        if path:
+            self.template_edit.setText(path)
 
     def _set_default_template(self):
-        from utils.templates import find_latest_file
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            find_latest_file,
+            resolve_template_start_directory,
+        )
 
-        if getattr(sys, 'frozen', False): przyk_path = str(Path(sys.executable).parent.resolve() / 'przykłady')
-        else: przyk_path = str(Path(__file__).parent.parent.parent / 'przykłady')
-            
-        cl_tmpl = self.config.get('cover_letter_template', '')
-        if not cl_tmpl or not Path(cl_tmpl).exists():
+        przyk_path = resolve_template_start_directory(
+            self.config,
+            config_key='path_przyklady',
+            folder_names=EXAMPLES_FOLDER_NAMES,
+        )
+
+        # Nie nadpisuj działającego wyboru dokonanego w tym module.
+        cl_tmpl = self.template_edit.text().strip() or self.config.get('cover_letter_template', '')
+        if not cl_tmpl or not Path(cl_tmpl).is_file():
             latest = find_latest_file(
                 przyk_path,
                 ["Pismo przewodnie", "pismo przewodnie"],
@@ -990,24 +1065,6 @@ class CoverLetterWidget(QWidget):
             )
             cl_tmpl = str(latest) if latest else ""
         self.template_edit.setText(cl_tmpl)
-
-    def _location_for_decl(self, city: str) -> str:
-        if not self.config.get('decl_location_locative', False):
-            return str(city or '')
-        from utils.polish_declension import decline_city
-        parts = [p.strip() for p in str(city or '').split(',') if p.strip()]
-        if not parts:
-            return str(city or '')
-        return ', '.join(decline_city(p) for p in parts)
-
-    def _street_for_decl(self, street: str) -> str:
-        if not self.config.get('decl_decline_streets', False):
-            return str(street or '')
-        from utils.polish_declension import decline_street
-        parts = [p.strip() for p in str(street or '').split(',') if p.strip()]
-        if not parts:
-            return str(street or '')
-        return ', '.join(decline_street(p) for p in parts)
 
     def _get_params(self) -> dict:
         sender = self.config.get('sender', {})
@@ -1033,6 +1090,8 @@ class CoverLetterWidget(QWidget):
         }
 
     def _preview(self):
+        # Podgląd ma prezentować dane źródłowe. Odmiana dotyczy wyłącznie
+        # wartości podstawianych pod tagi w dokumencie DOCX.
         p = self._get_params()
         unique_parcels = list(dict.fromkeys(p['parcel_numbers']))
         all_nums_str = ', '.join(unique_parcels) or '—'
@@ -1050,6 +1109,7 @@ class CoverLetterWidget(QWidget):
             f"{p['place']}, {p['date_str']}\n\n"
             f"Sz. P.\n{formatted_name}\n{p['addressee_street']}\n{p['addressee_city']}\n\n"
             f"Zlokalizowanych w miejscowości {p['location']},\n"
+            f"Ulica działki: {p['street']}\n"
             f"Teren {parcel_type} {all_nums_str}, {p['ownership_phrase']}."
         )
         self.preview_text.setText(preview)
@@ -1074,11 +1134,27 @@ class CoverLetterWidget(QWidget):
                     reply = QMessageBox.question(self, "Uwaga", f"Właściciel został pominięty przez filtr (Powód: {reason}).\nCzy chcesz WYMUSIĆ wygenerowanie pisma dla tej osoby?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     if reply == QMessageBox.StandardButton.No: return
         p = self._get_params()
-        if not Path(p['template_path']).exists():
+        if not p['template_path'] or not Path(p['template_path']).is_file():
             self._set_default_template()
-            p['template_path'] = self.template_edit.text().strip()
-            
-        out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz pismo', 'Pismo przewodnie.docx', 'Word (*.docx)')
+            p = self._get_params()
+        if not p['template_path'] or not Path(p['template_path']).is_file():
+            QMessageBox.warning(
+                self,
+                'Brak szablonu',
+                'Wybierz poprawny plik szablonu Word dla pisma przewodniego.',
+            )
+            return
+
+        auto_dir = self._resolve_output_dir('Folder wyjściowy')
+        if auto_dir and project_output_dir(
+            self.config,
+            'cover_letters',
+            self.active_project_path or self.config.get('last_project_path', ''),
+            create=False,
+        ) is not None:
+            out_path = str(Path(auto_dir) / 'Pismo przewodnie.docx')
+        else:
+            out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz pismo', 'Pismo przewodnie.docx', 'Word (*.docx)')
         if not out_path: return
         
         from utils.docx_utils import generate_cover_letter
@@ -1087,8 +1163,8 @@ class CoverLetterWidget(QWidget):
                 template_path=p['template_path'], output_path=out_path, date_str=p['date_str'], place=p['place'],
                 sender_name=p['sender_name'], sender_street=p['sender_street'], sender_city=p['sender_city'],
                 addressee_salutation='Sz. P.', addressee_name=p['addressee_name'], addressee_street=p['addressee_street'],
-                addressee_city=p['addressee_city'], location=self._location_for_decl(p['location']),
-                street=self._street_for_decl(p['street']),
+                addressee_city=p['addressee_city'], location=p['location'],
+                street=p['street'],
                 subject=p['subject'],
                 task_construction=p['task_construction'],
                 task_demolition=p['task_demolition'],
@@ -1096,7 +1172,8 @@ class CoverLetterWidget(QWidget):
                 parcel_numbers_demolition=p['parcel_numbers_demolition'],
                 parcel_numbers=p['parcel_numbers'],
                 ownership_phrase=p['ownership_phrase'], tag_map=self.config.get('cover_letter_tag_map'),
-                unlock_docs=self.config.get("unlock_generated_docs", False)
+                unlock_docs=self.config.get("unlock_generated_docs", False),
+                declension_options=self.config,
             )
             
             if ok: 
@@ -1104,7 +1181,7 @@ class CoverLetterWidget(QWidget):
                     try:
                         data = self.table_owners.item(sel[0].row(), 2).data(Qt.ItemDataRole.UserRole)
                         idx, specific_addr = data
-                        self._set_cover_done(self.owners[idx], _, True)
+                        self._set_cover_done(self.owners[idx], specific_addr, True)
                         self.owners_changed.emit(self.owners)
                         self._refresh_owners_table()
                     except: pass
@@ -1127,37 +1204,85 @@ class CoverLetterWidget(QWidget):
         self._generate_batch(targets)
 
     def _generate_all(self):
-        if not self.owners: return QMessageBox.warning(self, 'Brak właścicieli', 'Wczytaj właścicieli na zakładce Wypisy.')
-        
-        targets = []
-        hide_generated = self.chk_hide_generated.isChecked()
+        if not self.owners:
+            return QMessageBox.warning(
+                self,
+                'Brak właścicieli',
+                'Wczytaj właścicieli na zakładce Wypisy.',
+            )
+
+        from utils.generation_targets import select_address_targets
+
         filter_text = self.search_owners_edit.text().strip().lower()
-        for o in self.owners:
-            is_generated = self._cover_done(o, specific_addr)
-            if hide_generated and is_generated: continue
-            
-            addresses = [o.get('address', '')]
-            if o.get('address_2'): addresses.append(o.get('address_2'))
-            for addr in addresses:
-                
-                if filter_text:
-                    fmt = self.config.get('couple_format_cover', 0)
-                    display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
-                    parcels_str = ' '.join([str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])])
-                    search_target = f"{display_name} {addr} {parcels_str}".lower()
-                    if filter_text not in search_target: continue
-                targets.append((o, addr))
+
+        def matches_filter(owner, specific_addr):
+            fmt = self.config.get('couple_format_cover', 0)
+            display_name = (
+                owner.get('name_plural', owner.get('full_name', ''))
+                if fmt == 0
+                else owner.get('name_separate', owner.get('full_name', ''))
+            )
+            parcels_str = ' '.join(
+                str(parcel.get('number', parcel))
+                if isinstance(parcel, dict)
+                else str(parcel)
+                for parcel in owner.get('parcels', [])
+            )
+            search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
+            return filter_text in search_target
+
+        # Filtr grupy obowiązuje także przy generowaniu seryjnym.
+        owners_for_generation = self.owners
+        if self._group_parcel_filter() is not None:
+            owners_for_generation = [
+                owner for owner in self.owners
+                if self._filter_parcels_to_group(owner.get('parcels', []))
+            ]
+            if not owners_for_generation:
+                return QMessageBox.information(
+                    self,
+                    'Pusta grupa',
+                    'Żaden właściciel nie ma działek z wybranej grupy.\n'
+                    'Zmień grupę albo wyłącz „Pokaż i generuj tylko wybraną grupę”.',
+                )
+
+        targets = select_address_targets(
+            owners_for_generation,
+            hide_done=self.chk_hide_generated.isChecked(),
+            is_done=self._cover_done,
+            matches_filter=matches_filter if filter_text else None,
+        )
+        if not targets:
+            return QMessageBox.information(
+                self,
+                'Brak pism do wygenerowania',
+                'Żaden adres nie spełnia obecnego filtra albo wszystkie pisma są już wygenerowane.',
+            )
         self._generate_batch(targets)
 
     def _generate_batch(self, targets):
-        out_dir = QFileDialog.getExistingDirectory(self, 'Folder wyjściowy')
-        if not out_dir: return
-        
+        if not targets:
+            return QMessageBox.warning(
+                self,
+                'Brak',
+                'Nie wybrano żadnego adresu do wygenerowania.',
+            )
+
         p = self._get_params()
-        if not Path(p['template_path']).exists():
+        if not p['template_path'] or not Path(p['template_path']).is_file():
             self._set_default_template()
-            p['template_path'] = self.template_edit.text().strip()
-            
+            p = self._get_params()
+        if not p['template_path'] or not Path(p['template_path']).is_file():
+            return QMessageBox.warning(
+                self,
+                'Brak szablonu',
+                'Wybierz poprawny plik szablonu Word dla pism przewodnich.',
+            )
+
+        out_dir = self._resolve_output_dir('Folder wyjściowy')
+        if not out_dir:
+            return
+
         from utils.docx_utils import generate_cover_letter
         from utils.gender_utils import detect_gender
         success, errors = 0, []
@@ -1200,8 +1325,20 @@ class CoverLetterWidget(QWidget):
             phrase = phrases.get(key, "których są Państwo współwłaścicielami,")
             
             short_name = self._get_short_name(o.get('first_name', ''), o.get('last_name', ''))
-            fname = f"Pismo przewodnie {short_name}{addr_suffix}.docx".replace('  ', ' ')
-            fname = re.sub(r'[<>:"/\\|?*]', '', fname)
+            # Nazwa pliku wg schematu z Ustawień; domyślny wariant zachowuje
+            # dotychczasową nazwę "Pismo przewodnie J.Kowalski".
+            fname = cover_letter_filename(
+                self.config,
+                first_name=o.get('first_name', ''),
+                last_name=o.get('last_name', ''),
+                full_name=name_line,
+                parcels=o_nums,
+                address_suffix=addr_suffix,
+                date_str=self.date_edit.text(),
+                location=self.sender_place_edit.text(),
+                precinct=o.get('precinct', ''),
+                municipality=o.get('municipality', ''),
+            )
             out_path = str(Path(out_dir) / fname)
             
             ulice_dz_list = []
@@ -1225,8 +1362,8 @@ class CoverLetterWidget(QWidget):
                     template_path=p['template_path'], output_path=out_path, date_str=p['date_str'], place=p['place'],
                     sender_name=p['sender_name'], sender_street=p['sender_street'], sender_city=p['sender_city'],
                     addressee_salutation='Sz. P.', addressee_name=name_line, addressee_street=street_adr, addressee_city=city_adr,
-                    location=self._location_for_decl(o.get('city', '') or p['location']),
-                    street=self._street_for_decl(final_street_dz),
+                    location=o.get('city', '') or p['location'],
+                    street=final_street_dz,
                     subject=p['subject'],
                     task_construction=p['task_construction'],
                     task_demolition=p['task_demolition'],
@@ -1234,7 +1371,8 @@ class CoverLetterWidget(QWidget):
                     parcel_numbers_demolition=list(set(dem_list)),
                     parcel_numbers=o_nums,
                     ownership_phrase=phrase, tag_map=self.config.get('cover_letter_tag_map'),
-                    unlock_docs=self.config.get("unlock_generated_docs", False)
+                    unlock_docs=self.config.get("unlock_generated_docs", False),
+                    declension_options=self.config,
                 )
                 if ok: 
                     success += 1

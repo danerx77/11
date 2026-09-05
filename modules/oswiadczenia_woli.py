@@ -16,6 +16,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
 
+from utils.output_paths import project_output_dir
+from utils.document_naming import declaration_filename
+from utils.auto_date import initial_date_text
+
 class NoWheelComboBox(QComboBox):
     def wheelEvent(self, e): e.ignore()
 
@@ -144,6 +148,14 @@ class DeclGeneratorWidget(QWidget):
         self.project_num_edit = QLineEdit() 
         proj_form.addRow('Nr projektu (OBI/OBM):', self.project_num_edit)
         self.date_edit = QLineEdit()
+        self.date_edit.setPlaceholderText('np. 20.10.2026')
+        # Dzisiejsza data wstawia się sama — patrz Ustawienia.
+        self.date_edit.setText(initial_date_text(self.config))
+        self.date_edit.setToolTip(
+            'Data z komputera wstawia się sama.\n'
+            'Możesz ją zmienić — wpisana data zostanie zachowana.\n'
+            'Automat włączysz i wyłączysz w Ustawieniach.'
+        )
         proj_form.addRow('Data:', self.date_edit)
         self.place_edit = QLineEdit() 
         proj_form.addRow('Miejscowość złożenia:', self.place_edit)
@@ -185,13 +197,14 @@ class DeclGeneratorWidget(QWidget):
         self.group_combo.setMinimumWidth(180)
         self.group_combo.currentTextChanged.connect(self._on_group_changed)
         group_layout.addWidget(self.group_combo)
-        self.chk_show_only_group = QCheckBox('Pokaż tylko grupę')
+        self.chk_show_only_group = QCheckBox('Pokaż i generuj tylko wybraną grupę')
+        self.chk_show_only_group.setToolTip(
+            'Jedno pole na wszystko: lista pokazuje wyłącznie właścicieli i '
+            'działki z wybranej grupy, a generowanie obejmuje tylko te działki.\n'
+            'Przy „Wszystkie działki” ukrywa działki przypisane do innych grup.'
+        )
         self.chk_show_only_group.stateChanged.connect(self._refresh_owners_table)
         group_layout.addWidget(self.chk_show_only_group)
-        self.chk_exclude_grouped_from_all = QCheckBox('Wszystkie bez działek z grup')
-        self.chk_exclude_grouped_from_all.setToolTip('Gdy wybierzesz "Wszystkie działki", działki użyte w innych grupach nie będą pokazywane.')
-        self.chk_exclude_grouped_from_all.stateChanged.connect(self._refresh_owners_table)
-        group_layout.addWidget(self.chk_exclude_grouped_from_all)
         btn_group_create = QPushButton('➕ Utwórz z ptaszków')
         btn_group_create.clicked.connect(self._create_group_from_checked)
         group_layout.addWidget(btn_group_create)
@@ -213,13 +226,28 @@ class DeclGeneratorWidget(QWidget):
         
         self.table_owners.horizontalHeader().setSectionsMovable(True)
         table_state_decl_hex = self.config.get('table_state_decl', '')
+        restored_table_state = False
         if table_state_decl_hex:
             from PySide6.QtCore import QByteArray
-            self.table_owners.horizontalHeader().restoreState(QByteArray.fromHex(table_state_decl_hex.encode()))
+            restored_table_state = self.table_owners.horizontalHeader().restoreState(
+                QByteArray.fromHex(str(table_state_decl_hex).encode())
+            )
 
         header = self.table_owners.horizontalHeader()
         for col in range(self.table_owners.columnCount()):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+
+        # Zapisane ustawienie nagłówka z wcześniejszej wersji mogło zostawić
+        # część listy właścicieli jako ukrytą lub o szerokości 0. Nie zmieniamy
+        # stylu tabeli ani kolejności użytkownika — tylko przywracamy widoczność.
+        if restored_table_state:
+            default_widths = (60, 95, 85, 105, 250, 150, 240)
+            for col, default_width in enumerate(default_widths):
+                if self.table_owners.isColumnHidden(col):
+                    self.table_owners.setColumnHidden(col, False)
+                if self.table_owners.columnWidth(col) <= 1:
+                    self.table_owners.setColumnWidth(col, default_width)
+
         self.table_owners.setColumnWidth(0, 60)
         self.table_owners.setColumnWidth(1, 95)
         self.table_owners.setColumnWidth(2, 85)
@@ -227,6 +255,10 @@ class DeclGeneratorWidget(QWidget):
         self.table_owners.setColumnWidth(4, 250)
         self.table_owners.setColumnWidth(5, 150)
         self.table_owners.setColumnWidth(6, 240)
+        if restored_table_state:
+            self.config['table_state_decl'] = (
+                self.table_owners.horizontalHeader().saveState().toHex().data().decode()
+            )
         self.table_owners.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
         self.table_owners.horizontalHeader().sectionResized.connect(lambda *args: self.config.update({'table_state_decl': self.table_owners.horizontalHeader().saveState().toHex().data().decode()}))
@@ -306,27 +338,50 @@ class DeclGeneratorWidget(QWidget):
         device_box = QGroupBox('Postać urządzenia elektroenergetycznego')
         device_layout = QFormLayout(device_box)
 
+        device_hint = QLabel(
+            'Wybór z listy od razu wpisuje pełną treść do pola obok. '
+            'Możesz ją potem swobodnie poprawić.'
+        )
+        device_hint.setStyleSheet('color: gray; font-size: 11px;')
+        device_layout.addRow('', device_hint)
+
         h_bud = QHBoxLayout()
         self.device_budowa_combo = NoWheelComboBox()
-        self.device_budowa_combo.currentTextChanged.connect(lambda t: self.device_budowa_edit.setText(t) if t else None)
+        self.device_budowa_combo.setToolTip(
+            'Wybierz gotową postać urządzenia. Treść zostanie natychmiast '
+            'wpisana do pola obok, także przy ponownym wyborze tej samej pozycji.'
+        )
         h_bud.addWidget(self.device_budowa_combo, 1)
         btn_manage_bud = QPushButton('✏ Przykłady')
         btn_manage_bud.clicked.connect(lambda: self._manage_device_examples('budowa'))
         h_bud.addWidget(btn_manage_bud)
         self.device_budowa_edit = QLineEdit()
+        self.device_budowa_edit.setPlaceholderText(
+            'Postać urządzenia dla budowy — wybierz z listy albo wpisz ręcznie'
+        )
         h_bud.addWidget(self.device_budowa_edit, 2)
         device_layout.addRow('Budowa:', h_bud)
 
         h_dem = QHBoxLayout()
         self.device_demontaz_combo = NoWheelComboBox()
-        self.device_demontaz_combo.currentTextChanged.connect(lambda t: self.device_demontaz_edit.setText(t) if t else None)
+        self.device_demontaz_combo.setToolTip(
+            'Wybierz gotową postać urządzenia. Treść zostanie natychmiast '
+            'wpisana do pola obok, także przy ponownym wyborze tej samej pozycji.'
+        )
         h_dem.addWidget(self.device_demontaz_combo, 1)
         btn_manage_dem = QPushButton('✏ Przykłady')
         btn_manage_dem.clicked.connect(lambda: self._manage_device_examples('demontaz'))
         h_dem.addWidget(btn_manage_dem)
         self.device_demontaz_edit = QLineEdit()
+        self.device_demontaz_edit.setPlaceholderText(
+            'Postać urządzenia dla demontażu — wybierz z listy albo wpisz ręcznie'
+        )
         h_dem.addWidget(self.device_demontaz_edit, 2)
         device_layout.addRow('Demontaż:', h_dem)
+
+        # Sygnały podłączamy dopiero teraz, gdy oba pola tekstowe już istnieją.
+        self._bind_example_combo(self.device_budowa_combo, self.device_budowa_edit)
+        self._bind_example_combo(self.device_demontaz_combo, self.device_demontaz_edit)
 
         self._update_device_examples()
         main_v.addWidget(device_box)
@@ -409,13 +464,58 @@ class DeclGeneratorWidget(QWidget):
             self.owners[idx]['nip'] = self.nip_edit.text().strip()
             self.owners_changed.emit(self.owners)
 
+    def _bind_example_combo(self, combo, edit):
+        """Łączy listę przykładów z polem tekstowym.
+
+        Używamy sygnału ``activated``, ponieważ ``currentTextChanged`` nie
+        zgłasza ponownego wyboru tej samej pozycji. Wcześniej powodowało to
+        opisany błąd: po wybraniu z listy pole nie wypełniało się, dopóki
+        użytkownik nie przeklikał innej pozycji.
+        """
+
+        def apply_selection(index: int):
+            if index < 0:
+                return
+            # Wartość bierzemy z danych pozycji, a nie z jej etykiety —
+            # pozycja zachęty („wybierz…”) ma dane puste i nic nie wpisuje.
+            text = str(combo.itemData(index) or "").strip()
+            if not text:
+                return
+            edit.setText(text)
+            # Kursor na końcu, aby od razu można było dopisać szczegóły.
+            edit.setCursorPosition(len(text))
+
+        combo.activated.connect(apply_selection)
+        # Zmiana z klawiatury (strzałki) też ma natychmiast wypełnić pole.
+        combo.currentIndexChanged.connect(
+            lambda index: apply_selection(index) if combo.hasFocus() else None
+        )
+
+    def _refill_example_combo(self, combo, examples, placeholder: str):
+        """Odświeża pozycje listy, zachowując dotychczasowy wybór."""
+        previous = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        # Pozycja zachęty ma puste dane, więc jej wybór nie nadpisuje pola.
+        combo.addItem(placeholder, "")
+        for example in examples or []:
+            combo.addItem(example, example)
+        if previous:
+            index = combo.findText(previous)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def _update_device_examples(self):
-        self.device_budowa_combo.clear()
-        self.device_budowa_combo.addItem('')
-        for ex in self.examples.get('device_types_budowa', []): self.device_budowa_combo.addItem(ex)
-        self.device_demontaz_combo.clear()
-        self.device_demontaz_combo.addItem('')
-        for ex in self.examples.get('device_types_demontaz', []): self.device_demontaz_combo.addItem(ex)
+        self._refill_example_combo(
+            self.device_budowa_combo,
+            self.examples.get('device_types_budowa', []),
+            '— wybierz postać urządzenia (budowa) —',
+        )
+        self._refill_example_combo(
+            self.device_demontaz_combo,
+            self.examples.get('device_types_demontaz', []),
+            '— wybierz postać urządzenia (demontaż) —',
+        )
 
     def _manage_device_examples(self, dev_type: str):
         key = 'device_types_budowa' if dev_type == 'budowa' else 'device_types_demontaz'
@@ -475,14 +575,26 @@ class DeclGeneratorWidget(QWidget):
     def _owner_parcels(self, owner):
         return {str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in owner.get('parcels', [])}
 
+    def _sync_combo_to_text(self, combo, text: str):
+        """Ustawia listę na pozycję odpowiadającą treści pola tekstowego."""
+        combo.blockSignals(True)
+        index = combo.findText(text) if text else -1
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def _set_group_fields(self, group: dict | None):
         """Ustawia pola urządzeń dla wybranej grupy. Dla 'Wszystkie działki' czyści pola."""
+        budowa = (group or {}).get('budowa', '') or ''
+        demontaz = (group or {}).get('demontaz', '') or ''
         if not group:
-            self.device_budowa_edit.clear()
-            self.device_demontaz_edit.clear()
-            return
-        self.device_budowa_edit.setText(group.get('budowa', '') or '')
-        self.device_demontaz_edit.setText(group.get('demontaz', '') or '')
+            budowa = ''
+            demontaz = ''
+        self.device_budowa_edit.setText(budowa)
+        self.device_demontaz_edit.setText(demontaz)
+        # Lista ma pokazywać to samo, co pole tekstowe, aby ponowny wybór
+        # tej samej pozycji nadal działał.
+        self._sync_combo_to_text(self.device_budowa_combo, budowa)
+        self._sync_combo_to_text(self.device_demontaz_combo, demontaz)
 
     def _on_group_changed(self, *_args):
         name = self.group_combo.currentText() if hasattr(self, 'group_combo') else ''
@@ -552,7 +664,9 @@ class DeclGeneratorWidget(QWidget):
         name = self.group_combo.currentText()
         if name == 'Wszystkie działki':
             all_nums = set(self._all_project_parcels())
-            if hasattr(self, 'chk_exclude_grouped_from_all') and self.chk_exclude_grouped_from_all.isChecked():
+            # Przy włączonym filtrze „Wszystkie działki” znaczy: wszystko poza
+            # działkami, które trafiły już do nazwanych grup.
+            if hasattr(self, 'chk_show_only_group') and self.chk_show_only_group.isChecked():
                 used = set()
                 for group in self.parcel_groups.values():
                     used.update(group.get('parcels', []))
@@ -560,6 +674,55 @@ class DeclGeneratorWidget(QWidget):
             return all_nums
         group = self.parcel_groups.get(name, {})
         return set(group.get('parcels', []))
+
+    def _group_parcel_filter(self):
+        """Zbiór numerów działek, do których ograniczamy widok i generowanie.
+
+        Zwraca ``None``, gdy filtr grupy jest wyłączony — wtedy nic nie
+        ograniczamy.
+        """
+        if not hasattr(self, 'chk_show_only_group'):
+            return None
+        if not self.chk_show_only_group.isChecked():
+            return None
+        return self._selected_group_parcels()
+
+    @staticmethod
+    def _parcel_number(parcel):
+        return str(parcel.get('number', parcel)) if isinstance(parcel, dict) else str(parcel)
+
+    def _filter_parcels_to_group(self, parcels):
+        """Zostawia tylko działki należące do wybranej grupy."""
+        allowed = self._group_parcel_filter()
+        if allowed is None:
+            return list(parcels or [])
+        return [p for p in (parcels or []) if self._parcel_number(p) in allowed]
+
+    def _group_for_parcels(self, parcels):
+        """Znajduje grupę, do której należą działki właściciela."""
+        numbers = {self._parcel_number(p) for p in (parcels or [])}
+        if not numbers:
+            return None
+        best_group, best_hits = None, 0
+        for group in self.parcel_groups.values():
+            hits = len(numbers & set(group.get('parcels', [])))
+            if hits > best_hits:
+                best_group, best_hits = group, hits
+        return best_group
+
+    def _device_descriptions_for(self, parcels, fallback_budowa, fallback_demontaz):
+        """Opis urządzeń: najpierw z grupy działek, potem z formularza.
+
+        Dzięki temu seryjne generowanie wpisuje postać urządzeń ustawioną
+        przy grupie, a nie tę, która akurat została w formularzu.
+        """
+        group = self._group_for_parcels(parcels)
+        if not group:
+            return fallback_budowa, fallback_demontaz
+        return (
+            (group.get('budowa') or '').strip() or fallback_budowa,
+            (group.get('demontaz') or '').strip() or fallback_demontaz,
+        )
 
     def _all_project_parcels(self):
         nums = set()
@@ -735,7 +898,11 @@ class DeclGeneratorWidget(QWidget):
                 
             for specific_addr in addresses:
                 cats = set()
-                parcels = o.get('parcels', [])
+                # Przy włączonym filtrze grupy pokazujemy wyłącznie działki
+                # z wybranej grupy — także w kolumnie „Działki”.
+                parcels = self._filter_parcels_to_group(o.get('parcels', []))
+                if not parcels and self._group_parcel_filter() is not None:
+                    continue
                 for p_info in parcels:
                     num = p_info['number'] if isinstance(p_info, dict) else str(p_info)
                     for known_p in self.parcels:
@@ -765,11 +932,6 @@ class DeclGeneratorWidget(QWidget):
                     wanted_owner_keys = self._selected_group_owner_keys()
                     if wanted_owner_keys:
                         if self._owner_group_key(o, specific_addr) not in wanted_owner_keys:
-                            continue
-                    else:
-                        wanted_group = self._selected_group_parcels()
-                        owner_nums = {str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in parcels}
-                        if wanted_group and not (owner_nums & wanted_group):
                             continue
 
                 if filter_text:
@@ -946,22 +1108,51 @@ class DeclGeneratorWidget(QWidget):
             self.kw_demontaz_edit.setText(', '.join(kw_dem))
 
     def _browse_template(self, tmpl_type: str):
-        path, _ = QFileDialog.getOpenFileName(self, f'Wybierz szablon ({tmpl_type})', '', 'Word (*.docx)')
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        line_edit = (
+            self.template_budowa_edit
+            if tmpl_type == 'budowa'
+            else self.template_demontaz_edit
+        )
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key='path_przyklady',
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f'Wybierz szablon ({tmpl_type})',
+            str(start_dir),
+            'Word (*.docx)',
+        )
         if path:
-            if tmpl_type == 'budowa': self.template_budowa_edit.setText(path)
-            else: self.template_demontaz_edit.setText(path)
+            line_edit.setText(path)
 
     def _set_default_template(self):
-        import sys
-        from utils.templates import find_latest_file
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            find_latest_file,
+            resolve_template_start_directory,
+        )
 
-        if getattr(sys, 'frozen', False):
-            przyk_path = str(Path(sys.executable).parent.resolve() / 'przykłady')
-        else:
-            przyk_path = str(Path(__file__).parent.parent.parent / 'przykłady')
+        przyk_path = resolve_template_start_directory(
+            self.config,
+            config_key='path_przyklady',
+            folder_names=EXAMPLES_FOLDER_NAMES,
+        )
 
-        budowa_tmpl = self.config.get('decl_template_budowa', '')
-        if not budowa_tmpl or not Path(budowa_tmpl).exists():
+        # Zachowaj działający plik wybrany przed chwilą w tym module. Dzięki
+        # temu doładowanie drugiego szablonu nie nadpisuje wyboru użytkownika.
+        budowa_tmpl = (
+            self.template_budowa_edit.text().strip()
+            or self.config.get('decl_template_budowa', '')
+        )
+        if not budowa_tmpl or not Path(budowa_tmpl).is_file():
             latest = find_latest_file(
                 przyk_path,
                 ["Oświadczenie woli budowa kabla", "Oświadczenie woli budowa",
@@ -970,8 +1161,11 @@ class DeclGeneratorWidget(QWidget):
             )
             budowa_tmpl = str(latest) if latest else ""
 
-        demontaz_tmpl = self.config.get('decl_template_demontaz', '')
-        if not demontaz_tmpl or not Path(demontaz_tmpl).exists():
+        demontaz_tmpl = (
+            self.template_demontaz_edit.text().strip()
+            or self.config.get('decl_template_demontaz', '')
+        )
+        if not demontaz_tmpl or not Path(demontaz_tmpl).is_file():
             latest = find_latest_file(
                 przyk_path,
                 ["Oświadczenie woli demontaż linii", "Oświadczenie woli demontaz linii",
@@ -982,6 +1176,17 @@ class DeclGeneratorWidget(QWidget):
 
         self.template_budowa_edit.setText(budowa_tmpl)
         self.template_demontaz_edit.setText(demontaz_tmpl)
+
+    def _resolve_output_dir(self, target: str, title: str) -> str:
+        """Folder docelowy: automatycznie w projekcie albo wskazany ręcznie."""
+        auto_dir = project_output_dir(
+            self.config,
+            target,
+            self.active_project_path or self.config.get('last_project_path', ''),
+        )
+        if auto_dir is not None:
+            return str(auto_dir)
+        return QFileDialog.getExistingDirectory(self, title) or ''
 
     def _get_params(self) -> dict:
         date_str = self.date_edit.text().strip()
@@ -1019,6 +1224,8 @@ class DeclGeneratorWidget(QWidget):
         }
 
     def _preview(self):
+        # Podgląd prezentuje dokładnie dane źródłowe. Odmiana jest wykonywana
+        # wyłącznie w generatorze DOCX podczas zastępowania odpowiednich tagów.
         p = self._get_params()
         preview = (
             f"=== OŚWIADCZENIE WOLI – {p['declaration_type'].upper()} ===\n"
@@ -1027,6 +1234,7 @@ class DeclGeneratorWidget(QWidget):
             f"Właściciel: {p['owner_name']}\n"
             f"Ulica: {p['street']}\n"
             f"Miejscowość: {p['location']}\n"
+            f"Powiat: {p['county']}\n"
             f"Obręb (Tag): {p['precinct']}\n"
             f"Działki (Budowa): {p['parcel_numbers_budowa']}\n"
             f"Działki (Demontaż): {p['parcel_numbers_demontaz']}\n"
@@ -1046,15 +1254,42 @@ class DeclGeneratorWidget(QWidget):
                     reply = QMessageBox.question(self, "Uwaga", "Właściciel ma braki w adresie lub jest oznaczony jako Zmarły/Instytucja. Chcesz wymusić generowanie?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     if reply == QMessageBox.StandardButton.No: return
 
-        out_dir = QFileDialog.getExistingDirectory(self, 'Folder wyjściowy')
-        if not out_dir: return
-
         p = self._get_params()
-        b_tmpl = self.config.get('decl_template_budowa', '')
-        d_tmpl = self.config.get('decl_template_demontaz', '')
+        if (
+            not p['template_path_budowa']
+            or not Path(p['template_path_budowa']).is_file()
+            or not p['template_path_demontaz']
+            or not Path(p['template_path_demontaz']).is_file()
+        ):
+            self._set_default_template()
+            p = self._get_params()
 
         t_idx = self.type_combo.currentIndex()
         types = ['budowa', 'demontaz'] if t_idx == 2 else (['budowa'] if t_idx == 0 else ['demontaz'])
+        required_types = [
+            t for t in types
+            if (t == 'budowa' and self.parcels_budowa_edit.text().strip())
+            or (t == 'demontaz' and self.parcels_demontaz_edit.text().strip())
+        ]
+        missing_templates = [
+            t for t in required_types
+            if not Path(
+                p['template_path_budowa'] if t == 'budowa' else p['template_path_demontaz']
+            ).is_file()
+        ]
+        if missing_templates:
+            readable = ', '.join('Budowa' if t == 'budowa' else 'Demontaż' for t in missing_templates)
+            QMessageBox.warning(
+                self,
+                'Brak szablonu',
+                f'Wybierz poprawny szablon Word dla: {readable}.',
+            )
+            return
+
+        b_tmpl = p['template_path_budowa']
+        d_tmpl = p['template_path_demontaz']
+        out_dir = self._resolve_output_dir('declarations', 'Folder wyjściowy')
+        if not out_dir: return
 
         for t in types:
             if t == 'budowa' and not self.parcels_budowa_edit.text().strip(): continue
@@ -1077,7 +1312,31 @@ class DeclGeneratorWidget(QWidget):
             ln = parts[-1] if parts else ""
             short = self._get_short_name(fn, ln)
             
-            fname = f"Oświadczenie woli {t} {short}.docx"
+            manual_parcels = [
+                value.strip()
+                for value in re.split(
+                    r'[,;]+',
+                    (
+                        self.parcels_budowa_edit.text()
+                        if t == 'budowa'
+                        else self.parcels_demontaz_edit.text()
+                    ),
+                )
+                if value.strip()
+            ]
+            fname = declaration_filename(
+                self.config,
+                declaration_type=t,
+                first_name=fn,
+                last_name=ln,
+                full_name=self.owner_name_edit.text(),
+                parcels=manual_parcels,
+                project_number=self.project_num_edit.text(),
+                date_str=self.date_edit.text(),
+                location=self.place_edit.text(),
+                precinct=self.precinct_edit.text() if hasattr(self, 'precinct_edit') else '',
+                municipality=self.municipality_edit.text() if hasattr(self, 'municipality_edit') else '',
+            )
             out_path = str(Path(out_dir) / fname)
             
             from utils.docx_utils import generate_declaration
@@ -1090,10 +1349,10 @@ class DeclGeneratorWidget(QWidget):
                 owner_name=self.owner_name_edit.text(),
                 pesel=self.pesel_edit.text(),
                 nip=self.nip_edit.text(),
-                location=self._location_for_decl(self.location_edit.text()),
-                street=self._street_for_decl(self.street_edit.text()),
+                location=self.location_edit.text(),
+                street=self.street_edit.text(),
                 voivodeship=self.voivodeship_edit.text(),
-                county=self._county_for_powiat(self.county_edit.text(), self.location_edit.text()),
+                county=self.county_edit.text(),
                 municipality=self.municipality_edit.text(),
                 parcel_numbers_budowa=self.parcels_budowa_edit.text(),
                 parcel_numbers_demontaz=self.parcels_demontaz_edit.text(),
@@ -1107,7 +1366,8 @@ class DeclGeneratorWidget(QWidget):
                 device_description=p['device_description_budowa'] if t == 'budowa' else p['device_description_demontaz'],
                 declaration_type=t,
                 tag_map=self.config.get("declaration_tag_map"),
-                unlock_docs=self.config.get("unlock_generated_docs", False)
+                unlock_docs=self.config.get("unlock_generated_docs", False),
+                declension_options=self.config,
             )
             
         if sel:
@@ -1123,53 +1383,6 @@ class DeclGeneratorWidget(QWidget):
             except: pass
 
         QMessageBox.information(self, "Sukces", "Wygenerowano ręczne oświadczenie.")
-
-    def _city_locative_pl(self, city: str) -> str:
-        city = str(city or '').strip()
-        if not city:
-            return city
-        # ręczne wyjątki i proste reguły – można później rozbudować w ustawieniach
-        exceptions = {
-            'Gdynia': 'Gdyni', 'Warszawa': 'Warszawie', 'Łódź': 'Łodzi', 'Lodz': 'Łodzi',
-            'Gdańsk': 'Gdańsku', 'Gdansk': 'Gdańsku', 'Kraków': 'Krakowie', 'Krakow': 'Krakowie',
-            'Poznań': 'Poznaniu', 'Poznan': 'Poznaniu', 'Wrocław': 'Wrocławiu', 'Wroclaw': 'Wrocławiu',
-            'Sopot': 'Sopocie', 'Rumia': 'Rumi', 'Reda': 'Redzie'
-        }
-        if city in exceptions:
-            return exceptions[city]
-        if city.endswith('ia'):
-            return city[:-2] + 'i'
-        if city.endswith('a'):
-            return city[:-1] + 'ie'
-        if city.endswith(('k', 'g', 'ch')):
-            return city + 'u'
-        if city.endswith('ń'):
-            return city[:-1] + 'niu'
-        return city
-
-    def _location_for_decl(self, city: str) -> str:
-        return self._city_locative_pl(city) if self.config.get('decl_location_locative', False) else str(city or '')
-
-    def _street_for_decl(self, street: str) -> str:
-        if not self.config.get('decl_decline_streets', False):
-            return str(street or '')
-        from utils.polish_declension import decline_street
-        # Odmiana każdej ulicy z listy (rozdzielonej przecinkami)
-        parts = [p.strip() for p in str(street or '').split(',') if p.strip()]
-        if not parts:
-            return str(street or '')
-        return ', '.join(decline_street(p) for p in parts)
-
-    def _county_for_powiat(self, county: str, location: str = '') -> str:
-        """Zamienia miejscowość/powiat na właściwą nazwę powiatu (ZAMIENIA, nie odmienia)."""
-        if not self.config.get('decl_powiat_zamiana', False):
-            return str(county or '')
-        from utils.polish_declension import city_to_powiat
-        source = str(county or '').strip() or str(location or '').strip()
-        parts = [p.strip() for p in source.split(',') if p.strip()]
-        if not parts:
-            return str(county or '')
-        return ', '.join(city_to_powiat(p) for p in parts)
 
     def _get_short_name(self, first_name: str, last_name: str) -> str:
         import re
@@ -1200,58 +1413,125 @@ class DeclGeneratorWidget(QWidget):
         self._generate_batch(targets)
 
     def _generate_all(self):
-        if not self.owners: return QMessageBox.warning(self, 'Brak właścicieli', 'Wczytaj właścicieli na zakładce Wypisy.')
-        
-        targets = []
+        if not self.owners:
+            return QMessageBox.warning(
+                self,
+                'Brak właścicieli',
+                'Wczytaj właścicieli na zakładce Wypisy.',
+            )
+
+        from utils.generation_targets import select_address_targets
+
         hide_generated = self.chk_hide_generated.isChecked()
         filter_text = self.search_owners_edit.text().strip().lower()
-        
+        requirements_by_owner = {}
+
         for o in self.owners:
             cats = set()
-            for p_info in o.get('parcels', []):
+            for p_info in self._filter_parcels_to_group(o.get('parcels', [])):
                 num = p_info['number'] if isinstance(p_info, dict) else str(p_info)
                 for known_p in self.parcels:
-                    if known_p.get('number') == num:
-                        c = known_p.get('category', '')
-                        if 'Demonta' in c or 'Demontaż' in c: cats.add('demontaz')
-                        if 'Budowa' in c: cats.add('budowa')
-                        if 'Pe' in c or 'Przyłącze' in c or 'Przylacze' in c: cats.add('budowa')
-                        
-            req_budowa = 'budowa' in cats
-            req_demontaz = 'demontaz' in cats
-            got_budowa = self._decl_done(o, specific_addr, 'budowa')
-            got_demontaz = self._decl_done(o, specific_addr, 'demontaz')
-            
-            is_complete = True
-            if req_budowa and not got_budowa: is_complete = False
-            if req_demontaz and not got_demontaz: is_complete = False
+                    if known_p.get('number') != num:
+                        continue
+                    c = known_p.get('category', '')
+                    if 'Demonta' in c or 'Demontaż' in c:
+                        cats.add('demontaz')
+                    if 'Budowa' in c:
+                        cats.add('budowa')
+                    if 'Pe' in c or 'Przyłącze' in c or 'Przylacze' in c:
+                        cats.add('budowa')
+            requirements_by_owner[id(o)] = (
+                'budowa' in cats,
+                'demontaz' in cats,
+            )
 
-            if hide_generated and is_complete: continue
-            
-            addresses = [o.get('address', '')]
-            if o.get('address_2'):
-                addresses.append(o.get('address_2'))
-                
-            for addr in addresses:
-                if filter_text:
-                    fmt = self.config.get('couple_format_decl', 0)
-                    display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
-                    parcels_str = ' '.join([str(p.get('number', p)) if isinstance(p, dict) else str(p) for p in o.get('parcels', [])])
-                    search_target = f"{display_name} {addr} {parcels_str}".lower()
-                    if filter_text not in search_target: continue
+        def is_complete(owner, specific_addr):
+            req_budowa, req_demontaz = requirements_by_owner[id(owner)]
+            return (
+                (not req_budowa or self._decl_done(owner, specific_addr, 'budowa'))
+                and (
+                    not req_demontaz
+                    or self._decl_done(owner, specific_addr, 'demontaz')
+                )
+            )
 
-                targets.append((o, addr))
-                
+        def matches_filter(owner, specific_addr):
+            fmt = self.config.get('couple_format_decl', 0)
+            display_name = (
+                owner.get('name_plural', owner.get('full_name', ''))
+                if fmt == 0
+                else owner.get('name_separate', owner.get('full_name', ''))
+            )
+            parcels_str = ' '.join(
+                str(parcel.get('number', parcel))
+                if isinstance(parcel, dict)
+                else str(parcel)
+                for parcel in owner.get('parcels', [])
+            )
+            search_target = f"{display_name} {specific_addr} {parcels_str}".lower()
+            return filter_text in search_target
+
+        # Gdy filtr grupy jest włączony, seryjne generowanie obejmuje tylko
+        # właścicieli mających działki w tej grupie.
+        owners_for_generation = self.owners
+        if self._group_parcel_filter() is not None:
+            owners_for_generation = [
+                owner for owner in self.owners
+                if self._filter_parcels_to_group(owner.get('parcels', []))
+            ]
+            if not owners_for_generation:
+                return QMessageBox.information(
+                    self,
+                    'Pusta grupa',
+                    'Żaden właściciel nie ma działek z wybranej grupy.\n'
+                    'Zmień grupę albo wyłącz „Pokaż i generuj tylko wybraną grupę”.',
+                )
+
+        targets = select_address_targets(
+            owners_for_generation,
+            hide_done=hide_generated,
+            is_done=is_complete,
+            matches_filter=matches_filter if filter_text else None,
+        )
+        if not targets:
+            return QMessageBox.information(
+                self,
+                'Brak dokumentów do wygenerowania',
+                'Żaden adres nie spełnia obecnego filtra albo wszystkie dokumenty są już wygenerowane.',
+            )
         self._generate_batch(targets)
 
     def _generate_batch(self, targets):
-        out_dir = QFileDialog.getExistingDirectory(self, 'Wybierz folder wyjściowy')
-        if not out_dir: return
-        
+        if not targets:
+            return QMessageBox.warning(
+                self,
+                'Brak',
+                'Nie wybrano żadnego adresu do wygenerowania.',
+            )
+
         p = self._get_params()
-        if not p['template_path_budowa'] or not p['template_path_demontaz']:
+        if (
+            not p['template_path_budowa']
+            or not Path(p['template_path_budowa']).is_file()
+            or not p['template_path_demontaz']
+            or not Path(p['template_path_demontaz']).is_file()
+        ):
             self._set_default_template()
             p = self._get_params()
+
+        if (
+            not Path(p['template_path_budowa']).is_file()
+            and not Path(p['template_path_demontaz']).is_file()
+        ):
+            return QMessageBox.warning(
+                self,
+                'Brak szablonów',
+                'Wybierz co najmniej jeden poprawny szablon Word (Budowa lub Demontaż).',
+            )
+
+        out_dir = self._resolve_output_dir('declarations', 'Wybierz folder wyjściowy')
+        if not out_dir:
+            return
 
         from utils.docx_utils import generate_declaration
         success, errors = 0, []
@@ -1264,7 +1544,11 @@ class DeclGeneratorWidget(QWidget):
                 skipped_info.append(f"{o.get('full_name', 'Nieznany')} (brak adresu/kodu, zmarły lub instytucja)")
                 continue
                 
-            parcels = o.get('parcels', [])
+            # Filtr grupy obowiązuje też przy generowaniu: dokument powstaje
+            # tylko dla działek z wybranej grupy.
+            parcels = self._filter_parcels_to_group(o.get('parcels', []))
+            if not parcels and self._group_parcel_filter() is not None:
+                continue
             
             cats = set()
             b_nums, d_nums = [], []
@@ -1339,15 +1623,37 @@ class DeclGeneratorWidget(QWidget):
                     precinct_str = precinct_str.upper()
 
                 t_tmpl = p['template_path_budowa'] if t == 'budowa' else p['template_path_demontaz']
-                dev_desc = p['device_description_budowa'] if t == 'budowa' else p['device_description_demontaz']
-
-                if not Path(t_tmpl).exists(): continue
-
-                fname = f"Oświadczenie woli {t} {short_name}{addr_suffix}.docx".replace('  ', ' ')
-                fname = re.sub(r'[<>:"/\\|?*]', '', fname)
-                out_path = str(Path(out_dir) / fname)
-                
+                # Postać urządzeń ustawiona przy grupie ma pierwszeństwo przed
+                # tym, co akurat zostało w formularzu.
+                desc_bud, desc_dem = self._device_descriptions_for(
+                    parcels,
+                    p['device_description_budowa'],
+                    p['device_description_demontaz'],
+                )
+                dev_desc = desc_bud if t == 'budowa' else desc_dem
                 display_name = o.get('name_plural', o.get('full_name', '')) if fmt == 0 else o.get('name_separate', o.get('full_name', ''))
+
+                if not t_tmpl or not Path(t_tmpl).is_file():
+                    errors.append(f"{display_name} ({t}: brak poprawnego szablonu)")
+                    continue
+
+                # Nazwa pliku powstaje wg schematu wybranego w Ustawieniach.
+                # Domyślny schemat odtwarza dotychczasową nazwę bez zmian.
+                fname = declaration_filename(
+                    self.config,
+                    declaration_type=t,
+                    first_name=o.get('first_name', ''),
+                    last_name=o.get('last_name', ''),
+                    full_name=display_name,
+                    parcels=sorted(current_valid_nums),
+                    address_suffix=addr_suffix,
+                    project_number=p.get('project_number', ''),
+                    date_str=p.get('date_str', ''),
+                    location=p.get('place', ''),
+                    precinct=precinct_str,
+                    municipality=m_str,
+                )
+                out_path = str(Path(out_dir) / fname)
                 
                 street_field = ", ".join(street_dz_list) if street_dz_list else p['street']
                 
@@ -1360,10 +1666,10 @@ class DeclGeneratorWidget(QWidget):
                     owner_name=display_name,
                     pesel=o.get('pesel') or '',
                     nip=o.get('nip') or '',
-                    location=self._location_for_decl(o.get('city', '') or p['location']),
-                    street=self._street_for_decl(street_field),
+                    location=o.get('city', '') or p['location'],
+                    street=street_field,
                     voivodeship=v_str,
-                    county=self._county_for_powiat(c_str, o.get('city', '') or p['location']),
+                    county=c_str,
                     municipality=m_str,
                     parcel_numbers_budowa=b_str,
                     parcel_numbers_demontaz=d_str,
@@ -1378,7 +1684,8 @@ class DeclGeneratorWidget(QWidget):
                     device_description=dev_desc,
                     declaration_type=t,
                     tag_map=self.config.get("declaration_tag_map"),
-                    unlock_docs=self.config.get("unlock_generated_docs", False)
+                    unlock_docs=self.config.get("unlock_generated_docs", False),
+                    declension_options=self.config,
                 )
                 if ok: 
                     success += 1

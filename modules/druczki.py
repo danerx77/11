@@ -6,6 +6,12 @@ import os
 import shutil
 import sys
 from pathlib import Path
+
+from utils.output_paths import project_output_dir
+from utils.global_settings import (
+    load_global_druczek_profile,
+    save_global_druczek_profile,
+)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QMessageBox, QFileDialog, QHeaderView, QAbstractItemView,
@@ -51,7 +57,11 @@ class DruczekSettingsDialog(QDialog):
         layout = QVBoxLayout(left_panel)
         layout.setContentsMargins(0, 0, 10, 0)
         
-        info = QLabel("<b>Tryb Zaawansowany:</b> Ustal szerokość i wysokość każdego pola, aby tekst się zmieścił.")
+        info = QLabel(
+            "<b>Tryb Zaawansowany:</b> Ustal szerokość i wysokość każdego "
+            "pola, aby tekst się zmieścił.<br>Po kliknięciu OK pozycje i "
+            "czcionki są zapisywane globalnie w <b>dane/druczek_profile.json</b>."
+        )
         info.setStyleSheet("color: #2b5797; padding-bottom: 5px; font-size: 13px;")
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -106,7 +116,7 @@ class DruczekSettingsDialog(QDialog):
         layout.addWidget(btn_box)
         
         self.scroll_area = QScrollArea()
-        self.scroll_area.setStyleSheet("QScrollArea { border: 2px dashed #a4b0be; background: #e0e0e0; }")
+        self.scroll_area.setObjectName("preview_area")
         self.lbl_preview = QLabel("Generowanie podglądu...")
         self.lbl_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.scroll_area.setWidget(self.lbl_preview)
@@ -138,10 +148,7 @@ class DruczekSettingsDialog(QDialog):
 
     def _build_field_group(self, title, pfx):
         gb = QGroupBox(title)
-        gb.setStyleSheet("""
-            QGroupBox { font-weight: bold; border: 1px solid #d1d8e0; border-radius: 5px; margin-top: 10px; padding-top: 12px; background: #f8f9fa; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #3b3b98; }
-        """)
+        gb.setObjectName("druczki_field_group")
         ly = QFormLayout(gb)
         ly.addRow("Pozycja (X, Y):", self._row_widgets(self._mk_w(f'{pfx}_x', 0, 1000), self._mk_w(f'{pfx}_y', 0, 1000)))
         ly.addRow("Rozmiar (Szer, Wys):", self._row_widgets(self._mk_w(f'{pfx}_w', 10, 500), self._mk_w(f'{pfx}_h', 10, 200)))
@@ -176,6 +183,12 @@ class DruczekTabWidget(QWidget):
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self.config = config
+        # Profil pozycji i czcionek jest wspólny dla wszystkich projektów.
+        # Odczyt pliku obsługuje także profile zapisane przez wcześniejsze
+        # wersje programu.
+        saved_profile = load_global_druczek_profile()
+        if saved_profile:
+            self.config['druczek_profile'] = saved_profile
         self.active_project_path = None
         self.shipments_c5 = []
         self._build_ui()
@@ -455,15 +468,14 @@ class DruczekTabWidget(QWidget):
             return QMessageBox.warning(self, "Błąd", "Wczytaj wpierw PDF z folderu lub dysku, by użyć edytora.")
             
         dialog = DruczekSettingsDialog(self, self.config, str(tmpl))
-        if dialog.exec() == QDialog.DialogCode.Accepted: 
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.config['druczek_profile'] = dialog.get_profile()
-            try:
-                data_dir = Path(sys.executable).parent.resolve() / 'dane' if getattr(sys, 'frozen', False) else Path(__file__).parent.parent.resolve() / 'dane'
-                data_dir.mkdir(parents=True, exist_ok=True)
-                with open(data_dir / 'druczek_profile.json', 'w', encoding='utf-8') as f:
-                    json.dump(self.config['druczek_profile'], f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+            if not save_global_druczek_profile(self.config['druczek_profile']):
+                QMessageBox.warning(
+                    self,
+                    "Nie zapisano profilu",
+                    "Nie udało się zapisać ustawień w dane/druczek_profile.json.",
+                )
             self._refresh_template_path()
 
     def _load_c5_shipments(self):
@@ -595,7 +607,11 @@ class DruczekTabWidget(QWidget):
         padded_shipments = [{}] * used_slots + real_shipments
         
         default_name = f"Wydruk_{Path(tmpl_path).name}"
-        out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz gotowy PDF do druku jako:', default_name, 'PDF (*.pdf)')
+        auto_dir = project_output_dir(self.config, 'druczki', self.active_project_path)
+        if auto_dir is not None:
+            out_path = str(auto_dir / default_name)
+        else:
+            out_path, _ = QFileDialog.getSaveFileName(self, 'Zapisz gotowy PDF do druku jako:', default_name, 'PDF (*.pdf)')
         if not out_path: return
         
         sender_data = self.config.get('sender', {'name': '', 'street': '', 'city': ''})
@@ -607,6 +623,14 @@ class DruczekTabWidget(QWidget):
             if os.path.exists(out_path):
                 os.remove(out_path)
             shutil.move(temp_out_file, out_path)
+
+            # Gotowy druczek ma być normalnym, edytowalnym plikiem —
+            # bez atrybutu tylko-do-odczytu odziedziczonego po szablonie.
+            try:
+                os.chmod(out_path, 0o644)
+            except Exception:
+                pass
+
             
             new_used_count = used_slots + len(real_shipments)
             self._save_skips(tmpl_path, new_used_count)

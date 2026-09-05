@@ -1,5 +1,5 @@
 """
-main.py – Główny punkt wejściowy aplikacji Pysilde 6.
+main.py – Główny punkt wejściowy aplikacji EnergoDok.
 
 Wersja z dwurzędowym paskiem modułów. Zakładki można ręcznie
 przeciągać między pozycjami, a ich kolejność jest zapisywana w konfiguracji.
@@ -9,8 +9,8 @@ import json
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -41,6 +41,62 @@ def get_app_dir() -> Path:
 app_dir = get_app_dir()
 
 
+def _bundled_asset_candidates(folder_name: str) -> list[Path]:
+    """Zwraca miejsca danych w wydaniach PyInstaller 5 i 6."""
+    exe_dir = Path(sys.executable).parent
+    meipass = Path(getattr(sys, "_MEIPASS", exe_dir))
+    return [
+        exe_dir / folder_name,
+        meipass / folder_name,
+        # PyInstaller 6 w trybie --onedir często trzyma dane w _internal.
+        exe_dir / "_internal" / folder_name,
+    ]
+
+
+# Nazwa programu w jednym miejscu — pasek okna, ikona, plik EXE.
+APP_NAME = "EnergoDok"
+APP_SLUG = "EnergoDok"
+
+APP_ICON_NAME = f"{APP_SLUG.lower()}.ico"
+APP_ICON_PNG_NAME = f"{APP_SLUG.lower()}.png"
+# Starsze wydania nosiły inną nazwę — ikona z nich nadal się wczyta.
+LEGACY_ICON_NAMES = ("pysilde6.ico", "pysilde6.png")
+
+
+def app_icon_path() -> Path | None:
+    """Znajduje plik ikony programu w repozytorium i w wydaniu PyInstaller."""
+    candidates: list[Path] = [
+        app_dir / "assets" / APP_ICON_NAME,
+        app_dir / "assets" / APP_ICON_PNG_NAME,
+        app_dir / APP_ICON_NAME,
+    ]
+    for folder in _bundled_asset_candidates("assets"):
+        candidates.append(folder / APP_ICON_NAME)
+        candidates.append(folder / APP_ICON_PNG_NAME)
+    for legacy in LEGACY_ICON_NAMES:
+        candidates.append(app_dir / "assets" / legacy)
+        for folder in _bundled_asset_candidates("assets"):
+            candidates.append(folder / legacy)
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def load_app_icon() -> QIcon:
+    """Zwraca ikonę programu (pasek zadań, okno, plik EXE)."""
+    path = app_icon_path()
+    if path is not None:
+        icon = QIcon(str(path))
+        if not icon.isNull():
+            return icon
+    # Gdy pliku zabraknie, zwracamy pustą ikonę — Windows użyje domyślnej.
+    return QIcon()
+
+
 def setup_playwright_browsers() -> None:
     """Ustawia ścieżkę do przeglądarek Playwright po zbudowaniu PyInstallerem.
 
@@ -53,23 +109,35 @@ def setup_playwright_browsers() -> None:
     if not getattr(sys, "frozen", False):
         return
 
-    candidates = []
-    exe_dir = Path(sys.executable).parent
-    candidates.append(exe_dir / "ms-playwright")
-
-    meipass = Path(getattr(sys, "_MEIPASS", exe_dir))
-    candidates.append(meipass / "ms-playwright")
-
-    # PyInstaller 6 w trybie --onedir często trzyma dane w folderze _internal.
-    candidates.append(exe_dir / "_internal" / "ms-playwright")
-
-    for path in candidates:
+    for path in _bundled_asset_candidates("ms-playwright"):
         if path.exists():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(path)
             break
 
 
+def setup_easyocr_models() -> None:
+    """Wskazuje dołączone modele EasyOCR, gdy pełne wydanie je zawiera.
+
+    EasyOCR bez wskazanego katalogu szuka modeli w profilu użytkownika i przy
+    pierwszym OCR próbuje je pobrać. Wydanie z build_windows.ps1 dołącza cache
+    modeli jako easyocr-data/model, dlatego może działać również offline. Nie
+    ustawiamy EASYOCR_MODULE_PATH: EasyOCR zachowuje wtedy zapisywalny katalog
+    user_network w profilu użytkownika, nawet gdy EXE jest w Program Files.
+    """
+    import os
+
+    if not getattr(sys, "frozen", False):
+        return
+
+    for path in _bundled_asset_candidates("easyocr-data"):
+        model_path = path / "model"
+        if model_path.is_dir():
+            os.environ["ENERGODOK_EASYOCR_MODEL_DIR"] = str(model_path)
+            break
+
+
 setup_playwright_browsers()
+setup_easyocr_models()
 
 if str(app_dir) not in sys.path:
     sys.path.insert(0, str(app_dir))
@@ -78,6 +146,7 @@ if str(app_dir) not in sys.path:
 from modules.projekty import ProjectManagerWidget
 from modules.status import DashboardTabWidget
 from modules.dzialki import ParcelListWidget
+from modules.sortowanie_dzialek import ParcelSortingWidget
 from modules.wypisy import OwnersListWidget
 from modules.oswiadczenia_woli import DeclGeneratorWidget
 from modules.pisma_przewodnie import CoverLetterWidget
@@ -90,8 +159,15 @@ from modules.drukuj import PrintManagerWidget
 from modules.tytuly_prawne import LegalTitlesWidget
 from modules.wydziel_pdf import ExtractPdfWidget
 from modules.statystyki_dzialek import ParcelOwnersStatsWidget
+from modules.wskaznik import ParcelIndicatorWidget
 from modules.kw import KWDownloaderWidget
+from modules.kw_2 import KW2ManualWidget
 from modules.krs import KrsDownloaderWidget
+from utils.global_settings import (
+    load_global_druczek_profile,
+    load_global_envelope_preferences,
+    load_global_stamp_settings,
+)
 
 
 class NoComboWheelFilter(QObject):
@@ -103,13 +179,32 @@ class NoComboWheelFilter(QObject):
         return super().eventFilter(obj, event)
 
 
-TAB_MIME_TYPE = "application/x-pysilde-module-tab"
+TAB_MIME_TYPE = "application/x-energodok-module-tab"
+KW2_TAB_NAME = "📖 KW2"
+# Starsze nazwy karty. Dzięki temu zapisana kolejność modułów nie gubi się po
+# powrocie z nazwy "eKW" do "KW2".
+LEGACY_KW2_TAB_NAMES = {
+    "eKW": KW2_TAB_NAME,
+    "KW2": KW2_TAB_NAME,
+    "📖 KW 2 — ręcznie": KW2_TAB_NAME,
+    "📖 KW 2 — ręczne przeglądanie": KW2_TAB_NAME,
+    "KW 2": KW2_TAB_NAME,
+}
+
+# Zgodność wstecz dla kodu, który mógł importować starą nazwę stałej.
+EKW_TAB_NAME = KW2_TAB_NAME
+LEGACY_EKW_TAB_NAMES = LEGACY_KW2_TAB_NAMES
+
+
+def tab_name_matches_saved_name(current_name: str, saved_name: str) -> bool:
+    """Rozpoznaje kartę zapisaną pod poprzednią nazwą (np. "eKW" -> "KW2")."""
+    return current_name == saved_name or LEGACY_KW2_TAB_NAMES.get(saved_name) == current_name
 
 
 class DraggableTabButton(QToolButton):
     """Przycisk modułu obsługujący rozpoczęcie przeciągania."""
 
-    def __init__(self, navigator, text: str, parent=None):
+    def __init__(self, navigator, text: str, parent=None, icon=None):
         super().__init__(parent)
         self.navigator = navigator
         self._press_position = QPoint()
@@ -120,7 +215,12 @@ class DraggableTabButton(QToolButton):
         self.setCheckable(True)
         self.setAutoRaise(False)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        if icon is not None and not icon.isNull():
+            self.setIcon(icon)
+            self.setIconSize(QSize(22, 22))
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        else:
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(38)
 
@@ -206,7 +306,7 @@ class ModuleTabWidget(QWidget):
     """
     Dwurzędowy zamiennik QTabWidget.
 
-    Przy 16 modułach i columns=8 powstają dokładnie dwa rzędy.
+    Przy 19 modułach i columns=10 powstają nadal tylko dwa rzędy.
     Zakładki można przeciągać pomiędzy wszystkimi pozycjami.
     """
 
@@ -248,10 +348,15 @@ class ModuleTabWidget(QWidget):
 
         self.stack.currentChanged.connect(self.currentChanged.emit)
 
-    def addTab(self, widget: QWidget, text: str) -> int:
+    def addTab(self, widget: QWidget, text: str, icon=None) -> int:
         index = self.stack.addWidget(widget)
 
-        button = DraggableTabButton(self, text, self.navigation_widget)
+        button = DraggableTabButton(
+            self,
+            text,
+            self.navigation_widget,
+            icon=icon,
+        )
         button.clicked.connect(
             lambda checked=False, tab_button=button: self._activate_button(tab_button)
         )
@@ -390,7 +495,7 @@ class ModuleTabWidget(QWidget):
                 (
                     index
                     for index, button in enumerate(self.buttons)
-                    if button.text() == tab_name
+                    if tab_name_matches_saved_name(button.text(), tab_name)
                 ),
                 -1,
             )
@@ -414,9 +519,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle(
-            "Pysilde 6 – Zarządzanie Inwestycjami Elektroenergetycznymi"
-        )
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(load_app_icon())
         self.setMinimumSize(1200, 800)
 
         self._is_switching_project = False
@@ -439,6 +543,48 @@ class MainWindow(QMainWindow):
             "Aplikacja uruchomiona. Wybierz lub utwórz projekt, aby rozpocząć pracę."
         )
 
+    #: Zakładki pomocnicze przeniesione na koniec, tuż przed Ustawienia.
+    HELPER_TAB_KEYWORDS = ("Sortuj działki", "Sortowanie Działek", "Wskaźnik")
+    HELPER_TABS_MIGRATION_KEY = "helper_tabs_moved_before_settings"
+
+    def _migrate_helper_tabs_position(self):
+        """Przesuwa Sortuj działki i Wskaźnik przed Ustawienia w zapisanym układzie.
+
+        Kolejność zakładek jest pamiętana w app_config.json, więc bez tej
+        jednorazowej migracji stary zapis przywracałby poprzednie miejsca
+        obu modułów i zmiana kolejności byłaby niewidoczna.
+        """
+        if self.config.get(self.HELPER_TABS_MIGRATION_KEY):
+            return
+
+        for key in ("module_tab_order", "module_tab_order_classic"):
+            order = self.config.get(key)
+            if not isinstance(order, list) or not order:
+                continue
+
+            helpers = [
+                name
+                for name in order
+                if any(word in str(name) for word in self.HELPER_TAB_KEYWORDS)
+            ]
+            if not helpers:
+                continue
+
+            rest = [name for name in order if name not in helpers]
+            settings_index = next(
+                (
+                    index
+                    for index, name in enumerate(rest)
+                    if "Ustawienia" in str(name)
+                ),
+                len(rest),
+            )
+            self.config[key] = (
+                rest[:settings_index] + helpers + rest[settings_index:]
+            )
+
+        self.config[self.HELPER_TABS_MIGRATION_KEY] = True
+
     def load_configuration(self):
         self.data_dir = app_dir / "dane"
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -455,6 +601,14 @@ class MainWindow(QMainWindow):
         else:
             self.config = self._get_default_config()
 
+        self._migrate_helper_tabs_position()
+
+        # Profile wspólnych narzędzi są celowo niezależne od projektu i są
+        # zapisywane od razu w katalogu dane. Wczytaj je przed utworzeniem
+        # zakładek, aby Ustawienia, Koperty i Druczki używały tych samych
+        # wartości od pierwszego wyświetlenia.
+        self._load_global_tool_profiles()
+
         if self.examples_path.exists():
             try:
                 with open(self.examples_path, "r", encoding="utf-8") as file:
@@ -463,6 +617,31 @@ class MainWindow(QMainWindow):
                 self.examples = self._get_default_examples()
         else:
             self.examples = self._get_default_examples()
+
+    def _load_global_tool_profiles(self):
+        stamp_settings = load_global_stamp_settings(self.data_dir)
+        if stamp_settings:
+            self.config.update(stamp_settings)
+
+        envelope_preferences = load_global_envelope_preferences(self.data_dir)
+        if envelope_preferences:
+            self.config.update(envelope_preferences)
+
+        druczek_profile = load_global_druczek_profile(self.data_dir)
+        if druczek_profile:
+            self.config["druczek_profile"] = druczek_profile
+
+        # Wzory odczytu wypisów PDF były kiedyś częścią app_config.json.
+        # Przy pierwszym uruchomieniu po aktualizacji przenosimy je do
+        # osobnego pliku dane/wypis_profiles.json.
+        try:
+            from utils.wypis_profiles import migrate_from_config
+
+            if migrate_from_config(self.config, self.data_dir):
+                self.save_configuration()
+        except Exception:
+            # Nieudane przeniesienie nie może zablokować startu programu.
+            pass
 
     def save_configuration(self):
         try:
@@ -504,6 +683,35 @@ class MainWindow(QMainWindow):
             "module_tab_order": [],
             "module_tab_order_classic": [],
             "tab_layout_mode": "modern",
+            "parcel_list_filter": "Wszystkie",
+            "parcel_list_sort": "Domyślne",
+            "owners_list_sort_index": 0,
+            "envelope_hide_generated": False,
+            "envelope_show_only_generated": False,
+            "envelope_view_sort": 0,
+            "envelope_generation_sort": 0,
+            "envelope_single_files": False,
+            "envelope_output_dir": "",
+            "envelope_stamps_tab": 0,
+            "envelope_table_state": "",
+            "envelope_splitter_sizes": [],
+            "cover_skip_dead": True,
+            "cover_skip_institution": True,
+            "cover_skip_church": True,
+            "cover_skip_company": False,
+            "cover_skip_spolka": False,
+            "cover_skip_missing_address": True,
+            "cover_skip_invalid_postal_code": True,
+            "parcel_sorter_input": "",
+            "parcel_sorter_result": "",
+            "parcel_sorter_remove_duplicates": False,
+            "parcel_duplicate_cleaner_input": "",
+            "parcel_duplicate_cleaner_result": "",
+            "parcel_sorter_result_separator": "auto",
+            "parcel_duplicate_result_separator": "auto",
+            "parcel_sorter_active_tab": 0,
+            "shipment_history_active_tab": 0,
+            "shipment_summary_status_filter": "",
         }
 
     def _get_default_examples(self) -> dict:
@@ -534,11 +742,12 @@ class MainWindow(QMainWindow):
             self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         else:
             self.tab_layout_mode = "modern"
-            self.tabs = ModuleTabWidget(columns=8)
+            self.tabs = ModuleTabWidget(columns=10)
 
         self.project_tab = ProjectManagerWidget(self.config)
         self.dashboard_tab = DashboardTabWidget(self.config)
         self.parcel_tab = ParcelListWidget(self.config)
+        self.parcel_sort_tab = ParcelSortingWidget(self.config)
         self.owners_tab = OwnersListWidget(self.config)
         self.legal_titles_tab = LegalTitlesWidget(self.config)
 
@@ -553,13 +762,15 @@ class MainWindow(QMainWindow):
         self.druczek_tab = DruczekTabWidget(self.config)
         self.tracker_tab = ShipmentTrackerWidget(self.config)
         self.print_tab = PrintManagerWidget(self.config)
-        self.extract_pdf_tab = ExtractPdfWidget(self)
+        self.extract_pdf_tab = ExtractPdfWidget(self, self.config)
         self.kw_tab = KWDownloaderWidget(self.config)
+        self.kw2_tab = KW2ManualWidget(self.config)
         self.krs_downloader_tab = KrsDownloaderWidget(self.config)
         self.settings_tab = SettingsTabWidget(
             self.config, self.save_configuration
         )
         self.stats_tab = ParcelOwnersStatsWidget(self)
+        self.indicator_tab = ParcelIndicatorWidget(self.config)
 
         modules = [
             (self.project_tab, "📁 Projekty", "📁 Projekty"),
@@ -576,13 +787,22 @@ class MainWindow(QMainWindow):
             (self.extract_pdf_tab, "✂️ Wydziel PDF", "✂️ Wydzielanie PDF"),
             (self.stats_tab, "📈 Statystyki", "📈 Statystyki Działek"),
             (self.kw_tab, "📚 Księgi wieczyste KW", "📚 Księgi Wieczyste KW (PDF)"),
+            (self.kw2_tab, KW2_TAB_NAME, KW2_TAB_NAME),
             (self.krs_downloader_tab, "🏛️ KRS", "🏛️ Odpisy KRS"),
+            # Narzędzia pomocnicze trzymamy tuż przed Ustawieniami.
+            (self.parcel_sort_tab, "↕️ Sortuj działki", "↕️ Sortowanie Działek"),
+            (self.indicator_tab, "🔢 Wskaźnik", "🔢 Wskaźnik Działek"),
             (self.settings_tab, "⚙️ Ustawienia", "⚙️ Ustawienia"),
         ]
 
         for widget, modern_name, classic_name in modules:
             name = classic_name if self.tab_layout_mode == "classic" else modern_name
-            self.tabs.addTab(widget, name)
+            # Żaden moduł nie ma osobnej ikony karty — rozróżnia je emoji
+            # w nazwie, dzięki czemu pasek zakładek wygląda spójnie.
+            if isinstance(self.tabs, ModuleTabWidget):
+                self.tabs.addTab(widget, name)
+            else:
+                self.tabs.addTab(widget, name)
 
         # Każdy wygląd zachowuje własną kolejność zakładek.
         if self.tab_layout_mode == "classic":
@@ -677,7 +897,7 @@ class MainWindow(QMainWindow):
                 (
                     index
                     for index in range(self.tabs.count())
-                    if self.tabs.tabText(index) == tab_name
+                    if tab_name_matches_saved_name(self.tabs.tabText(index), tab_name)
                 ),
                 -1,
             )
@@ -700,11 +920,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Aktywny projekt: {project_name} ({project.get('path')})"
             )
-            self.setWindowTitle(f"Pysilde 6 – [Projekt: {project_name}]")
+            self.setWindowTitle(f"{APP_NAME} – [Projekt: {project_name}]")
 
             self.config["last_project_path"] = project.get("path")
             self.config["last_project_symbol"] = project.get("symbol", "")
             self.save_configuration()
+
+            # Zaktualizuj ścieżkę projektu w zakładkach ZANIM wyczyszczone
+            # zostaną dane. Zakładka Koperty zapisuje plik adresaci.json już
+            # podczas set_owners(), więc musi znać nową ścieżkę — inaczej
+            # zapisze go do STAREJ ścieżki i odtworzy stary folder projektu.
+            self.envelope_tab.set_project(project)
+            self.kw2_tab.set_project(project)
 
             # Czyszczenie danych przed załadowaniem nowego projektu.
             empty_list = []
@@ -716,6 +943,7 @@ class MainWindow(QMainWindow):
             self.envelope_tab.set_owners(empty_list)
             self.tracker_tab.set_owners(empty_list)
             self.kw_tab.set_owners(empty_list)
+            self.kw2_tab.set_owners(empty_list)
             self.legal_titles_tab.set_owners(empty_list)
             self.krs_downloader_tab.set_owners(empty_list)
 
@@ -725,15 +953,17 @@ class MainWindow(QMainWindow):
 
             self.decl_tab.set_project(project)
             self.cover_tab.set_project(project)
-            self.envelope_tab.set_project(project)
             self.druczek_tab.set_project(project)
             self.tracker_tab.set_project(project)
             self.print_tab.set_project(project)
             self.legal_titles_tab.set_project(project)
+            self.extract_pdf_tab.set_project(project)
             self.krs_downloader_tab.set_project(project)
+            self.indicator_tab.set_project(project)
 
             fresh_owners = self.owners_tab.get_owners()
             self.dashboard_tab.set_owners(fresh_owners)
+            self.indicator_tab.set_owners(fresh_owners)
             self.stats_tab.set_owners(fresh_owners)
             self.decl_tab.set_owners(fresh_owners)
             self.cover_tab.set_owners(fresh_owners)
@@ -741,10 +971,13 @@ class MainWindow(QMainWindow):
             self.tracker_tab.set_owners(fresh_owners)
             self.print_tab.set_owners(fresh_owners)
             self.kw_tab.set_owners(fresh_owners)
+            self.kw2_tab.set_owners(fresh_owners)
             self.legal_titles_tab.set_owners(fresh_owners)
             self.krs_downloader_tab.set_owners(fresh_owners)
 
             fresh_parcels = self.parcel_tab.get_parcels()
+            self.parcel_sort_tab.set_parcels(fresh_parcels)
+            self.indicator_tab.set_parcels(fresh_parcels)
             self.decl_tab.set_parcels(fresh_parcels)
             self.cover_tab.set_parcels(fresh_parcels)
             self.legal_titles_tab.set_parcels(fresh_parcels)
@@ -763,6 +996,7 @@ class MainWindow(QMainWindow):
         self.dashboard_tab.set_owners(owners)
         self.stats_tab.set_owners(owners)
         self.kw_tab.set_owners(owners)
+        self.kw2_tab.set_owners(owners)
         self.decl_tab.set_owners(owners)
         self.cover_tab.set_owners(owners)
         self.envelope_tab.set_owners(owners)
@@ -770,12 +1004,15 @@ class MainWindow(QMainWindow):
         self.print_tab.set_owners(owners)
         self.legal_titles_tab.set_owners(owners)
         self.krs_downloader_tab.set_owners(owners)
+        self.indicator_tab.set_owners(owners)
         self.owners_tab._save_to_project_state()
 
     def _on_parcels_changed(self, parcels: list):
         if self._is_switching_project:
             return
 
+        self.parcel_sort_tab.set_parcels(parcels)
+        self.indicator_tab.set_parcels(parcels)
         self.decl_tab.set_parcels(parcels)
         self.cover_tab.set_parcels(parcels)
         self.legal_titles_tab.set_parcels(parcels)
@@ -792,6 +1029,8 @@ class MainWindow(QMainWindow):
             self.cover_tab._save_groups()
         self.owners_tab._save_to_project_state()
         self.parcel_tab._save_to_project_state()
+        self.kw2_tab.save_state()
+        self.indicator_tab.save_state()
 
         QMessageBox.information(
             self,
@@ -841,6 +1080,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._remember_module_tab_order()
+        self.kw2_tab.save_state()
         self.save_configuration()
 
         if self.ocr_overlay is not None:
@@ -1018,6 +1258,101 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 color: #4da6ff;
+            }
+
+            /* Karty osobnej zakładki podsumowania przesyłek. */
+            QFrame#shipment_summary_intro {
+                background-color: #172536;
+                border: 1px solid #315475;
+                border-radius: 10px;
+            }
+            QFrame#shipment_summary_card {
+                background-color: #1e2b38;
+                border: 1px solid #3a5268;
+                border-radius: 9px;
+            }
+            QLabel#info_banner {
+                background-color: #1b2a3a;
+                color: #d5e3ef;
+                border-left: 4px solid #2b78c5;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QLabel#muted_hint {
+                color: #9fb3c5;
+            }
+            QScrollArea#preview_area {
+                border: 2px dashed #46586a;
+                background: #2b3a47;
+            }
+            QGroupBox#druczki_field_group {
+                font-weight: bold;
+                border: 1px solid #3a5268;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 12px;
+                background: #1e2b38;
+            }
+            QGroupBox#druczki_field_group::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                color: #8ab4f8;
+            }
+            QLabel#naming_preview {
+                background-color: #1e2b38;
+                color: #e7f1f9;
+                border: 1px solid #3a5268;
+                border-radius: 3px;
+                padding: 6px;
+                font-family: Consolas, monospace;
+            }
+            QLabel#naming_hint {
+                background-color: #1b2a3a;
+                color: #d5e3ef;
+                border-left: 3px solid #2196f3;
+                border-radius: 3px;
+                padding: 6px;
+            }
+            QLabel#naming_fields {
+                color: #b7c7d6;
+                font-size: 11px;
+            }
+            QLabel#shipment_summary_title {
+                color: #f4f9ff;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_section_title {
+                color: #f4f9ff;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_description,
+            QLabel#shipment_summary_scope {
+                color: #d5e3ef;
+                font-size: 12px;
+            }
+            QLabel#shipment_summary_overview {
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_card_title {
+                color: #e7f1f9;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#shipment_summary_card_value {
+                color: #ffffff;
+                font-size: 27px;
+                font-weight: 700;
+            }
+            QGroupBox#shipment_status_detail_box {
+                background-color: #1e2b38;
+                border-color: #3a5268;
+            }
+            QGroupBox#shipment_status_detail_box::title {
+                color: #8dcbff;
             }
 
             QTableWidget, QTreeWidget, QListWidget {
@@ -1254,6 +1589,111 @@ class MainWindow(QMainWindow):
                 color: #005a9e;
             }
 
+            /* Karty osobnej zakładki podsumowania przesyłek.
+               Wszystkie etykiety są celowo czarne w jasnym motywie. */
+            QFrame#shipment_summary_intro {
+                background-color: #e8f3ff;
+                border: 1px solid #9bc7ee;
+                border-radius: 10px;
+            }
+            QFrame#shipment_summary_card {
+                background-color: #ffffff;
+                border: 1px solid #c8d8e8;
+                border-radius: 9px;
+            }
+            QLabel#info_banner {
+                background-color: #eaf4ff;
+                color: #45647c;
+                border-left: 4px solid #2b78c5;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QLabel#muted_hint {
+                color: #6b7a88;
+            }
+            QScrollArea#preview_area {
+                border: 2px dashed #a4b0be;
+                background: #e0e0e0;
+            }
+            QGroupBox#druczki_field_group {
+                font-weight: bold;
+                border: 1px solid #d1d8e0;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 12px;
+                background: #f8f9fa;
+            }
+            QGroupBox#druczki_field_group::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                color: #3b3b98;
+            }
+            QLabel#naming_preview {
+                background-color: #f4f6f8;
+                color: #000000;
+                border: 1px solid #d0d7de;
+                border-radius: 3px;
+                padding: 6px;
+                font-family: Consolas, monospace;
+            }
+            QLabel#naming_hint {
+                background-color: #edf7fb;
+                color: #37474f;
+                border-left: 3px solid #2196f3;
+                border-radius: 3px;
+                padding: 6px;
+            }
+            QLabel#naming_fields {
+                color: #5c6b7a;
+                font-size: 11px;
+            }
+            QLabel#shipment_summary_title {
+                color: #000000;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_section_title {
+                color: #000000;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_description,
+            QLabel#shipment_summary_scope {
+                color: #000000;
+                font-size: 12px;
+            }
+            QLabel#shipment_summary_overview {
+                color: #000000;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#shipment_summary_card_title {
+                color: #000000;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#shipment_summary_card_value {
+                color: #000000;
+                font-size: 27px;
+                font-weight: 700;
+            }
+            QGroupBox#shipment_status_detail_box {
+                background-color: #ffffff;
+                border-color: #c8d8e8;
+            }
+            QGroupBox#shipment_status_detail_box::title {
+                color: #000000;
+            }
+            QTableWidget#shipment_status_summary_table,
+            QTableWidget#shipment_status_summary_table::item {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            QTableWidget#shipment_status_summary_table QHeaderView::section {
+                background-color: #e8f3ff;
+                color: #000000;
+            }
+
             QTableWidget, QTreeWidget, QListWidget {
                 background-color: #ffffff;
                 border: 1px solid #cccccc;
@@ -1292,6 +1732,19 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Ikona aplikacji: pasek zadań Windows, Alt+Tab i okna dialogowe.
+    app.setWindowIcon(load_app_icon())
+    if sys.platform.startswith("win"):
+        # Bez własnego AppUserModelID Windows pokazuje ikonę Pythona
+        # zamiast ikony programu na pasku zadań.
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                f"{APP_SLUG}.Aplikacja"
+            )
+        except Exception:
+            pass
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

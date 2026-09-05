@@ -5,6 +5,18 @@ import json
 import os
 import shutil
 import re
+
+from utils.output_paths import projects_root
+from utils.project_naming import (
+    DATE_FORMAT_KEY,
+    SYMBOL_SEPARATOR_CHOICES,
+    SYMBOL_SEPARATOR_KEY,
+    DEFAULT_SYMBOL_SEPARATOR,
+    PROJECT_FOLDER_DEFAULTS,
+    TEMPLATE_KEY as PROJECT_TEMPLATE_KEY,
+    TEMPLATE_PRESETS as PROJECT_TEMPLATE_PRESETS,
+    build_project_folder_name,
+)
 from pathlib import Path
 from datetime import datetime
 
@@ -58,9 +70,12 @@ class NewProjectDialog(QDialog):
         if not default_dir or not Path(default_dir).exists():
             import sys
             if getattr(sys, 'frozen', False):
-                default_dir = str(Path(sys.executable).parent.resolve())
+                app_dir = str(Path(sys.executable).parent.resolve())
             else:
-                default_dir = str(Path(__file__).parent.parent.resolve())
+                app_dir = str(Path(__file__).parent.parent.resolve())
+            # Nowe projekty trafiają do podfolderu „Projekty”, a nie do
+            # katalogu głównego programu.
+            default_dir = str(projects_root(self.config, app_dir, create=True))
         self.folder_edit.setText(default_dir)
         
         btn_browse = QPushButton('📂 Przeglądaj...')
@@ -72,21 +87,82 @@ class NewProjectDialog(QDialog):
 
         self.format_combo = QComboBox()
         self.format_combo.setEditable(True)
-        self.format_combo.addItems([
-            '{miasto} {symbol} {termin}',
-            '{termin} {miasto} {symbol}',
-            'P. {nazwa} [{symbol}]'
-        ])
-        
+        # Wzory z Ustawień; pierwszy jest ten wybrany jako domyślny.
+        preferred = str(
+            self.config.get(
+                PROJECT_TEMPLATE_KEY, PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY]
+            )
+            or PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY]
+        )
+        templates = [preferred]
+        for _label, template in PROJECT_TEMPLATE_PRESETS:
+            if template not in templates:
+                templates.append(template)
+        self.format_combo.addItems(templates)
+        self.format_combo.setCurrentText(preferred)
+        self.format_combo.currentTextChanged.connect(self._update_folder_preview)
+        for widget in (self.name_edit, self.symbol_edit, self.city_edit):
+            widget.textChanged.connect(self._update_folder_preview)
+        self.deadline_edit.dateChanged.connect(self._update_folder_preview)
+
         help_label = QLabel("Wpisz własny schemat. Zmienne: {nazwa}, {symbol}, {miasto}, {termin}")
-        help_label.setStyleSheet("color: gray; font-size: 11px;")
+        help_label.setObjectName('naming_fields')
         layout.addRow('Format folderu:', self.format_combo)
         layout.addRow('', help_label)
+
+        # Ukośnik w numerze projektu trzeba czymś zastąpić — Windows go nie
+        # dopuszcza w nazwie folderu. Wybór jest też w Ustawieniach, ale ma
+        # być pod ręką przy zakładaniu projektu.
+        self.separator_combo = QComboBox()
+        for label, value in SYMBOL_SEPARATOR_CHOICES:
+            self.separator_combo.addItem(label, value)
+        saved_separator = str(
+            self.config.get(SYMBOL_SEPARATOR_KEY, DEFAULT_SYMBOL_SEPARATOR)
+        )
+        sep_index = self.separator_combo.findData(saved_separator)
+        self.separator_combo.setCurrentIndex(sep_index if sep_index >= 0 else 0)
+        self.separator_combo.currentIndexChanged.connect(self._update_folder_preview)
+        layout.addRow('Ukośnik w numerze zamień na:', self.separator_combo)
+
+        self.lbl_folder_preview = QLabel()
+        self.lbl_folder_preview.setObjectName('naming_preview')
+        self.lbl_folder_preview.setWordWrap(True)
+        layout.addRow('Nazwa folderu:', self.lbl_folder_preview)
+        self._update_folder_preview()
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
+
+    def _folder_config(self) -> dict:
+        """Ustawienia nazwy z uwzględnieniem wyboru zrobionego w tym oknie."""
+        config = dict(self.config)
+        if hasattr(self, 'separator_combo'):
+            config[SYMBOL_SEPARATOR_KEY] = self.separator_combo.currentData()
+        return config
+
+    def _current_folder_name(self) -> str:
+        return build_project_folder_name(
+            self._folder_config(),
+            name=self.name_edit.text(),
+            symbol=self.symbol_edit.text(),
+            city=self.city_edit.text(),
+            deadline=self.deadline_edit.date().toString(
+                str(
+                    self.config.get(
+                        DATE_FORMAT_KEY, PROJECT_FOLDER_DEFAULTS[DATE_FORMAT_KEY]
+                    )
+                )
+            ),
+            template=self.format_combo.currentText(),
+        )
+
+    def _update_folder_preview(self, *_args):
+        if not hasattr(self, 'lbl_folder_preview'):
+            return
+        name = self._current_folder_name()
+        self.lbl_folder_preview.setText(name or '(podaj dane projektu)')
 
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(self, 'Wybierz folder nadrzędny', self.folder_edit.text())
@@ -107,9 +183,18 @@ class NewProjectDialog(QDialog):
             'name': self.name_edit.text().strip(),
             'symbol': self.symbol_edit.text().strip(),
             'city': self.city_edit.text().strip(),
-            'deadline': self.deadline_edit.date().toString('dd-MM-yyyy'),
+            'deadline': self.deadline_edit.date().toString(
+                str(
+                    self.config.get(
+                        DATE_FORMAT_KEY,
+                        PROJECT_FOLDER_DEFAULTS[DATE_FORMAT_KEY],
+                    )
+                )
+            ),
             'parent_folder': self.folder_edit.text().strip(),
-            'folder_format_text': self.format_combo.currentText()
+            'folder_format_text': self.format_combo.currentText(),
+            'folder_symbol_separator': self.separator_combo.currentData(),
+            'folder_name': self._current_folder_name()
         }
 
 
@@ -263,11 +348,24 @@ class ProjectManagerWidget(QWidget):
         self.btn_open_folder.setEnabled(False)
         actions_layout.addWidget(self.btn_open_folder)
 
-        self.btn_delete = QPushButton('🗑️ Usuń zaznaczone projekty z listy (Delete)')
-        self.btn_delete.setObjectName('btn_danger')
+        self.btn_delete = QPushButton('🗑️ Usuń projekt z listy (Delete)')
+        self.btn_delete.setToolTip(
+            'Usuwa projekt tylko z listy w programie.\n'
+            'Folder z dokumentami zostaje nietknięty na dysku.'
+        )
         self.btn_delete.clicked.connect(self._remove_project)
         self.btn_delete.setEnabled(False)
         actions_layout.addWidget(self.btn_delete)
+
+        self.btn_delete_with_files = QPushButton('💣 Usuń projekt z listy i dysku')
+        self.btn_delete_with_files.setObjectName('btn_danger')
+        self.btn_delete_with_files.setToolTip(
+            'Usuwa projekt z listy ORAZ kasuje jego folder wraz z całą\n'
+            'zawartością. Tej operacji nie można cofnąć.'
+        )
+        self.btn_delete_with_files.clicked.connect(self._remove_project_with_files)
+        self.btn_delete_with_files.setEnabled(False)
+        actions_layout.addWidget(self.btn_delete_with_files)
 
         right_layout.addWidget(actions_box)
         right_layout.addStretch()
@@ -310,7 +408,8 @@ class ProjectManagerWidget(QWidget):
         if path.exists(): self.lbl_status.setText('✅ Folder istnieje')
         else: self.lbl_status.setText('⚠️ Folder nie istnieje')
 
-        for btn in [self.btn_select, self.btn_rename, self.btn_open_folder, self.btn_delete]:
+        for btn in [self.btn_select, self.btn_rename, self.btn_open_folder,
+                    self.btn_delete, self.btn_delete_with_files]:
             btn.setEnabled(True)
 
     def _on_item_clicked(self, item, column):
@@ -326,14 +425,18 @@ class ProjectManagerWidget(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted: return
         vals = dlg.get_values()
 
-        fmt = vals['folder_format_text']
-        sym = vals['symbol'].replace('/', '.').replace('\\', '.')
-        
-        folder_name = fmt.replace('{miasto}', vals['city']).replace('{symbol}', sym).replace('{termin}', vals['deadline']).replace('{nazwa}', vals['name']).strip()
-        if not folder_name: folder_name = vals['name']
-        
-        folder_name = folder_name.replace('  ', ' ').strip()
-        folder_name = re.sub(r'[\\/*?:"<>|]', '_', folder_name)
+        # Nazwa folderu jest dokładnie taka, jaką pokazał podgląd w oknie.
+        folder_name = vals.get('folder_name') or build_project_folder_name(
+            {**self.config,
+             SYMBOL_SEPARATOR_KEY: vals.get(
+                 'folder_symbol_separator', DEFAULT_SYMBOL_SEPARATOR
+             )},
+            name=vals['name'],
+            symbol=vals['symbol'],
+            city=vals['city'],
+            deadline=vals['deadline'],
+            template=vals['folder_format_text'],
+        )
         
         project_path = Path(vals['parent_folder']) / folder_name
 
@@ -552,19 +655,6 @@ class ProjectManagerWidget(QWidget):
         self.projects = cleaned
         self.config['projects'] = self.projects
 
-        # Upewnij się, że stary folder zniknął (siatka bezpieczeństwa – po
-        # przeniesieniu nie powinien istnieć, ale sprzątamy ewentualne resztki).
-        if old_path_str != final_path_str:
-            removed = self._remove_dir_retry(old_path)
-            if not removed:
-                QMessageBox.warning(
-                    self,
-                    'Stary folder pozostał',
-                    f'Projekt używa już nowego folderu:\n{final_path}\n\n'
-                    f'Nie udało się automatycznie usunąć starego folderu:\n{old_path}\n\n'
-                    'Usuń go ręcznie, gdy żaden program nie będzie go używać.',
-                )
-
         self._refresh_tree()
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
@@ -574,7 +664,35 @@ class ProjectManagerWidget(QWidget):
                 self._on_project_selected(item, None)
                 break
         self.project_selected.emit(self.current_project)
+
+        # Po zmianie projektu wszystkie zakładki znają już nową ścieżkę.
+        # Dopiero teraz usuń ewentualne pozostałości starego folderu (np. gdyby
+        # jakiś moduł zdążył zapisać plik stanu do starej ścieżki).
+        self._schedule_old_folder_cleanup(old_path, final_path)
+
         QMessageBox.information(self, 'Zmieniono projekt', f'Zmieniono nazwę folderu projektu na:\n{final_path}')
+
+    def _schedule_old_folder_cleanup(self, old_path: Path, final_path: Path):
+        """Usuwa stary folder projektu (także odroczono, gdyby został odtworzony)."""
+        if str(old_path) == str(final_path):
+            return
+
+        def cleanup():
+            removed = self._remove_dir_retry(old_path)
+            if not removed:
+                QMessageBox.warning(
+                    self,
+                    'Stary folder pozostał',
+                    f'Projekt używa już nowego folderu:\n{final_path}\n\n'
+                    f'Nie udało się automatycznie usunąć starego folderu:\n{old_path}\n\n'
+                    'Zamknij programy korzystające z tego folderu i usuń go ręcznie.',
+                )
+
+        # Spróbuj natychmiast, a potem jeszcze dwukrotnie z opóźnieniem –
+        # na wypadek, gdyby system Windows chwilowo trzymał uchwyty.
+        cleanup()
+        QTimer.singleShot(1500, cleanup)
+        QTimer.singleShot(4000, cleanup)
 
     def _select_project(self, silent=False):
         if not self.current_project: return
@@ -645,7 +763,9 @@ class ProjectManagerWidget(QWidget):
         if not selected_items: return
         
         # ZMIANA: Usuwanie wielu zaznaczonych projektów
-        msg = f"Usunąć zaznaczone projekty ({len(selected_items)}) z listy?\n(Foldery NIE zostaną usunięte)"
+        msg = (f"Usunąć zaznaczone projekty ({len(selected_items)}) z listy?\n"
+               "Foldery i pliki na dysku pozostaną nietknięte.\n"
+               "Aby skasować także pliki, użyj przycisku „Usuń projekt z listy i dysku”.")
         reply = QMessageBox.question(self, 'Usuń projekt(y)', msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         
         if reply == QMessageBox.StandardButton.Yes:
@@ -657,3 +777,82 @@ class ProjectManagerWidget(QWidget):
             self.current_project = None
             self.config['projects'] = self.projects
             self._refresh_tree()
+
+    def _remove_project_with_files(self):
+        """Usuwa projekty z listy i kasuje ich foldery z dysku."""
+        selected_items = self.tree.selectedItems()
+        if not selected_items:
+            return
+
+        entries = []
+        for item in selected_items:
+            project = item.data(0, Qt.ItemDataRole.UserRole)
+            if project is None:
+                continue
+            raw_path = str(project.get('path', '') or '').strip()
+            entries.append((project, Path(raw_path) if raw_path else None))
+
+        if not entries:
+            return
+
+        listing = '\n'.join(
+            f"• {project.get('name', 'Projekt')} — "
+            + (str(folder) if folder else 'brak zapisanej ścieżki')
+            for project, folder in entries[:10]
+        )
+        if len(entries) > 10:
+            listing += f"\n… i {len(entries) - 10} kolejnych"
+
+        msg = (
+            f'Usunąć zaznaczone projekty ({len(entries)}) z listy '
+            'ORAZ skasować ich foldery z dysku?\n\n'
+            f'{listing}\n\n'
+            'UWAGA: wszystkie pliki w tych folderach zostaną trwale usunięte. '
+            'Tej operacji nie można cofnąć.'
+        )
+        reply = QMessageBox.warning(
+            self,
+            'Usuń projekt(y) z dysku',
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        removed, failed, missing = [], [], []
+        for project, folder in entries:
+            name = project.get('name', 'Projekt')
+            if folder is None:
+                missing.append(name)
+            elif not folder.exists():
+                missing.append(name)
+            elif self._remove_dir_retry(folder):
+                removed.append(name)
+            else:
+                failed.append(f'{name} ({folder})')
+
+            if project in self.projects:
+                self.projects.remove(project)
+
+        self.current_project = None
+        self.config['projects'] = self.projects
+        self._refresh_tree()
+
+        report = [f'Usunięto z listy: {len(entries)}.']
+        if removed:
+            report.append(f'Skasowano foldery: {len(removed)}.')
+        if missing:
+            report.append(
+                'Folder nie istniał (usunięto tylko wpis): ' + ', '.join(missing) + '.'
+            )
+        if failed:
+            report.append(
+                'NIE udało się skasować folderu (plik może być otwarty): '
+                + ', '.join(failed) + '.'
+            )
+
+        if failed:
+            QMessageBox.warning(self, 'Usuwanie zakończone', '\n'.join(report))
+        else:
+            QMessageBox.information(self, 'Usuwanie zakończone', '\n'.join(report))

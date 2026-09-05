@@ -1,5 +1,5 @@
 """
-settings_tab.py – Zakładka ustawień aplikacji Pysilde 6.
+settings_tab.py – Zakładka ustawień aplikacji EnergoDok.
 
 Obsługuje również wybór wyglądu głównej nawigacji:
 - modern: dwa rzędy przeciąganych zakładek,
@@ -11,6 +11,62 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
+from utils.generation_targets import (
+    COVER_ADDRESS_RULES,
+    COVER_GENERATION_RULES,
+    cover_generation_rule_defaults,
+)
+from utils.output_paths import (
+    DEFAULT_PROJECTS_SUBFOLDER,
+    OUTPUT_TARGETS,
+    auto_key,
+    folder_key,
+    folder_name,
+    is_auto_enabled,
+)
+from utils.project_naming import (
+    DATE_FORMAT_CHOICES,
+    DATE_FORMAT_KEY,
+    PROJECT_FOLDER_DEFAULTS,
+    SPACE_REPLACEMENT_CHOICES as PROJECT_SPACE_CHOICES,
+    SPACE_REPLACEMENT_KEY as PROJECT_SPACE_KEY,
+    SYMBOL_SEPARATOR_CHOICES,
+    SYMBOL_SEPARATOR_KEY,
+    TEMPLATE_KEY as PROJECT_TEMPLATE_KEY,
+    TEMPLATE_PRESETS as PROJECT_TEMPLATE_PRESETS,
+    PLACEHOLDERS as PROJECT_PLACEHOLDERS,
+    project_folder_preview,
+)
+from modules.ustawienia_wypisy import WypisSettingsSection
+from utils.auto_date import (
+    AUTO_DATE_KEY,
+    is_auto_date_enabled,
+    today_text,
+)
+from utils.document_naming import (
+    ASCII_KEY,
+    COVER_PARCEL_LIMIT_KEY,
+    COVER_PARCEL_MODE_KEY,
+    COVER_PARCEL_SEPARATOR_KEY,
+    COVER_TEMPLATE_KEY,
+    COVER_TEMPLATE_PRESETS,
+    DECLARATION_PARCEL_LIMIT_KEY,
+    DECLARATION_PARCEL_MODE_KEY,
+    DECLARATION_PARCEL_SEPARATOR_KEY,
+    DECLARATION_TEMPLATE_KEY,
+    DECLARATION_TEMPLATE_PRESETS,
+    NAME_STYLE_KEY,
+    NAME_STYLES,
+    PARCEL_SUFFIX_MODES,
+    SPACE_KEY,
+    SPACE_REPLACEMENTS,
+    TEMPLATE_FIELDS,
+    document_naming_defaults,
+    preview_cover_filename,
+    preview_declaration_filename,
+)
+from utils.global_settings import save_global_stamp_settings
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -43,10 +99,10 @@ DECL_TAGS = [
     ("nip", "NIP", "<Nip>"),
     ("pesel", "PESEL", "<Pesel>"),
     ("voivodeship", "Województwo", "<Województwo:>"),
-    ("county", "Powiat", "<Powiat:>"),
+    ("county", "Powiat (zamiana, gdy opcja jest włączona)", "<Powiat:>"),
     ("municipality", "Jednostka ewidencyjna (gmina)", "<Jednostka ewidencyjna:>"),
-    ("location", "Miejscowość działki", "<Miejscowość działki:>"),
-    ("address_street", "Ulica", "<Ulica>"),
+    ("location", "Miejscowość działki (odmiana, gdy opcja jest włączona)", "<Miejscowość działki:>"),
+    ("address_street", "Ulica (odmiana, gdy opcja jest włączona)", "<Ulica>"),
     ("parcel_numbers_budowa", "Działki budowa", "<działki budowa:>"),
     ("parcel_numbers_demontaz", "Działki demontaż", "<działki demontaż:>"),
     ("area_ha", "Powierzchnia [ha]", "<Powierzchnia [ha]>"),
@@ -68,8 +124,8 @@ DECL_TAGS = [
 
 
 COVER_TAGS = [
-    ("location", "Miejscowość działki", "<Miejscowość działki>"),
-    ("street", "Ulica działki z wypisu", "<Ulica>"),
+    ("location", "Miejscowość działki (odmiana, gdy opcja jest włączona)", "<Miejscowość działki>"),
+    ("street", "Ulica działki z wypisu (odmiana, gdy opcja jest włączona)", "<Ulica>"),
     ("subject", "Temat", "<Temat>"),
     ("task_construction", "Zadanie budowa", "<Zadanie budowa>"),
     ("task_demolition", "Zadanie demontaż", "<Zadanie demontaż>"),
@@ -139,28 +195,52 @@ class SettingsTabWidget(QWidget):
         return widget
 
     def _browse_docx_template(self, line_edit: QLineEdit):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file():
-            start_dir = str(Path(start_dir).parent)
+        from utils.templates import (
+            EXAMPLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
 
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_przyklady",
+            folder_names=EXAMPLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+            preferred_folder=(
+                self.path_przyklady_edit.text()
+                if hasattr(self, "path_przyklady_edit")
+                else ""
+            ),
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz szablon Word",
-            start_dir,
+            str(start_dir),
             "Word (*.docx)",
         )
         if path:
             line_edit.setText(path)
 
     def _browse_excel_template(self, line_edit: QLineEdit):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file():
-            start_dir = str(Path(start_dir).parent)
+        from utils.templates import (
+            LEGAL_TITLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
 
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key="path_tytuly",
+            folder_names=LEGAL_TITLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+            preferred_folder=(
+                self.path_tytuly_edit.text()
+                if hasattr(self, "path_tytuly_edit")
+                else ""
+            ),
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz szablon Excel",
-            start_dir,
+            str(start_dir),
             "Excel (*.xlsx *.xlsm)",
         )
         if path:
@@ -201,6 +281,11 @@ class SettingsTabWidget(QWidget):
         header = QLabel("⚙️ Ustawienia Aplikacji")
         header.setStyleSheet("font-size: 16px; font-weight: 700;")
         main_layout.addWidget(header)
+
+        # Odczyt wypisów stoi na samej górze — to ustawienie, z którego
+        # korzysta się najczęściej, więc nie powinno być schowane na dole
+        # długiej strony.
+        main_layout.addWidget(self._build_wypis_box())
 
         # WYGLĄD GŁÓWNYCH ZAKŁADEK
         appearance_box = QGroupBox("Wygląd zakładek modułów")
@@ -387,21 +472,49 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", self.chk_decl_precinct_upper)
 
         self.chk_decl_location_locative = QCheckBox(
-            "Odmieniaj miejscowości działki "
-            "(np. Gdynia → Gdyni, Warszawa → Warszawie)"
+            "Odmieniaj tag <Miejscowość działki:> "
+            "(np. Gdańsk → Gdańsku, Sopot → Sopocie)"
+        )
+        self.chk_decl_location_locative.setToolTip(
+            "Dotyczy standardowych tagów miejscowości w Oświadczeniach i Pismach.\n"
+            "Działa też dla zapisu bez dwukropka oraz bez polskich znaków."
         )
         decl_form.addRow("", self.chk_decl_location_locative)
 
         self.chk_decl_streets = QCheckBox(
-            "Odmieniaj ulice (np. ulica Miła → ul. Miłej)"
+            "Odmieniaj tag <Ulica> (np. ulica Miła → ulica Miłej)"
+        )
+        self.chk_decl_streets.setToolTip(
+            "Dotyczy standardowych tagów ulicy w Oświadczeniach i Pismach."
         )
         decl_form.addRow("", self.chk_decl_streets)
 
         self.chk_decl_powiat = QCheckBox(
-            "Zamieniaj miejscowości na właściwe nazwy powiatów "
+            "Zamieniaj tag <Powiat:> na właściwy powiat "
             "(np. Kościerzyna → kościerski, Wejherowo → wejherowski)"
         )
+        self.chk_decl_powiat.setToolTip(
+            "Dotyczy tagu <Powiat:> w Oświadczeniach woli."
+        )
         decl_form.addRow("", self.chk_decl_powiat)
+
+        # Zmiana działa w bieżącym uruchomieniu od razu; przycisk zapisu
+        # zachowuje ją także po ponownym uruchomieniu aplikacji.
+        self.chk_decl_location_locative.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_location_locative", enabled
+            )
+        )
+        self.chk_decl_streets.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_decline_streets", enabled
+            )
+        )
+        self.chk_decl_powiat.toggled.connect(
+            lambda enabled: self._set_runtime_declension_option(
+                "decl_powiat_zamiana", enabled
+            )
+        )
 
         self.decl_budowa_edit = QLineEdit()
         decl_form.addRow(
@@ -457,9 +570,68 @@ class SettingsTabWidget(QWidget):
         decl_form.addRow("", button_default_decl)
         main_layout.addWidget(decl_box)
 
+        main_layout.addWidget(self._build_naming_box())
+        main_layout.addWidget(self._build_auto_date_box())
+
+        main_layout.addWidget(self._build_project_folder_box())
+        main_layout.addWidget(self._build_output_folders_box())
+
+        # PISMA PRZEWODNIE — REGUŁY SERII
+        cover_rules_box = QGroupBox(
+            "Pisma przewodnie — reguły seryjnego generowania"
+        )
+        cover_rules_layout = QVBoxLayout(cover_rules_box)
+        cover_rules_info = QLabel(
+            "Zaznaczone pozycje będą pomijane przy „Generuj wszystkie” oraz "
+            "„Generuj dla zaznaczonych”. W razie potrzeby pojedyncze pismo "
+            "można nadal świadomie wymusić z poziomu modułu Pisma."
+        )
+        cover_rules_info.setWordWrap(True)
+        cover_rules_info.setObjectName("info_banner")
+        cover_rules_layout.addWidget(cover_rules_info)
+
+        cover_type_box = QGroupBox("Typ właściciela — nie generuj pisma dla")
+        cover_type_layout = QVBoxLayout(cover_type_box)
+        self.cover_skip_rule_checks: dict[str, QCheckBox] = {}
+        for config_key, _owner_flag, reason, default in COVER_GENERATION_RULES:
+            checkbox = QCheckBox(f"Pomiń: {reason}")
+            checkbox.setChecked(
+                bool(self.config.get(config_key, default))
+            )
+            checkbox.toggled.connect(
+                lambda enabled, key=config_key: self._set_runtime_cover_rule(
+                    key, enabled
+                )
+            )
+            self.cover_skip_rule_checks[config_key] = checkbox
+            cover_type_layout.addWidget(checkbox)
+        cover_rules_layout.addWidget(cover_type_box)
+
+        cover_address_box = QGroupBox("Dane adresowe — nie generuj pisma dla")
+        cover_address_layout = QVBoxLayout(cover_address_box)
+        address_labels = {
+            "cover_skip_missing_address": "Pomiń: brak adresu",
+            "cover_skip_invalid_postal_code": "Pomiń: adres bez kodu pocztowego",
+        }
+        for config_key, _reason, default in COVER_ADDRESS_RULES:
+            checkbox = QCheckBox(address_labels[config_key])
+            checkbox.setChecked(
+                bool(self.config.get(config_key, default))
+            )
+            checkbox.toggled.connect(
+                lambda enabled, key=config_key: self._set_runtime_cover_rule(
+                    key, enabled
+                )
+            )
+            self.cover_skip_rule_checks[config_key] = checkbox
+            cover_address_layout.addWidget(checkbox)
+        cover_rules_layout.addWidget(cover_address_box)
+        main_layout.addWidget(cover_rules_box)
+
         # USTAWIENIA WYCINANIA ZNACZKÓW
         crop_box = QGroupBox(
-            "Ustawienia wycinania znaczków C5 i C6 (Globalne)"
+            "Ustawienia wycinania znaczków C5 i C6 "
+            "(globalne: dane/stamp_profiles.json)"
         )
         crop_layout = QHBoxLayout(crop_box)
 
@@ -512,7 +684,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_1_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 1 (Działki):",
+            "Szablon 1 — Wykaz działek podmiotów pozostałych:",
             self._make_browse_row(
                 self.legal_tmpl_1_edit,
                 self._browse_excel_template,
@@ -521,7 +693,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_2_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 2 (Wykaz właścicieli):",
+            "Szablon 2 — Wykaz właścicieli nieruchomości szczegółowy:",
             self._make_browse_row(
                 self.legal_tmpl_2_edit,
                 self._browse_excel_template,
@@ -530,7 +702,7 @@ class SettingsTabWidget(QWidget):
 
         self.legal_tmpl_3_edit = QLineEdit()
         excel_form.addRow(
-            "Szablon 3 (Końcowy):",
+            "Szablon 3 — Nowa tabela końcowa:",
             self._make_browse_row(
                 self.legal_tmpl_3_edit,
                 self._browse_excel_template,
@@ -817,7 +989,471 @@ class SettingsTabWidget(QWidget):
         if row >= 0:
             table.removeRow(row)
 
+    # ──────────────────────────────────────────────────────────────
+    # Nazewnictwo generowanych plików
+    # ──────────────────────────────────────────────────────────────
+    def _build_output_folders_box(self) -> QGroupBox:
+        """Sekcja: gdzie zapisywać wygenerowane dokumenty."""
+        box = QGroupBox("Foldery na gotowe dokumenty (w folderze projektu)")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Zaznaczone moduły zapisują gotowe pliki od razu do podfolderu "
+            "aktywnego projektu — bez pytania o folder. Nazwę podfolderu "
+            "możesz zmienić w polu obok. Po odznaczeniu moduł znów zapyta, "
+            "gdzie zapisać pliki (jak dotychczas)."
+        )
+        info.setObjectName("naming_hint")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        self.output_auto_checks = {}
+        self.output_folder_edits = {}
+
+        for target, label, default_folder in OUTPUT_TARGETS:
+            row = QHBoxLayout()
+            check = QCheckBox("Zapisuj automatycznie do:")
+            check.setToolTip(
+                f"{label}: gdy zaznaczone, pliki trafiają do podfolderu "
+                "projektu. Gdy odznaczone — program pyta o folder."
+            )
+            edit = QLineEdit()
+            edit.setPlaceholderText(default_folder)
+            edit.setToolTip(
+                "Nazwa podfolderu tworzonego w folderze projektu."
+            )
+            check.toggled.connect(edit.setEnabled)
+            row.addWidget(check)
+            row.addWidget(edit, 1)
+
+            self.output_auto_checks[target] = check
+            self.output_folder_edits[target] = edit
+            form.addRow(f"{label}:", row)
+
+        layout.addLayout(form)
+
+        self.lbl_projects_root_hint = QLabel()
+        self.lbl_projects_root_hint.setObjectName("muted_hint")
+        self.lbl_projects_root_hint.setWordWrap(True)
+        self.lbl_projects_root_hint.setText(
+            "Nowe projekty powstają w folderze wskazanym wyżej jako „Folder "
+            f"Główny dla NOWYCH projektów”. Gdy pole jest puste, program "
+            f"tworzy podfolder „{DEFAULT_PROJECTS_SUBFOLDER}” obok pliku "
+            "programu, zamiast zapisywać projekty w jego katalogu głównym."
+        )
+        layout.addWidget(self.lbl_projects_root_hint)
+
+        return box
+
+    def _build_project_folder_box(self) -> QGroupBox:
+        """Sekcja wyboru schematu nazwy folderu projektu."""
+        box = QGroupBox("Projekty — nazwa folderu nowego projektu")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Tu ustawiasz, jak ma się nazywać folder tworzony przy zakładaniu "
+            "nowego projektu. Ustawienie domyślne odtwarza dotychczasową nazwę, "
+            "np. „Maki OBI.23.23220 04-12-2026”. Ten sam schemat podpowiada się "
+            "potem w oknie „Nowy projekt”, gdzie nadal możesz go zmienić."
+        )
+        info.setObjectName("naming_hint")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+
+        self.project_folder_preset = QComboBox()
+        for label, template in PROJECT_TEMPLATE_PRESETS:
+            self.project_folder_preset.addItem(f"{label} — {template}", template)
+        self.project_folder_preset.addItem("Własny wzór (wpisz poniżej)", "")
+        self.project_folder_preset.activated.connect(
+            lambda index: self._apply_project_folder_preset(index)
+        )
+        form.addRow("Wariant nazwy:", self.project_folder_preset)
+
+        self.project_folder_template = QLineEdit()
+        self.project_folder_template.setPlaceholderText(
+            PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY]
+        )
+        self.project_folder_template.textChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Własny wzór:", self.project_folder_template)
+
+        self.project_symbol_separator = QComboBox()
+        for label, value in SYMBOL_SEPARATOR_CHOICES:
+            self.project_symbol_separator.addItem(label, value)
+        self.project_symbol_separator.currentIndexChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Ukośnik w numerze zamień na:", self.project_symbol_separator)
+
+        self.project_date_format = QComboBox()
+        for label, value in DATE_FORMAT_CHOICES:
+            self.project_date_format.addItem(label, value)
+        self.project_date_format.currentIndexChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Zapis terminu:", self.project_date_format)
+
+        self.project_space_mode = QComboBox()
+        for label, value in PROJECT_SPACE_CHOICES:
+            self.project_space_mode.addItem(label, value)
+        self.project_space_mode.currentIndexChanged.connect(
+            self._update_project_folder_preview
+        )
+        form.addRow("Spacje w nazwie:", self.project_space_mode)
+
+        layout.addLayout(form)
+
+        self.lbl_project_folder_preview = QLabel()
+        self.lbl_project_folder_preview.setObjectName("naming_preview")
+        self.lbl_project_folder_preview.setWordWrap(True)
+        layout.addWidget(self.lbl_project_folder_preview)
+
+        fields = QLabel(
+            "Dostępne pola: "
+            + "   •   ".join(f"{tag} – {desc}" for tag, desc in PROJECT_PLACEHOLDERS)
+        )
+        fields.setObjectName("naming_fields")
+        fields.setWordWrap(True)
+        layout.addWidget(fields)
+
+        return box
+
+    def _apply_project_folder_preset(self, index: int):
+        template = self.project_folder_preset.itemData(index)
+        if template:
+            self.project_folder_template.setText(template)
+        self._update_project_folder_preview()
+
+    def _project_folder_settings(self) -> dict:
+        return {
+            PROJECT_TEMPLATE_KEY: self.project_folder_template.text().strip()
+            or PROJECT_FOLDER_DEFAULTS[PROJECT_TEMPLATE_KEY],
+            SYMBOL_SEPARATOR_KEY: self.project_symbol_separator.currentData(),
+            PROJECT_SPACE_KEY: self.project_space_mode.currentData(),
+            DATE_FORMAT_KEY: self.project_date_format.currentData(),
+        }
+
+    def _update_project_folder_preview(self, *_):
+        if not hasattr(self, "lbl_project_folder_preview"):
+            return
+        settings = self._project_folder_settings()
+        try:
+            example = project_folder_preview(settings)
+        except Exception as exc:  # pragma: no cover - zabezpieczenie UI
+            self.lbl_project_folder_preview.setText(f"Nie można zbudować podglądu: {exc}")
+            return
+        self.lbl_project_folder_preview.setText(
+            "Podgląd nazwy folderu (Maki, OBI/23/23220, termin 04-12-2026):\n"
+            f"  {example}"
+        )
+
+    def _build_wypis_box(self) -> QGroupBox:
+        """Sekcja odczytu danych z wypisów — kod w modules/ustawienia_wypisy.py."""
+        self.wypis_section = WypisSettingsSection(self)
+        return self.wypis_section
+
+    def _refresh_wypis_profiles_label(self):
+        """Odświeża opis wzorów odczytu wypisów."""
+        self.wypis_section.refresh_profiles_label(self.config)
+
+    def _open_wypis_profiles(self):
+        """Otwiera kreator wzorów odczytu wypisów."""
+        self.wypis_section.open_profiles_dialog(self.config)
+
+    def _build_auto_date_box(self) -> QGroupBox:
+        """Sekcja automatycznego wstawiania dzisiejszej daty w pismach."""
+
+        box = QGroupBox("Data w pismach")
+        layout = QVBoxLayout(box)
+
+        self.chk_auto_date = QCheckBox(
+            "Wstawiaj dzisiejszą datę automatycznie"
+        )
+        self.chk_auto_date.setChecked(
+            is_auto_date_enabled(self.config)
+        )
+        layout.addWidget(self.chk_auto_date)
+
+        info = QLabel(
+            "Po włączeniu pola „Data sporządzenia” (Pisma przewodnie) i "
+            "„Data” (Oświadczenia woli) same wypełnią się datą z komputera "
+            f"— dziś byłoby to <b>{today_text()}</b>. Datę zawsze możesz "
+            "poprawić ręcznie: wpisana zmiana zostaje i program jej nie "
+            "nadpisuje. Po wyłączeniu pola pozostają puste, tak jak dawniej."
+        )
+        info.setWordWrap(True)
+        info.setObjectName("naming_hint")
+        layout.addWidget(info)
+
+        return box
+
+    def _build_naming_box(self) -> QGroupBox:
+        """Sekcja wyboru schematu nazw dla Oświadczeń i Pism przewodnich."""
+        box = QGroupBox("Nazewnictwo plików — Oświadczenia i Pisma (PSM)")
+        layout = QVBoxLayout(box)
+
+        info = QLabel(
+            "Ustawienia domyślne odtwarzają dotychczasowe nazwy plików — bez "
+            "zmian możesz pracować dalej tak jak do tej pory. Możesz wybrać "
+            "gotowy wariant z listy albo wpisać własny wzór. Aby dopisać numer "
+            "działki na końcu nazwy, wybierz w polu „numer działki” opcję "
+            "„Tylko gdy właściciel ma dokładnie jedną działkę”."
+        )
+        info.setObjectName("naming_hint")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+
+        # ── Oświadczenia ──
+        self.decl_naming_preset = QComboBox()
+        for template, description in DECLARATION_TEMPLATE_PRESETS:
+            self.decl_naming_preset.addItem(description, template)
+        self.decl_naming_preset.addItem("Własny wzór (wpisz poniżej)", "")
+        self.decl_naming_preset.activated.connect(
+            lambda index: self._apply_naming_preset(
+                self.decl_naming_preset, self.decl_naming_template, index
+            )
+        )
+        form.addRow("Oświadczenia — wariant:", self.decl_naming_preset)
+
+        self.decl_naming_template = QLineEdit()
+        self.decl_naming_template.setPlaceholderText(
+            "Oświadczenie woli {typ} {nazwisko}{adres}{dzialki}"
+        )
+        self.decl_naming_template.textChanged.connect(self._update_naming_preview)
+        form.addRow("Oświadczenia — wzór:", self.decl_naming_template)
+
+        self.decl_parcel_mode = QComboBox()
+        for mode, description in PARCEL_SUFFIX_MODES:
+            self.decl_parcel_mode.addItem(description, mode)
+        self.decl_parcel_mode.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Oświadczenia — numer działki:", self.decl_parcel_mode)
+
+        self.decl_parcel_limit = QSpinBox()
+        self.decl_parcel_limit.setRange(1, 20)
+        self.decl_parcel_limit.setToolTip(
+            "Ile numerów działek zmieścić w nazwie przy wariancie z limitem."
+        )
+        self.decl_parcel_limit.valueChanged.connect(self._update_naming_preview)
+        form.addRow("Oświadczenia — limit działek:", self.decl_parcel_limit)
+
+        # ── Pisma przewodnie ──
+        self.cover_naming_preset = QComboBox()
+        for template, description in COVER_TEMPLATE_PRESETS:
+            self.cover_naming_preset.addItem(description, template)
+        self.cover_naming_preset.addItem("Własny wzór (wpisz poniżej)", "")
+        self.cover_naming_preset.activated.connect(
+            lambda index: self._apply_naming_preset(
+                self.cover_naming_preset, self.cover_naming_template, index
+            )
+        )
+        form.addRow("Pisma (PSM) — wariant:", self.cover_naming_preset)
+
+        self.cover_naming_template = QLineEdit()
+        self.cover_naming_template.setPlaceholderText(
+            "Pismo przewodnie {nazwisko}{adres}{dzialki}"
+        )
+        self.cover_naming_template.textChanged.connect(self._update_naming_preview)
+        form.addRow("Pisma (PSM) — wzór:", self.cover_naming_template)
+
+        self.cover_parcel_mode = QComboBox()
+        for mode, description in PARCEL_SUFFIX_MODES:
+            self.cover_parcel_mode.addItem(description, mode)
+        self.cover_parcel_mode.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Pisma (PSM) — numer działki:", self.cover_parcel_mode)
+
+        self.cover_parcel_limit = QSpinBox()
+        self.cover_parcel_limit.setRange(1, 20)
+        self.cover_parcel_limit.valueChanged.connect(self._update_naming_preview)
+        form.addRow("Pisma (PSM) — limit działek:", self.cover_parcel_limit)
+
+        # ── Wspólne ──
+        self.naming_name_style = QComboBox()
+        for style, description in NAME_STYLES:
+            self.naming_name_style.addItem(description, style)
+        self.naming_name_style.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Zapis nazwiska:", self.naming_name_style)
+
+        self.naming_space_mode = QComboBox()
+        for value, description in SPACE_REPLACEMENTS:
+            self.naming_space_mode.addItem(description, value)
+        self.naming_space_mode.currentIndexChanged.connect(self._update_naming_preview)
+        form.addRow("Spacje w nazwie:", self.naming_space_mode)
+
+        self.chk_naming_ascii = QCheckBox(
+            "Usuwaj polskie znaki z nazw plików (Oświadczenie → Oswiadczenie)"
+        )
+        self.chk_naming_ascii.setToolTip(
+            "Przydatne przy wysyłce na systemy, które nie radzą sobie z ogonkami."
+        )
+        self.chk_naming_ascii.toggled.connect(self._update_naming_preview)
+        form.addRow("", self.chk_naming_ascii)
+
+        layout.addLayout(form)
+
+        self.lbl_naming_preview = QLabel()
+        # Kolory nadaje motyw (jasny/ciemny) w main.py, dzięki czemu napis
+        # jest czytelny także w trybie nocnym.
+        self.lbl_naming_preview.setObjectName("naming_preview")
+        self.lbl_naming_preview.setWordWrap(True)
+        self.lbl_naming_preview.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.lbl_naming_preview)
+
+        fields_text = "  •  ".join(f"{tag} – {desc}" for tag, desc in TEMPLATE_FIELDS)
+        fields = QLabel("Dostępne pola: " + fields_text)
+        fields.setObjectName("naming_fields")
+        fields.setWordWrap(True)
+        layout.addWidget(fields)
+
+        buttons = QHBoxLayout()
+        btn_defaults = QPushButton("↩ Przywróć dotychczasowe nazwy")
+        btn_defaults.setToolTip(
+            "Ustawia wzory dokładnie takie, jakie program stosował do tej pory."
+        )
+        btn_defaults.clicked.connect(self._reset_naming_defaults)
+        buttons.addWidget(btn_defaults)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+        return box
+
+    def _apply_naming_preset(self, combo: QComboBox, edit: QLineEdit, index: int):
+        """Wybór z listy natychmiast wpisuje wzór do pola tekstowego."""
+        template = combo.itemData(index)
+        if template:
+            edit.setText(template)
+        self._update_naming_preview()
+
+    def _naming_settings(self) -> dict:
+        """Buduje słownik ustawień na podstawie stanu formularza."""
+        return {
+            DECLARATION_TEMPLATE_KEY: self.decl_naming_template.text(),
+            COVER_TEMPLATE_KEY: self.cover_naming_template.text(),
+            DECLARATION_PARCEL_MODE_KEY: self.decl_parcel_mode.currentData(),
+            COVER_PARCEL_MODE_KEY: self.cover_parcel_mode.currentData(),
+            DECLARATION_PARCEL_LIMIT_KEY: self.decl_parcel_limit.value(),
+            COVER_PARCEL_LIMIT_KEY: self.cover_parcel_limit.value(),
+            NAME_STYLE_KEY: self.naming_name_style.currentData(),
+            SPACE_KEY: self.naming_space_mode.currentData(),
+            ASCII_KEY: self.chk_naming_ascii.isChecked(),
+            DECLARATION_PARCEL_SEPARATOR_KEY: self.config.get(
+                DECLARATION_PARCEL_SEPARATOR_KEY, ", "
+            ),
+            COVER_PARCEL_SEPARATOR_KEY: self.config.get(
+                COVER_PARCEL_SEPARATOR_KEY, ", "
+            ),
+        }
+
+    def _update_naming_preview(self, *_):
+        if not hasattr(self, "lbl_naming_preview"):
+            return
+        settings = self._naming_settings()
+        try:
+            declaration = preview_declaration_filename(settings)
+            cover = preview_cover_filename(settings)
+        except Exception as exc:  # pragma: no cover - zabezpieczenie UI
+            self.lbl_naming_preview.setText(f"Nie można zbudować podglądu: {exc}")
+            return
+        self.lbl_naming_preview.setText(
+            "Podgląd nazw (Jan Kowalski, projekt OBI/123/2026):\n"
+            f"  Oświadczenie (1 działka 123/4):  {declaration}\n"
+            f"  Pismo przewodnie (2 działki):    {cover}"
+        )
+
+    def _reset_naming_defaults(self):
+        defaults = document_naming_defaults()
+        self._apply_naming_values(defaults)
+        self._update_naming_preview()
+
+    def _apply_naming_values(self, values: dict):
+        """Ustawia kontrolki zgodnie z podanym słownikiem ustawień."""
+        defaults = document_naming_defaults()
+
+        def _combo_select(combo: QComboBox, value):
+            index = combo.findData(value)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+
+        self.decl_naming_template.setText(
+            str(values.get(DECLARATION_TEMPLATE_KEY, defaults[DECLARATION_TEMPLATE_KEY]))
+        )
+        self.cover_naming_template.setText(
+            str(values.get(COVER_TEMPLATE_KEY, defaults[COVER_TEMPLATE_KEY]))
+        )
+        _combo_select(
+            self.decl_parcel_mode,
+            values.get(DECLARATION_PARCEL_MODE_KEY, defaults[DECLARATION_PARCEL_MODE_KEY]),
+        )
+        _combo_select(
+            self.cover_parcel_mode,
+            values.get(COVER_PARCEL_MODE_KEY, defaults[COVER_PARCEL_MODE_KEY]),
+        )
+        try:
+            self.decl_parcel_limit.setValue(
+                int(values.get(DECLARATION_PARCEL_LIMIT_KEY, defaults[DECLARATION_PARCEL_LIMIT_KEY]))
+            )
+            self.cover_parcel_limit.setValue(
+                int(values.get(COVER_PARCEL_LIMIT_KEY, defaults[COVER_PARCEL_LIMIT_KEY]))
+            )
+        except (TypeError, ValueError):
+            self.decl_parcel_limit.setValue(1)
+            self.cover_parcel_limit.setValue(1)
+        _combo_select(
+            self.naming_name_style, values.get(NAME_STYLE_KEY, defaults[NAME_STYLE_KEY])
+        )
+        _combo_select(self.naming_space_mode, values.get(SPACE_KEY, defaults[SPACE_KEY]))
+        self.chk_naming_ascii.setChecked(bool(values.get(ASCII_KEY, defaults[ASCII_KEY])))
+
+        # Lista wariantów ma pokazywać pozycję zgodną z aktualnym wzorem.
+        for combo, edit in (
+            (self.decl_naming_preset, self.decl_naming_template),
+            (self.cover_naming_preset, self.cover_naming_template),
+        ):
+            index = combo.findData(edit.text())
+            combo.setCurrentIndex(index if index >= 0 else combo.count() - 1)
+
     def _load_values(self):
+        # Nazewnictwo plików Oświadczeń i Pism.
+        naming = document_naming_defaults()
+        for key in list(naming):
+            if key in self.config:
+                naming[key] = self.config[key]
+        self._apply_naming_values(naming)
+        self._update_naming_preview()
+
+        # Nazwa folderu projektu.
+        folder_defaults = dict(PROJECT_FOLDER_DEFAULTS)
+        for key in list(folder_defaults):
+            if key in self.config:
+                folder_defaults[key] = self.config[key]
+        self.project_folder_template.setText(
+            str(folder_defaults[PROJECT_TEMPLATE_KEY])
+        )
+        preset_index = self.project_folder_preset.findData(
+            folder_defaults[PROJECT_TEMPLATE_KEY]
+        )
+        self.project_folder_preset.setCurrentIndex(
+            preset_index if preset_index >= 0
+            else self.project_folder_preset.count() - 1
+        )
+        for combo, key in (
+            (self.project_symbol_separator, SYMBOL_SEPARATOR_KEY),
+            (self.project_space_mode, PROJECT_SPACE_KEY),
+            (self.project_date_format, DATE_FORMAT_KEY),
+        ):
+            index = combo.findData(folder_defaults[key])
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        self._update_project_folder_preview()
+
+        # Odczyt danych z wypisów — sekcja obsługuje się sama.
+        self.wypis_section.load_from_config(self.config)
+
         # Wygląd zakładek.
         tab_layout_mode = self.config.get("tab_layout_mode", "modern")
         tab_layout_index = self.tab_layout_combo.findData(tab_layout_mode)
@@ -851,6 +1487,13 @@ class SettingsTabWidget(QWidget):
         self.default_proj_edit.setText(
             self.config.get("default_project_root", "")
         )
+        for target, _label, _default in OUTPUT_TARGETS:
+            enabled = is_auto_enabled(self.config, target)
+            self.output_auto_checks[target].setChecked(enabled)
+            self.output_folder_edits[target].setText(
+                folder_name(self.config, target)
+            )
+            self.output_folder_edits[target].setEnabled(enabled)
         self.path_przyklady_edit.setText(
             self.config.get("path_przyklady", "")
         )
@@ -965,6 +1608,14 @@ class SettingsTabWidget(QWidget):
             self.config.get("decl_powiat_zamiana", False)
         )
 
+        cover_rule_defaults = cover_generation_rule_defaults()
+        for key, checkbox in getattr(self, "cover_skip_rule_checks", {}).items():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(
+                bool(self.config.get(key, cover_rule_defaults.get(key, False)))
+            )
+            checkbox.blockSignals(False)
+
         c5_crop = self.config.get(
             "stamp_profile_c5",
             {
@@ -1042,6 +1693,14 @@ class SettingsTabWidget(QWidget):
             table.setItem(row, 2, QTableWidgetItem(default_tag))
             row += 1
 
+    def _set_runtime_declension_option(self, key: str, enabled: bool):
+        """Udostępnia zmianę opcji generatorom przed zapisaniem formularza."""
+        self.config[key] = bool(enabled)
+
+    def _set_runtime_cover_rule(self, key: str, enabled: bool):
+        """Stosuje od razu regułę pomijania Pism przewodnich."""
+        self.config[key] = bool(enabled)
+
     def _get_tags_from_table(self, table: QTableWidget) -> dict:
         result = {}
 
@@ -1059,6 +1718,18 @@ class SettingsTabWidget(QWidget):
         return result
 
     def _save(self):
+        # Nazewnictwo plików — zapisujemy komplet kluczy.
+        for key, value in self._naming_settings().items():
+            self.config[key] = value
+
+        for key, value in self._project_folder_settings().items():
+            self.config[key] = value
+
+        self.wypis_section.save_to_config(self.config)
+
+        # Automatyczna data w pismach — patrz utils/auto_date.py.
+        self.config[AUTO_DATE_KEY] = self.chk_auto_date.isChecked()
+
         selected_tab_layout = self.tab_layout_combo.currentData() or "modern"
         tab_layout_changed = selected_tab_layout != getattr(
             self,
@@ -1090,6 +1761,12 @@ class SettingsTabWidget(QWidget):
         self.config["default_project_root"] = (
             self.default_proj_edit.text().strip()
         )
+        for target, _label, default_folder in OUTPUT_TARGETS:
+            self.config[auto_key(target)] = (
+                self.output_auto_checks[target].isChecked()
+            )
+            chosen = self.output_folder_edits[target].text().strip()
+            self.config[folder_key(target)] = chosen or default_folder
         self.config["path_przyklady"] = (
             self.path_przyklady_edit.text().strip()
         )
@@ -1181,6 +1858,9 @@ class SettingsTabWidget(QWidget):
             self.chk_decl_powiat.isChecked()
         )
 
+        for key, checkbox in getattr(self, "cover_skip_rule_checks", {}).items():
+            self.config[key] = checkbox.isChecked()
+
         self.config["stamp_profile_c5"] = {
             "crop_left": self.c5_crop_l.value(),
             "crop_right": self.c5_crop_r.value(),
@@ -1193,6 +1873,9 @@ class SettingsTabWidget(QWidget):
             "crop_up": self.c6_crop_t.value(),
             "crop_down": self.c6_crop_b.value(),
         }
+        # Profile wycinania są dodatkowo zapisywane natychmiast w dane,
+        # niezależnie od danych konkretnego projektu.
+        save_global_stamp_settings(self.config)
 
         self.config["declaration_tag_map"] = self._get_tags_from_table(
             self.tags_table
@@ -1257,9 +1940,10 @@ class SettingsTabWidget(QWidget):
     def _set_default_decl_templates(self):
         from utils.templates import find_latest_file
 
-        examples_path = Path(self.path_przyklady_edit.text().strip())
+        examples_path_text = self.path_przyklady_edit.text().strip()
+        examples_path = Path(examples_path_text) if examples_path_text else None
 
-        if not examples_path.exists():
+        if examples_path is None or not examples_path.is_dir():
             QMessageBox.warning(
                 self,
                 "Błąd",
@@ -1329,11 +2013,12 @@ class SettingsTabWidget(QWidget):
             )
 
     def _set_default_excel_templates(self):
-        from utils.templates import find_file_newest
+        from utils.templates import LEGAL_TITLES_TEMPLATE_SPECS, find_file_newest
 
-        legal_path = Path(self.path_tytuly_edit.text().strip())
+        legal_path_text = self.path_tytuly_edit.text().strip()
+        legal_path = Path(legal_path_text) if legal_path_text else None
 
-        if not legal_path.exists():
+        if legal_path is None or not legal_path.is_dir():
             QMessageBox.warning(
                 self,
                 "Błąd",
@@ -1342,23 +2027,26 @@ class SettingsTabWidget(QWidget):
             )
             return
 
+        # Nazwy odpowiadają nazwom wzorów dostarczonych z programem.
+        # Stała zachowuje też krótkie nazwy szablon1–3, aby nie zerwać
+        # obsługi wcześniejszych katalogów użytkowników.
         specs = [
-            (self.legal_tmpl_1_edit, ["szablon1", "szablon 1"]),
-            (self.legal_tmpl_2_edit, ["szablon2", "szablon 2"]),
-            (self.legal_tmpl_3_edit, ["szablon3", "szablon 3"]),
+            (self.legal_tmpl_1_edit, *LEGAL_TITLES_TEMPLATE_SPECS[0]),
+            (self.legal_tmpl_2_edit, *LEGAL_TITLES_TEMPLATE_SPECS[1]),
+            (self.legal_tmpl_3_edit, *LEGAL_TITLES_TEMPLATE_SPECS[2]),
         ]
 
         found = []
         missing = []
-        for edit, bases in specs:
+        for edit, label, bases in specs:
             latest = find_file_newest(
                 legal_path, bases, (".xlsx", ".xlsm")
             )
             if latest is not None:
                 edit.setText(str(latest))
-                found.append(latest.name)
+                found.append(f"{label}: {latest.name}")
             else:
-                missing.append(bases[0])
+                missing.append(label)
 
         if found:
             QMessageBox.information(

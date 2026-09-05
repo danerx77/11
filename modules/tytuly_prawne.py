@@ -7,13 +7,18 @@ import os
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox, QFileDialog,
-    QGroupBox, QLineEdit, QFormLayout, QTabWidget, QSplitter, QCheckBox, QComboBox,
-    QStyledItemDelegate, QTextEdit, QDialog, QDialogButtonBox, QScrollArea
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QRadioButton, QScrollArea, QSizePolicy, QSplitter, QStyledItemDelegate,
+    QTableWidget,
+    QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QGuiApplication, QShortcut
+
+from utils.parcel_location import split_parcel_location
+from utils.output_paths import project_output_dir
 
 from modules.legal_titles_dialogs import OddzialEditorDialog, ComboBoxDelegate
 from modules.legal_titles_excel import LegalTitlesExcelExporter
@@ -201,123 +206,604 @@ class LegalTitlesWidget(QWidget):
     def _open_grouping_settings_dialog(self):
         """Szczegółowe ustawienia działania grupowania i wyglądu tabel Tytułów prawnych."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Ustawienia Tytułów Prawnych – szczegółowo")
-        dlg.setMinimumSize(860, 680)
+        dlg.setObjectName("legalGroupingSettingsDialog")
+        dlg.setWindowTitle("⚙️ Tytuły prawne — grupowanie i wygląd")
+        # Otwieraj od razu szerokie okno, ale zawsze mieszczące się na ekranie,
+        # na którym znajduje się główne okno programu.
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            dialog_width = min(1440, max(720, available.width() - 48))
+            dialog_height = min(960, max(520, available.height() - 48))
+        else:
+            dialog_width, dialog_height = 1320, 880
+        dlg.resize(dialog_width, dialog_height)
+        dlg.setMinimumSize(min(1040, dialog_width), min(680, dialog_height))
+        dlg.setSizeGripEnabled(True)
+        dlg.setStyleSheet(
+            """
+            QDialog#legalGroupingSettingsDialog { background: #f6f8fb; }
+            QDialog#legalGroupingSettingsDialog QGroupBox {
+                border: 1px solid #d8e1ec; border-radius: 8px;
+                margin-top: 12px; padding: 12px 10px 10px 10px;
+                font-weight: 700; color: #263b53; background: white;
+            }
+            QDialog#legalGroupingSettingsDialog QGroupBox::title {
+                subcontrol-origin: margin; left: 12px; padding: 0 6px;
+            }
+            QDialog#legalGroupingSettingsDialog QTabBar::tab {
+                background: #e8eef5; color: #40556d; border: none;
+                border-radius: 6px; margin: 2px; padding: 9px 14px;
+                font-weight: 700;
+            }
+            QDialog#legalGroupingSettingsDialog QTabBar::tab:selected {
+                background: #2b78c5; color: white;
+            }
+            QDialog#legalGroupingSettingsDialog QLabel,
+            QDialog#legalGroupingSettingsDialog QCheckBox,
+            QDialog#legalGroupingSettingsDialog QRadioButton {
+                color: #263b53; background: transparent; padding: 4px 2px;
+            }
+            QDialog#legalGroupingSettingsDialog QComboBox {
+                min-height: 26px; padding-left: 6px;
+                color: #263b53; background: #ffffff; border: 1px solid #b9c9d9;
+                border-radius: 4px;
+            }
+            QDialog#legalGroupingSettingsDialog QDialogButtonBox QPushButton {
+                min-width: 120px; padding: 8px 14px; border-radius: 5px;
+            }
+            """
+        )
         layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(10)
 
+        title = QLabel("Ustawienia grupowania i wyglądu tabel")
+        title.setStyleSheet("font-size:20px; font-weight:800; color:#1d4f80;")
+        layout.addWidget(title)
         info = QLabel(
-            "Tu ustawiasz dokładnie jak mają powstawać wiersze, co ma być scalane, "
-            "co ma zostać osobno oraz jak mają wyglądać tabele. Po zatwierdzeniu tabele są przebudowywane."
+            "Wybierz sposób prezentacji danych, a następnie doprecyzuj tabele. "
+            "Po kliknięciu <b>Zapisz i przebuduj</b> zmiany będą widoczne od razu."
         )
         info.setWordWrap(True)
-        info.setStyleSheet("color: gray; font-size: 12px;")
+        info.setStyleSheet(
+            "color:#4f6478; background:#eaf4ff; border-left:4px solid #2b78c5; "
+            "padding:9px; border-radius:5px;"
+        )
         layout.addWidget(info)
 
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.setUsesScrollButtons(True)
         layout.addWidget(tabs, 1)
+
+        def add_settings_tab(page, title):
+            """Dodaje zakładkę z przewijaniem, aby żadna opcja nie znikała."""
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setWidget(page)
+            tabs.addTab(scroll, title)
+
+        # W każdym kroku pokazujemy mały, czytelny fragment tabeli. Dzięki
+        # temu ustawienie nie jest wyłącznie techniczną nazwą — od razu widać,
+        # jaki będzie efekt w zestawieniu.
+        def table_fragment(headers, rows, *, show_grid=True, alternating=False):
+            """Tworzy mały fragment tabeli używany przez interaktywne podglądy."""
+            border = "1" if show_grid else "0"
+            header_cells = "".join(
+                "<th bgcolor='#dcecff' style='padding:5px; color:#1d4f80;'>"
+                f"{header}</th>"
+                for header in headers
+            )
+            body_rows = "".join(
+                ("<tr bgcolor='#eef6fd'>" if alternating and index % 2 else "<tr>")
+                + "".join(
+                    "<td style='padding:5px; color:#263b53;'>"
+                    f"{value}</td>"
+                    for value in row
+                )
+                + "</tr>"
+                for index, row in enumerate(rows)
+            )
+            return (
+                f"<table border='{border}' cellspacing='0' cellpadding='0' width='100%' "
+                "style='border-color:#a9c4de;'>"
+                f"<tr>{header_cells}</tr>{body_rows}</table>"
+            )
+
+        def help_label(text):
+            label = QLabel(f"↳ {text}")
+            label.setWordWrap(True)
+            label.setStyleSheet("color:#64798d; font-size:11px; padding:0 2px 5px 8px;")
+            return label
+
+        def option_with_hint(control, explanation):
+            control.setToolTip(explanation)
+            holder = QWidget()
+            holder_layout = QVBoxLayout(holder)
+            holder_layout.setContentsMargins(0, 0, 0, 0)
+            holder_layout.setSpacing(0)
+            holder_layout.addWidget(control)
+            holder_layout.addWidget(help_label(explanation))
+            return holder
+
+        def update_example_panel(
+            preview, description, headers, rows, note, *, show_grid=True, alternating=False
+        ):
+            """Odświeża mały, żywy podgląd po zmianie ustawienia."""
+            preview["summary"].setText(description)
+            preview["fragment"].setText(
+                table_fragment(
+                    headers,
+                    rows,
+                    show_grid=show_grid,
+                    alternating=alternating,
+                )
+            )
+            preview["note"].setText(f"<b>Co zmienia bieżący wybór:</b> {note}")
+
+        def example_panel(title, description, headers, rows, note):
+            panel = QGroupBox(title)
+            panel.setMinimumWidth(330)
+            panel_layout = QVBoxLayout(panel)
+            summary = QLabel()
+            summary.setWordWrap(True)
+            summary.setStyleSheet("color:#45647c; font-size:12px; font-weight:600;")
+            panel_layout.addWidget(summary)
+            fragment = QLabel()
+            fragment.setTextFormat(Qt.TextFormat.RichText)
+            fragment.setWordWrap(True)
+            fragment.setStyleSheet(
+                "background:#f7fbff; border:1px dashed #a9c4de; border-radius:5px; "
+                "padding:7px;"
+            )
+            panel_layout.addWidget(fragment)
+            note_label = QLabel()
+            note_label.setTextFormat(Qt.TextFormat.RichText)
+            note_label.setWordWrap(True)
+            note_label.setStyleSheet("color:#607d8b; font-size:11px;")
+            panel_layout.addWidget(note_label)
+            panel_layout.addStretch()
+            preview = {
+                "summary": summary,
+                "fragment": fragment,
+                "note": note_label,
+            }
+            update_example_panel(preview, description, headers, rows, note)
+            return panel, preview
 
         # ───────────────────────── 1. Tryb grupowania
         tab_group = QWidget()
         group_layout = QVBoxLayout(tab_group)
-        box_main = QGroupBox("Główne ustawienia grupowania")
-        form = QFormLayout(box_main)
+        group_layout.setSpacing(10)
+        group_intro = QLabel(
+            "<b>Krok 1.</b> Wybierz jeden z pięciu trybów. Po prawej stronie "
+            "od razu zobaczysz uproszczony efekt grupowania."
+        )
+        group_intro.setWordWrap(True)
+        group_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        group_layout.addWidget(group_intro)
 
-        combo_group = QComboBox()
-        for i in range(self.combo_group_owners.count()):
-            combo_group.addItem(self.combo_group_owners.itemText(i))
-        combo_group.setCurrentIndex(self.combo_group_owners.currentIndex())
-        form.addRow("Tryb grupowania Tabel 1 i 2:", combo_group)
+        mode_specs = (
+            (
+                "1. Osobne wpisy",
+                "Każdy właściciel i każda działka otrzymują własny wiersz.",
+                table_fragment(
+                    ("Lp.", "Działka", "Właściciel"),
+                    (("1", "12/1", "Anna Kowalska"), ("2", "12/1", "Jan Nowak")),
+                ),
+            ),
+            (
+                "2. Współwłaściciele wg działki",
+                "Jedna działka, jeden wiersz; współwłaściciele są razem.",
+                table_fragment(
+                    ("Lp.", "Działka", "Właściciele"),
+                    (("1", "12/1", "Anna Kowalska<br>Jan Nowak"),),
+                ),
+            ),
+            (
+                "3. Działki wg właściciela",
+                "Wszystkie działki jednej osoby są zebrane przy jej nazwie.",
+                table_fragment(
+                    ("Lp.", "Właściciel", "Działki"),
+                    (("1", "Anna Kowalska", "12/1, 12/2, 13/1"),),
+                ),
+            ),
+            (
+                "4. Identyczne pakiety",
+                "Łączy powtarzające się zestawy działek i współwłaścicieli.",
+                table_fragment(
+                    ("Lp.", "Działki", "Współwłaściciele"),
+                    (("1", "12/1<br>12/2", "Anna Kowalska<br>Jan Nowak"),),
+                ),
+            ),
+            (
+                "5. Zestawienie wg działki",
+                "Grupuje według działki także w Tabeli 5, ze scaleniami.",
+                table_fragment(
+                    ("Działka", "Właściciele", "Tytuł prawny"),
+                    (("12/1", "Anna Kowalska<br>Jan Nowak", "Służebność"),),
+                ),
+            ),
+        )
+        current_group_mode = self.combo_group_owners.currentIndex()
+        if current_group_mode < 0 or current_group_mode >= len(mode_specs):
+            current_group_mode = 1
+        mode_button_group = QButtonGroup(dlg)
+        mode_cards: dict[int, QFrame] = {}
 
+        modes_layout = QHBoxLayout()
+        modes_layout.setSpacing(14)
+        modes_column = QVBoxLayout()
+        modes_column.setSpacing(6)
+        for index, (mode_title, description, _example) in enumerate(mode_specs):
+            card = QFrame()
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 7, 10, 7)
+            card_layout.setSpacing(2)
+            radio = QRadioButton(mode_title)
+            radio.setChecked(index == current_group_mode)
+            radio.setStyleSheet("font-weight:700; color:#244566;")
+            mode_button_group.addButton(radio, index)
+            card_layout.addWidget(radio)
+            description_label = QLabel(description)
+            description_label.setWordWrap(True)
+            description_label.setStyleSheet("color:#607080; font-size:11px;")
+            card_layout.addWidget(description_label)
+            modes_column.addWidget(card)
+            mode_cards[index] = card
+        modes_column.addStretch()
+        modes_layout.addLayout(modes_column, 3)
+
+        preview_box = QGroupBox("Podgląd wybranego trybu")
+        preview_layout = QVBoxLayout(preview_box)
+        preview_title = QLabel()
+        preview_title.setWordWrap(True)
+        preview_title.setStyleSheet("font-size:15px; font-weight:800; color:#1d5f99;")
+        preview_layout.addWidget(preview_title)
+        preview_description = QLabel()
+        preview_description.setWordWrap(True)
+        preview_description.setStyleSheet("color:#52687a;")
+        preview_layout.addWidget(preview_description)
+        preview_example = QLabel()
+        preview_example.setWordWrap(True)
+        preview_example.setTextFormat(Qt.TextFormat.RichText)
+        preview_example.setMinimumHeight(90)
+        preview_example.setStyleSheet(
+            "background:#f3f7fb; border:1px dashed #9ebbd7; border-radius:5px; "
+            "padding:10px; color:#294b67;"
+        )
+        preview_layout.addWidget(preview_example)
+        preview_note = QLabel(
+            "To schemat pomocniczy — rzeczywiste wartości nadal pochodzą z danych projektu."
+        )
+        preview_note.setWordWrap(True)
+        preview_note.setStyleSheet("color:#8091a0; font-size:10px; font-style:italic;")
+        preview_layout.addWidget(preview_note)
+        preview_layout.addStretch()
+        modes_layout.addWidget(preview_box, 2)
+        group_layout.addLayout(modes_layout, 1)
+
+        def update_group_preview(index: int):
+            index = max(0, min(index, len(mode_specs) - 1))
+            mode_title, description, example = mode_specs[index]
+            try:
+                pair_on_separate_lines = combo_pair.currentIndex() == 1
+            except NameError:
+                # Pierwsze zbudowanie kart następuje przed utworzeniem comboboxa.
+                pair_on_separate_lines = True
+            if not pair_on_separate_lines:
+                example = example.replace(
+                    "Anna Kowalska<br>Jan Nowak", "Anna Kowalska i Jan Nowak"
+                )
+            preview_title.setText(mode_title)
+            preview_description.setText(description)
+            preview_example.setText(
+                f"<b>Przykładowy fragment tabeli</b><br><br>{example}"
+            )
+            for card_index, card in mode_cards.items():
+                if card_index == index:
+                    card.setStyleSheet(
+                        "QFrame { border:2px solid #2b78c5; border-radius:8px; "
+                        "background:#eaf4ff; }"
+                    )
+                else:
+                    card.setStyleSheet(
+                        "QFrame { border:1px solid #d8e1ec; border-radius:8px; "
+                        "background:#ffffff; }"
+                    )
+
+        for index in range(len(mode_specs)):
+            button = mode_button_group.button(index)
+            if button is not None:
+                button.toggled.connect(
+                    lambda checked, i=index: update_group_preview(i) if checked else None
+                )
+        update_group_preview(current_group_mode)
+
+        base_box = QGroupBox("Dodatkowe ustawienia podstawowe")
+        form = QFormLayout(base_box)
         combo_pair = QComboBox()
         for i in range(self.combo_owner_sep.count()):
             combo_pair.addItem(self.combo_owner_sep.itemText(i))
         combo_pair.setCurrentIndex(self.combo_owner_sep.currentIndex())
+        combo_pair.setToolTip(
+            "Pierwszy wariant łączy parę jako „Anna i Jan”; drugi wpisuje "
+            "każdą osobę w osobnej linii tej samej komórki."
+        )
         form.addRow("Format par / współwłaścicieli:", combo_pair)
+        form.addRow(
+            "",
+            help_label(
+                "„Anna i Jan” jest zwięzłe; wariant wielowierszowy ułatwia "
+                "czytanie dłuższych list współwłaścicieli."
+            ),
+        )
 
         chk_sort = QCheckBox("Sortuj działki rosnąco przy zaciąganiu")
         chk_sort.setChecked(self.chk_sort_parcels.isChecked())
-        form.addRow("", chk_sort)
+        form.addRow(
+            "",
+            option_with_hint(
+                chk_sort,
+                "Np. 2/1, 2/10, 10/1 zamiast kolejności wynikającej z importu.",
+            ),
+        )
 
         chk_exclude_dead = QCheckBox("Pomiń zmarłych i osoby bez poprawnego adresu")
         chk_exclude_dead.setChecked(self.config.get('legal_exclude_dead_missing', True))
-        form.addRow("", chk_exclude_dead)
-
-        group_layout.addWidget(box_main)
-
-        help_group = QLabel(
-            "Opis trybów:\n"
-            "Opcja 1 – każdy właściciel/działka oddzielnie.\n"
-            "Opcja 2 – współwłaściciele scalani wg działki.\n"
-            "Opcja 3 – działki grupowane wg właściciela.\n"
-            "Opcja 4 – identyczne pakiety działek/właścicieli.\n"
-            "Opcja 5 – grupowanie wg działki z dodatkowymi scaleniami."
+        form.addRow(
+            "",
+            option_with_hint(
+                chk_exclude_dead,
+                "Takie pozycje nie pojawią się w automatycznie zbudowanych tabelach.",
+            ),
         )
-        help_group.setWordWrap(True)
-        help_group.setStyleSheet("color:#888; font-size:11px;")
-        group_layout.addWidget(help_group)
-        group_layout.addStretch()
-        tabs.addTab(tab_group, "1. Grupowanie")
+
+        def update_group_settings_preview(*_args):
+            pair_layout = (
+                "w osobnych liniach"
+                if combo_pair.currentIndex() == 1
+                else "w jednej wspólnej nazwie"
+            )
+            mode_title = mode_specs[max(0, mode_button_group.checkedId())][0]
+            preview_note.setText(
+                "<b>Aktualny wybór:</b> "
+                f"{mode_title}; pary: {pair_layout}; działki: "
+                f"{'rosnąco' if chk_sort.isChecked() else 'w kolejności danych'}; "
+                f"pozycje zmarłe/niepełne: "
+                f"{'pomijane' if chk_exclude_dead.isChecked() else 'uwzględniane'}.")
+
+        def refresh_group_pair_preview(*_args):
+            update_group_preview(max(0, mode_button_group.checkedId()))
+            update_group_settings_preview()
+
+        combo_pair.currentIndexChanged.connect(refresh_group_pair_preview)
+        chk_sort.toggled.connect(update_group_settings_preview)
+        chk_exclude_dead.toggled.connect(update_group_settings_preview)
+        for index in range(len(mode_specs)):
+            button = mode_button_group.button(index)
+            if button is not None:
+                button.toggled.connect(
+                    lambda checked: update_group_settings_preview() if checked else None
+                )
+        refresh_group_pair_preview()
+        group_layout.addWidget(base_box)
+        add_settings_tab(tab_group, "① Grupowanie")
 
         # ───────────────────────── 2. Osobne wiersze / scalanie
         tab_rows = QWidget()
         rows_layout = QVBoxLayout(tab_rows)
+        rows_intro = QLabel(
+            "<b>Krok 2.</b> Zdecyduj, które powtarzające się dane mają zostać "
+            "połączone, a które należy pozostawić w oddzielnych wierszach."
+        )
+        rows_intro.setWordWrap(True)
+        rows_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        rows_layout.addWidget(rows_intro)
+        rows_content = QHBoxLayout()
+        rows_content.setSpacing(14)
         box_rows = QGroupBox("Co ma być w osobnych wierszach, a co scalone")
         rows_form = QFormLayout(box_rows)
 
         chk_split_couples = QCheckBox("Opcja 1: rozdzielaj pary na osobne osoby / osobne wiersze")
         chk_split_couples.setChecked(self.config.get('legal_split_couples_option1', True))
-        rows_form.addRow("", chk_split_couples)
+        rows_form.addRow(
+            "",
+            option_with_hint(
+                chk_split_couples,
+                "Zamiast jednego wpisu „Anna i Jan”, powstaną dwa osobne wiersze.",
+            ),
+        )
 
         chk_option4_separate = QCheckBox("Opcja 4: właściciele w osobnych wierszach zamiast jednej komórki")
         chk_option4_separate.setChecked(self.config.get('legal_option4_owners_separate', True))
-        rows_form.addRow("", chk_option4_separate)
+        rows_form.addRow(
+            "",
+            option_with_hint(
+                chk_option4_separate,
+                "W pakiecie działek każdy współwłaściciel zajmie własny wiersz; "
+                "po odznaczeniu wszyscy pozostaną w jednej komórce.",
+            ),
+        )
 
         chk_option5_owner_one_cell = QCheckBox("Opcja 5: właściciele jednej działki w jednej scalonej komórce")
         chk_option5_owner_one_cell.setChecked(self.config.get('legal_option5_owner_one_cell', True))
-        rows_form.addRow("", chk_option5_owner_one_cell)
+        rows_form.addRow(
+            "",
+            option_with_hint(
+                chk_option5_owner_one_cell,
+                "Dla jednej działki lista współwłaścicieli będzie wizualnie jedną "
+                "wspólną komórką, co zmniejsza powtarzanie numeru działki.",
+            ),
+        )
 
         chk_span_lp_owner = QCheckBox("Tabela 1 i 2: scalaj Lp. i Właściciela dla wspólnych bloków")
         chk_span_lp_owner.setChecked(self.config.get('legal_span_lp_owner_t1', True))
-        rows_form.addRow("", chk_span_lp_owner)
+        rows_form.addRow(
+            "",
+            option_with_hint(
+                chk_span_lp_owner,
+                "Przy kilku działkach jednego właściciela numer Lp. i nazwa nie "
+                "będą powielane w każdym kolejnym wierszu.",
+            ),
+        )
 
         chk_merge_kw = QCheckBox("Tabela 1 i 2: scalaj identyczne Nr KW w sąsiadujących wierszach")
         chk_merge_kw.setChecked(self.chk_merge_kw.isChecked())
-        rows_form.addRow("", chk_merge_kw)
+        rows_form.addRow(
+            "",
+            option_with_hint(
+                chk_merge_kw,
+                "Ten sam numer KW w bezpośrednio sąsiadujących wierszach tworzy "
+                "jedną wyższą komórkę zamiast powtarzającego się tekstu.",
+            ),
+        )
 
         chk_keep_manual = QCheckBox("Chroń ręczne edycje w istniejących wierszach, jeśli klucz wiersza się zgadza")
         chk_keep_manual.setChecked(self.config.get('legal_keep_manual_edits', True))
-        rows_form.addRow("", chk_keep_manual)
+        rows_form.addRow(
+            "",
+            option_with_hint(
+                chk_keep_manual,
+                "Po przebudowie zachowa ręcznie wpisane wartości, np. status "
+                "wysyłki lub uwagę, gdy dany wiersz nadal odpowiada temu samemu wpisowi.",
+            ),
+        )
 
-        rows_layout.addWidget(box_rows)
-        rows_layout.addStretch()
-        tabs.addTab(tab_rows, "2. Wiersze / scalanie")
+        rows_preview_box, rows_preview = example_panel(
+            "Podgląd — wiersze i scalenia",
+            "Zmień dowolny przełącznik po lewej, aby zobaczyć wynik.",
+            ("Lp.", "Działka", "Właściciel", "Nr KW"),
+            (),
+            "",
+        )
+
+        def update_rows_preview(*_args):
+            split_couple = chk_split_couples.isChecked()
+            span_owner = chk_span_lp_owner.isChecked()
+            merge_kw = chk_merge_kw.isChecked()
+            if split_couple:
+                rows = (
+                    ("1", "12/1", "Anna Kowalska", "GD1G/00012345/6"),
+                    (
+                        "" if span_owner else "2",
+                        "12/1",
+                        "" if span_owner else "Jan Nowak",
+                        "" if merge_kw else "GD1G/00012345/6",
+                    ),
+                )
+                description = "Para jest pokazana jako dwa wiersze — po jednym dla każdej osoby."
+            else:
+                rows = (("1", "12/1", "Anna Kowalska i Jan Nowak", "GD1G/00012345/6"),)
+                description = "Para pozostaje wspólnie w jednej komórce i jednym wierszu."
+
+            owner_block = (
+                "w osobnych wierszach"
+                if chk_option4_separate.isChecked()
+                else "w jednej komórce"
+            )
+            parcel_owner_block = (
+                "w jednej scalonej komórce"
+                if chk_option5_owner_one_cell.isChecked()
+                else "w osobnych komórkach"
+            )
+            note = (
+                f"Opcja 4: współwłaściciele pakietu są {owner_block}. "
+                f"Opcja 5: właściciele działki są {parcel_owner_block}. "
+                f"Ręczne edycje: {'chronione' if chk_keep_manual.isChecked() else 'mogą zostać nadpisane przy przebudowie'}."
+            )
+            update_example_panel(
+                rows_preview,
+                description,
+                ("Lp.", "Działka", "Właściciel", "Nr KW"),
+                rows,
+                note,
+            )
+
+        for control in (
+            chk_split_couples,
+            chk_option4_separate,
+            chk_option5_owner_one_cell,
+            chk_span_lp_owner,
+            chk_merge_kw,
+            chk_keep_manual,
+        ):
+            control.toggled.connect(update_rows_preview)
+        update_rows_preview()
+        rows_content.addWidget(box_rows, 3)
+        rows_content.addWidget(rows_preview_box, 2)
+        rows_layout.addLayout(rows_content, 1)
+        add_settings_tab(tab_rows, "② Wiersze i scalenia")
 
         # ───────────────────────── 3. Tabela 1 i 2
         tab_t12 = QWidget()
         t12_layout = QVBoxLayout(tab_t12)
-        box_t12 = QGroupBox("Tabela 1 i Tabela 2 – szczegółowe rozbijanie/scalanie")
+        t12_intro = QLabel(
+            "<b>Krok 3.</b> Te opcje dotyczą szczegółów Tabeli 1 i 2: "
+            "dodatkowych kolumn, brakującego KW oraz zapisu wielu działek i właścicieli."
+        )
+        t12_intro.setWordWrap(True)
+        t12_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        t12_layout.addWidget(t12_intro)
+        t12_content = QHBoxLayout()
+        t12_content.setSpacing(14)
+        box_t12 = QGroupBox("Ustawienia Tabeli 1 i 2")
         t12_form = QFormLayout(box_t12)
-        lbl_t12_help = QLabel("Duże ustawienia poniżej wpływają na to, czy działki/właściciele będą w jednej komórce czy w osobnych wierszach. Po OK tabele przebudują się od razu.")
+        lbl_t12_help = QLabel(
+            "Ustawienie działa po kliknięciu „Zapisz i przebuduj”; nie zmienia źródłowych danych właścicieli."
+        )
         lbl_t12_help.setWordWrap(True)
         lbl_t12_help.setStyleSheet("color:#2b5797; font-weight:bold;")
         t12_form.addRow("", lbl_t12_help)
 
         chk_extra_1a = QCheckBox("Tabela 1: pokaż Wysłano / Otrzymano / Uwagi")
         chk_extra_1a.setChecked(self.chk_extra_1a.isChecked())
-        t12_form.addRow("", chk_extra_1a)
+        t12_form.addRow(
+            "",
+            option_with_hint(
+                chk_extra_1a,
+                "Dodaje trzy robocze kolumny do Tabeli 1, np. do odnotowania "
+                "daty wysłania, odpowiedzi i własnej notatki.",
+            ),
+        )
 
         chk_extra_1b = QCheckBox("Tabela 2: pokaż Wysłano / Otrzymano / Uwagi")
         chk_extra_1b.setChecked(self.chk_extra_1b.isChecked())
-        t12_form.addRow("", chk_extra_1b)
+        t12_form.addRow(
+            "",
+            option_with_hint(
+                chk_extra_1b,
+                "Dodaje takie same trzy kolumny robocze do Tabeli 2.",
+            ),
+        )
 
         chk_przylacza_separate = QCheckBox("Przyłącza trzymaj w Tabeli 1, pozostałe w Tabeli 2")
         chk_przylacza_separate.setChecked(self.config.get('legal_przylacza_to_t1', True))
-        t12_form.addRow("", chk_przylacza_separate)
+        t12_form.addRow(
+            "",
+            option_with_hint(
+                chk_przylacza_separate,
+                "Rozdziela wpisy według kategorii: przyłącza trafiają do Tabeli 1, "
+                "a budowa/demontaż do Tabeli 2.",
+            ),
+        )
 
         combo_empty_kw = QComboBox()
         combo_empty_kw.addItems(["Zostaw puste", "Wpisz '-'", "Wpisz 'brak'"])
         combo_empty_kw.setCurrentIndex(self.config.get('legal_empty_kw_mode', 0))
+        combo_empty_kw.setToolTip(
+            "Wybierz wizualny zapis komórki, gdy dane działki nie zawierają numeru KW."
+        )
         t12_form.addRow("Gdy brak KW:", combo_empty_kw)
+        t12_form.addRow(
+            "",
+            help_label("Pusty wpis jest neutralny, „-” oznacza brak wartości, a „brak” opisuje go słownie."),
+        )
 
         combo_multi_parcels = QComboBox()
         combo_multi_parcels.addItems([
@@ -326,7 +812,15 @@ class LegalTitlesWidget(QWidget):
             "Wiele działek rozbijaj na osobne wiersze"
         ])
         combo_multi_parcels.setCurrentIndex(self.config.get('legal_t12_multi_parcels_mode', 0))
+        combo_multi_parcels.setToolTip(
+            "Wybiera układ działek jednego właściciela: pionowa lista, krótka lista "
+            "po przecinku lub pełne rozbicie na rekordy."
+        )
         t12_form.addRow("Gdy właściciel ma wiele działek:", combo_multi_parcels)
+        t12_form.addRow(
+            "",
+            help_label("Nowe linie są najczytelniejsze; przecinki są najbardziej zwarte; osobne wiersze ułatwiają dalsze filtrowanie."),
+        )
 
         combo_multi_owners = QComboBox()
         combo_multi_owners.addItems([
@@ -335,43 +829,256 @@ class LegalTitlesWidget(QWidget):
             "Właściciele w osobnych wierszach, gdy tryb na to pozwala"
         ])
         combo_multi_owners.setCurrentIndex(self.config.get('legal_t12_multi_owners_mode', 0))
+        combo_multi_owners.setToolTip(
+            "Wybiera sposób pokazania współwłaścicieli jednej działki."
+        )
         t12_form.addRow("Gdy działka ma wielu właścicieli:", combo_multi_owners)
+        t12_form.addRow(
+            "",
+            help_label("W jednej komórce dane są zwarte; osobne wiersze ułatwiają przypisanie odrębnych statusów osobom."),
+        )
 
-        t12_layout.addWidget(box_t12)
-        t12_layout.addStretch()
-        tabs.addTab(tab_t12, "3. Tabela 1/2")
+        t12_preview_box, t12_preview = example_panel(
+            "Podgląd — Tabela 1 / Tabela 2",
+            "Zmień ustawienia po lewej, aby porównać układ komórek.",
+            ("Tabela", "Kategoria", "Działki", "Właściciele", "Nr KW"),
+            (),
+            "",
+        )
+
+        def update_t12_preview(*_args):
+            parcel_mode = combo_multi_parcels.currentIndex()
+            owner_mode = combo_multi_owners.currentIndex()
+            parcel_value = (
+                "12/1<br>12/2"
+                if parcel_mode == 0
+                else "12/1, 12/2"
+            )
+            owner_value = (
+                "Anna Kowalska<br>Jan Nowak"
+                if owner_mode == 0
+                else "Anna Kowalska, Jan Nowak"
+            )
+            missing_kw = ("", "-", "brak")[max(0, min(combo_empty_kw.currentIndex(), 2))]
+            first_table = "Tabela 1" if chk_przylacza_separate.isChecked() else "Tabela 1 / 2"
+            second_table = "Tabela 2" if chk_przylacza_separate.isChecked() else "Tabela 1 / 2"
+
+            headers = ["Tabela", "Kategoria", "Działki", "Właściciele", "Nr KW"]
+            if chk_extra_1a.isChecked():
+                headers.append("Wysłano T1")
+            if chk_extra_1b.isChecked():
+                headers.append("Wysłano T2")
+
+            def make_row(table, category, parcels, owners, kw):
+                row = [table, category, parcels, owners, kw]
+                if chk_extra_1a.isChecked():
+                    row.append("2026-08-29" if table == "Tabela 1" else "")
+                if chk_extra_1b.isChecked():
+                    row.append("2026-08-29" if table == "Tabela 2" else "")
+                return tuple(row)
+
+            if parcel_mode == 2:
+                rows = [
+                    make_row(first_table, "Przyłącze", "12/1", owner_value, "GD1G/00012345/6"),
+                    make_row(first_table, "Przyłącze", "12/2", owner_value, "GD1G/00012345/6"),
+                ]
+            elif owner_mode == 2:
+                rows = [
+                    make_row(first_table, "Przyłącze", parcel_value, "Anna Kowalska", "GD1G/00012345/6"),
+                    make_row(first_table, "Przyłącze", "", "Jan Nowak", "GD1G/00012345/6"),
+                ]
+            else:
+                rows = [
+                    make_row(first_table, "Przyłącze", parcel_value, owner_value, "GD1G/00012345/6"),
+                ]
+            rows.append(
+                make_row(second_table, "Budowa", "15/1", "Jan Nowak", missing_kw)
+            )
+
+            parcel_layout = (
+                "osobne wiersze"
+                if parcel_mode == 2
+                else "nowe linie" if parcel_mode == 0 else "lista po przecinku"
+            )
+            owner_layout = (
+                "osobne wiersze"
+                if owner_mode == 2
+                else "nowe linie" if owner_mode == 0 else "lista po przecinku"
+            )
+            note = (
+                f"Działki: {parcel_layout}; współwłaściciele: {owner_layout}; "
+                f"brak KW: {'pusta komórka' if not missing_kw else missing_kw!r}. "
+                f"Przyłącza: {'Tabela 1' if chk_przylacza_separate.isChecked() else 'wspólny układ Tabel 1/2'}."
+            )
+            update_example_panel(
+                t12_preview,
+                "Podgląd odzwierciedla aktualnie zaznaczone kolumny, podział kategorii i format wielokrotnych danych.",
+                tuple(headers),
+                tuple(rows),
+                note,
+            )
+
+        for control in (chk_extra_1a, chk_extra_1b, chk_przylacza_separate):
+            control.toggled.connect(update_t12_preview)
+        for control in (combo_empty_kw, combo_multi_parcels, combo_multi_owners):
+            control.currentIndexChanged.connect(update_t12_preview)
+        update_t12_preview()
+        t12_content.addWidget(box_t12, 3)
+        t12_content.addWidget(t12_preview_box, 2)
+        t12_layout.addLayout(t12_content, 1)
+        add_settings_tab(tab_t12, "③ Tabele 1 i 2")
 
         # ───────────────────────── 4. Tabela 3
         tab_t3 = QWidget()
         t3_layout = QVBoxLayout(tab_t3)
-        box_t3 = QGroupBox("Tabela 3 – wykaz szczegółowy")
+        t3_intro = QLabel(
+            "<b>Krok 4.</b> Tabela 3 jest wykazem szczegółowym. Tutaj wybierasz, "
+            "czy ma pokazać każdy związek właściciela z działką i jak traktować braki danych."
+        )
+        t3_intro.setWordWrap(True)
+        t3_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        t3_layout.addWidget(t3_intro)
+        t3_content = QHBoxLayout()
+        t3_content.setSpacing(14)
+        box_t3 = QGroupBox("Ustawienia Tabeli 3")
         t3_form = QFormLayout(box_t3)
 
         chk_dash = QCheckBox("W T3 zmień ulicę na '-' jeśli jest taka sama jak miasto")
         chk_dash.setChecked(self.chk_dash_street.isChecked())
-        t3_form.addRow("", chk_dash)
+        t3_form.addRow(
+            "",
+            option_with_hint(
+                chk_dash,
+                "Gdy ulica zawiera dokładnie tę samą nazwę co miejscowość, komórka "
+                "ulicy pokaże „-”, aby nie dublować informacji.",
+            ),
+        )
 
         chk_t3_every_owner_parcel = QCheckBox("T3: zawsze jeden wiersz na właściciela i działkę")
         chk_t3_every_owner_parcel.setChecked(self.config.get('legal_t3_each_owner_parcel', True))
-        t3_form.addRow("", chk_t3_every_owner_parcel)
+        t3_form.addRow(
+            "",
+            option_with_hint(
+                chk_t3_every_owner_parcel,
+                "Dla działki z dwiema osobami powstaną dwa wiersze. Po wyłączeniu "
+                "układ może korzystać z grupowania wybranego w kroku 1.",
+            ),
+        )
 
         chk_t3_skip_no_kw = QCheckBox("T3: pomijaj pozycje bez KW")
         chk_t3_skip_no_kw.setChecked(self.config.get('legal_t3_skip_no_kw', False))
-        t3_form.addRow("", chk_t3_skip_no_kw)
+        t3_form.addRow(
+            "",
+            option_with_hint(
+                chk_t3_skip_no_kw,
+                "Nie doda do Tabeli 3 działek, dla których nie ma przypisanego numeru KW.",
+            ),
+        )
 
-        t3_layout.addWidget(box_t3)
-        t3_layout.addStretch()
-        tabs.addTab(tab_t3, "4. Tabela 3")
+        t3_preview_box, t3_preview = example_panel(
+            "Podgląd — Tabela 3",
+            "Zmień ustawienia po lewej, aby zobaczyć liczbę i treść wierszy.",
+            ("Lp.", "Właściciel", "Działka", "Ulica", "Nr KW"),
+            (),
+            "",
+        )
+
+        def update_t3_preview(*_args):
+            street_value = "-" if chk_dash.isChecked() else "Gdańsk"
+            if chk_t3_every_owner_parcel.isChecked():
+                rows = [
+                    ("1", "Anna Kowalska", "12/1", street_value, "GD1G/00012345/6"),
+                    ("2", "Jan Nowak", "12/1", street_value, "GD1G/00012345/6"),
+                ]
+                description = "Każdy współwłaściciel otrzymuje własny, szczegółowy wiersz."
+            else:
+                rows = [
+                    ("1", "Anna Kowalska<br>Jan Nowak", "12/1", street_value, "GD1G/00012345/6"),
+                ]
+                description = "Współwłaściciele mogą zostać zebrani w jednym wierszu zgodnie z trybem grupowania."
+            if not chk_t3_skip_no_kw.isChecked():
+                rows.append((str(len(rows) + 1), "Piotr Zieliński", "15/1", "ul. Polna", "brak"))
+            note = (
+                f"Ulica powtarzająca nazwę miasta: {'„-”' if chk_dash.isChecked() else 'pokazana w całości'}. "
+                f"Pozycje bez KW: {'pomijane' if chk_t3_skip_no_kw.isChecked() else 'pokazywane jako „brak”'}."
+            )
+            update_example_panel(
+                t3_preview,
+                description,
+                ("Lp.", "Właściciel", "Działka", "Ulica", "Nr KW"),
+                tuple(rows),
+                note,
+            )
+
+        for control in (chk_dash, chk_t3_every_owner_parcel, chk_t3_skip_no_kw):
+            control.toggled.connect(update_t3_preview)
+        update_t3_preview()
+        t3_content.addWidget(box_t3, 3)
+        t3_content.addWidget(t3_preview_box, 2)
+        t3_layout.addLayout(t3_content, 1)
+        add_settings_tab(tab_t3, "④ Tabela 3")
 
         # ───────────────────────── 5. Tabela 5
         tab_t5 = QWidget()
         t5_layout = QVBoxLayout(tab_t5)
-        box_t5 = QGroupBox("Tabela 5 – wykaz końcowy")
+        t5_intro = QLabel(
+            "<b>Krok 5.</b> Tabela 5 jest końcowym zestawieniem. Wybierz źródło "
+            "ulicy oraz pola, które powinny wizualnie tworzyć wspólne bloki."
+        )
+        t5_intro.setWordWrap(True)
+        t5_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        t5_layout.addWidget(t5_intro)
+        t5_content = QHBoxLayout()
+        t5_content.setSpacing(14)
+        box_t5 = QGroupBox("Ustawienia Tabeli 5")
         t5_form = QFormLayout(box_t5)
 
         chk_t5_street = QCheckBox("Zaciągaj ulicę do T5")
         chk_t5_street.setChecked(self.chk_t5_street.isChecked())
-        t5_form.addRow("", chk_t5_street)
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_t5_street,
+                "Dodaje kolumnę ulicy do końcowego zestawienia. Po odznaczeniu "
+                "Tabela 5 pozostaje krótsza i nie zawiera danych ulicy.",
+            ),
+        )
+
+        chk_t5_city = QCheckBox("Zaciągaj miejscowość do T5")
+        chk_t5_city.setChecked(
+            self.chk_t5_city.isChecked()
+            if hasattr(self, 'chk_t5_city')
+            else self.config.get('legal_t5_pull_city', False)
+        )
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_t5_city,
+                "Wypełnia kolumnę Miejscowość w Tabeli 5 według źródła "
+                "wybranego poniżej. Po odznaczeniu kolumna zostaje pusta.",
+            ),
+        )
+
+        combo_city_source = QComboBox()
+        combo_city_source.addItems([
+            "Miejscowość z projektu (domyślnie)",
+            "Miejscowośc działki z wypisu",
+            "Adres właściciela – miejscowość",
+        ])
+        combo_city_source.setCurrentIndex(self.config.get('legal_t5_city_source', 0))
+        combo_city_source.setToolTip(
+            "Wskazuje, skąd pobierana jest treść kolumny Miejscowość w Tabeli 5."
+        )
+        t5_form.addRow("Źródło miejscowości T5:", combo_city_source)
+        t5_form.addRow(
+            "",
+            help_label(
+                "Domyślnie wpisywana jest miejscowość z danych projektu. "
+                "Drugi wariant bierze „Miejscowośc działki” z Wypisów, "
+                "trzeci – miejscowość z adresu właściciela. Gdy wybrane "
+                "źródło jest puste, program sięga po miejscowość projektu."
+            ),
+        )
 
         combo_street_source = QComboBox()
         combo_street_source.addItems([
@@ -380,59 +1087,265 @@ class LegalTitlesWidget(QWidget):
             "Ulica działki z wypisu / pola Ulica Działki",
         ])
         combo_street_source.setCurrentIndex(self.config.get('legal_t5_street_source', 0))
+        combo_street_source.setToolTip("Wskazuje, skąd pobierana jest treść kolumny Ulica w Tabeli 5.")
         t5_form.addRow("Źródło ulicy T5:", combo_street_source)
+        t5_form.addRow(
+            "",
+            help_label("Sama ulica ukrywa numer domu; drugi wariant go zachowuje; trzeci korzysta z adresu przypisanego do działki."),
+        )
 
         chk_group_odd = QCheckBox("T5: grupuj/scalaj Oddziały")
         chk_group_odd.setChecked(getattr(self, 'chk_group_odd', None).isChecked() if hasattr(self, 'chk_group_odd') else False)
-        t5_form.addRow("", chk_group_odd)
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_group_odd,
+                "Identyczne, sąsiadujące nazwy oddziału pojawią się jako jeden "
+                "wspólny blok zamiast w każdym wierszu.",
+            ),
+        )
 
         chk_group_tytul = QCheckBox("T5: grupuj/scalaj Tytuły prawne")
         chk_group_tytul.setChecked(getattr(self, 'chk_group_tytul', None).isChecked() if hasattr(self, 'chk_group_tytul') else False)
-        t5_form.addRow("", chk_group_tytul)
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_group_tytul,
+                "Powtarzający się tytuł prawny jest scalany pionowo dla kolejnych wpisów.",
+            ),
+        )
 
         chk_group_urz = QCheckBox("T5: grupuj/scalaj Rodzaje urządzenia")
         chk_group_urz.setChecked(getattr(self, 'chk_group_urz', None).isChecked() if hasattr(self, 'chk_group_urz') else False)
-        t5_form.addRow("", chk_group_urz)
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_group_urz,
+                "Powtarzający się rodzaj urządzenia będzie widoczny raz dla wspólnego bloku.",
+            ),
+        )
 
         chk_t5_merge_kw = QCheckBox("T5: scalaj identyczne KW")
         chk_t5_merge_kw.setChecked(self.config.get('legal_t5_merge_kw', True))
-        t5_form.addRow("", chk_t5_merge_kw)
+        t5_form.addRow(
+            "",
+            option_with_hint(
+                chk_t5_merge_kw,
+                "Ten sam numer KW w kolejnych wierszach będzie pokazany jako jedna "
+                "scalona komórka, zamiast wielokrotnie powtórzony.",
+            ),
+        )
 
-        t5_layout.addWidget(box_t5)
-        t5_layout.addStretch()
-        tabs.addTab(tab_t5, "5. Tabela 5")
+        t5_preview_box, t5_preview = example_panel(
+            "Podgląd — Tabela 5",
+            "Zmień ustawienia po lewej, aby zobaczyć od razu efekt scalenia kolumn.",
+            ("Działka", "Ulica", "Oddział", "Tytuł", "Urządzenie", "KW"),
+            (),
+            "",
+        )
+
+        def update_t5_preview(*_args):
+            source_index = max(0, min(combo_street_source.currentIndex(), 2))
+            street_values = ("ul. Leśna", "ul. Leśna 12", "ul. Działkowa")
+            city_index = max(0, min(combo_city_source.currentIndex(), 2))
+            city_values = ("Maki", "Żukowo", "Gdańsk")
+            headers = ["Działka"]
+            if chk_t5_city.isChecked():
+                headers.append("Miejscowość")
+            if chk_t5_street.isChecked():
+                headers.append("Ulica")
+            headers.extend(("Oddział", "Tytuł", "Urządzenie", "KW"))
+
+            def make_row(parcel, second_row=False):
+                row = [parcel]
+                if chk_t5_city.isChecked():
+                    row.append(city_values[city_index])
+                if chk_t5_street.isChecked():
+                    row.append(street_values[source_index])
+                row.extend(
+                    (
+                        "" if second_row and chk_group_odd.isChecked() else "Gdańsk",
+                        "" if second_row and chk_group_tytul.isChecked() else "Służebność",
+                        "" if second_row and chk_group_urz.isChecked() else "Linia SN",
+                        "" if second_row and chk_t5_merge_kw.isChecked() else "GD1G/00012345/6",
+                    )
+                )
+                return tuple(row)
+
+            rows = (make_row("12/1"), make_row("12/2", second_row=True))
+            street_note = (
+                f"ulica: {street_values[source_index]}"
+                if chk_t5_street.isChecked()
+                else "kolumna ulicy ukryta"
+            )
+            city_note = (
+                f"miejscowość: {city_values[city_index]}"
+                if chk_t5_city.isChecked()
+                else "kolumna miejscowości pusta"
+            )
+            grouped_columns = [
+                name
+                for name, control in (
+                    ("Oddział", chk_group_odd),
+                    ("Tytuł", chk_group_tytul),
+                    ("Urządzenie", chk_group_urz),
+                    ("KW", chk_t5_merge_kw),
+                )
+                if control.isChecked()
+            ]
+            note = (
+                f"{city_note}, {street_note}. Scalone kolumny: "
+                f"{', '.join(grouped_columns) if grouped_columns else 'brak — dane są powtarzane w każdym wierszu'}."
+            )
+            update_example_panel(
+                t5_preview,
+                "Puste komórki drugiego wiersza oznaczają wartość scaloną z pierwszym rekordem.",
+                tuple(headers),
+                rows,
+                note,
+            )
+
+        for control in (
+            chk_t5_street,
+            chk_t5_city,
+            chk_group_odd,
+            chk_group_tytul,
+            chk_group_urz,
+            chk_t5_merge_kw,
+        ):
+            control.toggled.connect(update_t5_preview)
+        combo_street_source.currentIndexChanged.connect(update_t5_preview)
+        combo_city_source.currentIndexChanged.connect(update_t5_preview)
+        update_t5_preview()
+        t5_content.addWidget(box_t5, 3)
+        t5_content.addWidget(t5_preview_box, 2)
+        t5_layout.addLayout(t5_content, 1)
+        add_settings_tab(tab_t5, "⑤ Tabela 5")
 
         # ───────────────────────── 6. Wygląd
         tab_view = QWidget()
         view_layout = QVBoxLayout(tab_view)
-        box_view = QGroupBox("Wygląd tabel")
+        view_intro = QLabel(
+            "<b>Krok 6.</b> Te ustawienia zmieniają wyłącznie czytelność tabel na ekranie. "
+            "Nie zmieniają danych ani plików źródłowych."
+        )
+        view_intro.setWordWrap(True)
+        view_intro.setStyleSheet("color:#607d8b; padding:4px 2px;")
+        view_layout.addWidget(view_intro)
+        view_content = QHBoxLayout()
+        view_content.setSpacing(14)
+        box_view = QGroupBox("Czytelność tabel na ekranie")
         view_form = QFormLayout(box_view)
 
         chk_wrap = QCheckBox("Zawijaj tekst w komórkach")
         chk_wrap.setChecked(self.config.get('legal_view_word_wrap', True))
-        view_form.addRow("", chk_wrap)
+        view_form.addRow(
+            "",
+            option_with_hint(
+                chk_wrap,
+                "Długi adres lub nazwa właściciela przejdzie do kolejnej linii, "
+                "zamiast zostać ucięta w wąskiej kolumnie.",
+            ),
+        )
 
         chk_resize = QCheckBox("Automatycznie dopasuj wysokość wierszy")
         chk_resize.setChecked(self.config.get('legal_view_auto_resize_rows', True))
-        view_form.addRow("", chk_resize)
+        view_form.addRow(
+            "",
+            option_with_hint(
+                chk_resize,
+                "Wiersz zwiększy wysokość, aby pokazać cały zawinięty tekst. "
+                "Najlepiej używać razem z zawijaniem tekstu.",
+            ),
+        )
 
         chk_alt = QCheckBox("Naprzemienne kolory wierszy")
         chk_alt.setChecked(self.config.get('legal_view_alternating_rows', True))
-        view_form.addRow("", chk_alt)
+        view_form.addRow(
+            "",
+            option_with_hint(
+                chk_alt,
+                "Co drugi wiersz otrzyma delikatnie inny kolor tła, dzięki czemu "
+                "łatwiej śledzić dane w szerokiej tabeli.",
+            ),
+        )
 
         chk_grid = QCheckBox("Pokaż linie siatki")
         chk_grid.setChecked(self.config.get('legal_view_show_grid', True))
-        view_form.addRow("", chk_grid)
+        view_form.addRow(
+            "",
+            option_with_hint(
+                chk_grid,
+                "Włącza cienkie linie między komórkami; wyłącz je dla bardziej "
+                "minimalistycznego wyglądu.",
+            ),
+        )
 
         chk_stretch = QCheckBox("Rozciągaj ostatnią kolumnę")
         chk_stretch.setChecked(self.config.get('legal_view_stretch_last_column', False))
-        view_form.addRow("", chk_stretch)
+        view_form.addRow(
+            "",
+            option_with_hint(
+                chk_stretch,
+                "Ostatnia kolumna wykorzysta pozostałe wolne miejsce zamiast "
+                "pozostawiać pusty obszar po prawej stronie tabeli.",
+            ),
+        )
 
-        view_layout.addWidget(box_view)
-        view_layout.addStretch()
-        tabs.addTab(tab_view, "6. Wygląd")
+        view_preview_box, view_preview = example_panel(
+            "Podgląd — wygląd wierszy",
+            "Zmień ustawienia po lewej, aby porównać czytelność tego samego fragmentu.",
+            ("Lp.", "Właściciel", "Adres / uwaga"),
+            (),
+            "",
+        )
+
+        def update_view_preview(*_args):
+            wrapping = chk_wrap.isChecked()
+            auto_height = chk_resize.isChecked()
+            long_text = (
+                "ul. Bardzo Długa 123<br>80-001 Gdańsk"
+                if wrapping
+                else "ul. Bardzo Długa 123, 80-001 Gdańsk"
+            )
+            if not auto_height and wrapping:
+                long_text = "ul. Bardzo Długa 123<br><i>(wysokość wiersza stała)</i>"
+            last_header = (
+                "Adres / uwaga — szeroka kolumna"
+                if chk_stretch.isChecked()
+                else "Adres / uwaga"
+            )
+            note = (
+                f"Zawijanie: {'włączone' if wrapping else 'wyłączone'}; "
+                f"automatyczna wysokość: {'włączona' if auto_height else 'wyłączona'}; "
+                f"naprzemienne tło: {'włączone' if chk_alt.isChecked() else 'wyłączone'}; "
+                f"siatka: {'widoczna' if chk_grid.isChecked() else 'ukryta'}; "
+                f"ostatnia kolumna: {'rozciągnięta' if chk_stretch.isChecked() else 'standardowa'}."
+            )
+            update_example_panel(
+                view_preview,
+                "Ten sam przykład zmienia wygląd natychmiast po zaznaczeniu opcji.",
+                ("Lp.", "Właściciel", last_header),
+                (
+                    ("1", "Anna Kowalska", long_text),
+                    ("2", "Jan Nowak", "Oczekuje na odpowiedź"),
+                ),
+                note,
+                show_grid=chk_grid.isChecked(),
+                alternating=chk_alt.isChecked(),
+            )
+
+        for control in (chk_wrap, chk_resize, chk_alt, chk_grid, chk_stretch):
+            control.toggled.connect(update_view_preview)
+        update_view_preview()
+        view_content.addWidget(box_view, 3)
+        view_content.addWidget(view_preview_box, 2)
+        view_layout.addLayout(view_content, 1)
+        add_settings_tab(tab_view, "⑥ Wygląd")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("💾 Zapisz i przebuduj")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Anuluj")
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         layout.addWidget(buttons)
@@ -440,7 +1353,9 @@ class LegalTitlesWidget(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-        new_group = combo_group.currentIndex()
+        new_group = mode_button_group.checkedId()
+        if new_group < 0:
+            new_group = current_group_mode
         self.config['legal_group_owners'] = new_group
         self.config['legal_owner_sep'] = combo_pair.currentIndex()
         self.config['legal_split_couples_option1'] = chk_split_couples.isChecked()
@@ -460,6 +1375,8 @@ class LegalTitlesWidget(QWidget):
         self.config['legal_t3_skip_no_kw'] = chk_t3_skip_no_kw.isChecked()
         self.config['legal_t5_pull_street'] = chk_t5_street.isChecked()
         self.config['legal_t5_street_source'] = combo_street_source.currentIndex()
+        self.config['legal_t5_city_source'] = combo_city_source.currentIndex()
+        self.config['legal_t5_pull_city'] = chk_t5_city.isChecked()
         self.config['legal_t5_merge_kw'] = chk_t5_merge_kw.isChecked()
         self.config['legal_view_word_wrap'] = chk_wrap.isChecked()
         self.config['legal_view_auto_resize_rows'] = chk_resize.isChecked()
@@ -480,6 +1397,7 @@ class LegalTitlesWidget(QWidget):
         if hasattr(self, 'combo_t12_owner_mode'):
             self.combo_t12_owner_mode.blockSignals(True); self.combo_t12_owner_mode.setCurrentIndex(combo_multi_owners.currentIndex()); self.combo_t12_owner_mode.blockSignals(False)
         self.chk_t5_street.blockSignals(True); self.chk_t5_street.setChecked(chk_t5_street.isChecked()); self.chk_t5_street.blockSignals(False)
+        self.chk_t5_city.blockSignals(True); self.chk_t5_city.setChecked(chk_t5_city.isChecked()); self.chk_t5_city.blockSignals(False)
         self.chk_dash_street.blockSignals(True); self.chk_dash_street.setChecked(chk_dash.isChecked()); self.chk_dash_street.blockSignals(False)
         self.chk_extra_1a.setChecked(chk_extra_1a.isChecked())
         self.chk_extra_1b.setChecked(chk_extra_1b.isChecked())
@@ -516,7 +1434,20 @@ class LegalTitlesWidget(QWidget):
         self._sync_with_owners(show_info=False)
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        # Cała zakładka jest przewijana — dzięki temu przy mniejszym oknie
+        # programu żadna sekcja (a zwłaszcza pola Metryki) nie znika.
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        page_scroll = QScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        page = QWidget()
+        page_scroll.setWidget(page)
+        outer_layout.addWidget(page_scroll)
+
+        layout = QVBoxLayout(page)
         layout.setSpacing(10)
         self.multi_line_delegate = MultiLineTextDelegate(self)
 
@@ -525,6 +1456,9 @@ class LegalTitlesWidget(QWidget):
         layout.addWidget(hdr)
 
         sync_box = QGroupBox('Dane z bazy i Ustawienia Generatora')
+        sync_box.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         sync_layout = QVBoxLayout(sync_box)
 
         row1 = QHBoxLayout()
@@ -560,6 +1494,16 @@ class LegalTitlesWidget(QWidget):
         self.chk_t5_street.setChecked(self.config.get('legal_t5_pull_street', False))
         self.chk_t5_street.toggled.connect(lambda checked: self.config.update({'legal_t5_pull_street': checked}))
         row2.addWidget(self.chk_t5_street)
+        row2.addWidget(QLabel(" | "))
+
+        self.chk_t5_city = QCheckBox("Zaciągaj miejscowość do T5")
+        self.chk_t5_city.setToolTip(
+            "Wypełnia kolumnę Miejscowość w Tabeli 5. Źródło (projekt, "
+            "wypis albo adres właściciela) wybierzesz w Ustawieniach."
+        )
+        self.chk_t5_city.setChecked(self.config.get('legal_t5_pull_city', False))
+        self.chk_t5_city.toggled.connect(lambda checked: self.config.update({'legal_t5_pull_city': checked}))
+        row2.addWidget(self.chk_t5_city)
         row2.addWidget(QLabel(" | "))
         
         self.chk_dash_street = QCheckBox("W T3 zmień ulicę na '-' jeśli jest jak miasto")
@@ -711,8 +1655,23 @@ class LegalTitlesWidget(QWidget):
         ly2.addWidget(self.table_2)
         self.tabs.addTab(tab3, "Tabela 3 - Wykaz szczegółowy (Szablon 2)")
 
+        # Metryka w oknie przewijanym — przy mniejszym oknie programu pola
+        # do wpisywania pozostają dostępne (pionowy pasek przewijania).
         tab4 = QWidget()
-        ly_4 = QFormLayout(tab4)
+        tab4_outer = QVBoxLayout(tab4)
+        tab4_outer.setContentsMargins(0, 0, 0, 0)
+        tab4_scroll = QScrollArea()
+        tab4_scroll.setWidgetResizable(True)
+        tab4_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        tab4_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        tab4_inner = QWidget()
+        ly_4 = QFormLayout(tab4_inner)
+        ly_4.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        ly_4.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        ly_4.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        tab4_scroll.setWidget(tab4_inner)
+        tab4_scroll.setMinimumHeight(160)
+        tab4_outer.addWidget(tab4_scroll)
         self.t4_tabela = QLineEdit()
         ly_4.addRow("TABELA:", self.t4_tabela)
         self.t4_temat = QLineEdit()
@@ -725,6 +1684,15 @@ class LegalTitlesWidget(QWidget):
         ly_4.addRow("LOKALIZACJA:", self.t4_lokalizacja)
         self.t4_inwestor = QLineEdit()
         ly_4.addRow("INWESTOR:", self.t4_inwestor)
+        for field in (
+            self.t4_tabela, self.t4_temat, self.t4_nr_obi,
+            self.t4_projektant, self.t4_lokalizacja, self.t4_inwestor,
+        ):
+            field.setMinimumWidth(180)
+            field.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+
         btn_save_defaults = QPushButton("💾 Zapisz aktualnie wpisane dane jako DOMYŚLNE dla nowych projektów")
         btn_save_defaults.setStyleSheet("margin-top: 20px; padding: 5px; background-color: #e9ecef;")
         btn_save_defaults.clicked.connect(self._save_global_defaults)
@@ -781,9 +1749,13 @@ class LegalTitlesWidget(QWidget):
         ly_5.addWidget(self.table_3)
         self.tabs.addTab(tab5, "Tabela 5 - Wykaz końcowy (Szablon 3)")
 
-        layout.addWidget(self.tabs)
+        self.tabs.setMinimumHeight(320)
+        layout.addWidget(self.tabs, 1)
 
         export_box = QGroupBox('Eksport do Twoich szablonów Excel (.xlsm / .xlsx)')
+        export_box.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         export_layout = QVBoxLayout(export_box)
 
         paths_layout = QFormLayout()
@@ -794,7 +1766,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl1.clicked.connect(lambda: self._browse_tmpl(self.tmpl_1_edit, 'legal_tmpl_1'))
         row1.addWidget(self.tmpl_1_edit)
         row1.addWidget(btn_tmpl1)
-        paths_layout.addRow('Szablon 1 (Działki):', row1)
+        paths_layout.addRow('Szablon 1 — Wykaz działek podmiotów pozostałych:', row1)
 
         row2 = QHBoxLayout()
         self.tmpl_2_edit = QLineEdit()
@@ -803,7 +1775,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl2.clicked.connect(lambda: self._browse_tmpl(self.tmpl_2_edit, 'legal_tmpl_2'))
         row2.addWidget(self.tmpl_2_edit)
         row2.addWidget(btn_tmpl2)
-        paths_layout.addRow('Szablon 2 (Wykaz właścicieli):', row2)
+        paths_layout.addRow('Szablon 2 — Wykaz właścicieli nieruchomości szczegółowy:', row2)
 
         row3 = QHBoxLayout()
         self.tmpl_3_edit = QLineEdit()
@@ -812,7 +1784,7 @@ class LegalTitlesWidget(QWidget):
         btn_tmpl3.clicked.connect(lambda: self._browse_tmpl(self.tmpl_3_edit, 'legal_tmpl_3'))
         row3.addWidget(self.tmpl_3_edit)
         row3.addWidget(btn_tmpl3)
-        paths_layout.addRow('Szablon 3 (Tabela końcowa):', row3)
+        paths_layout.addRow('Szablon 3 — Nowa tabela końcowa:', row3)
 
         export_layout.addLayout(paths_layout)
 
@@ -960,9 +1932,23 @@ class LegalTitlesWidget(QWidget):
         self.table_3.viewport().update()
 
     def _browse_tmpl(self, line_edit, config_key):
-        start_dir = line_edit.text().strip()
-        if start_dir and Path(start_dir).is_file(): start_dir = str(Path(start_dir).parent)
-        path, _ = QFileDialog.getOpenFileName(self, 'Wybierz szablon Excel', start_dir, 'Excel (*.xlsx *.xlsm)')
+        from utils.templates import (
+            LEGAL_TITLES_FOLDER_NAMES,
+            resolve_template_start_directory,
+        )
+
+        start_dir = resolve_template_start_directory(
+            self.config,
+            config_key='path_tytuly',
+            folder_names=LEGAL_TITLES_FOLDER_NAMES,
+            current_path=line_edit.text(),
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Wybierz szablon Excel',
+            str(start_dir),
+            'Excel (*.xlsx *.xlsm)',
+        )
         if path:
             line_edit.setText(path)
             self.config[config_key] = path
@@ -1322,6 +2308,9 @@ class LegalTitlesWidget(QWidget):
             group_mode = 0
         pull_t5_street = self.chk_t5_street.isChecked()
         t5_street_source = self.config.get('legal_t5_street_source', 0)
+        pull_t5_city = self.chk_t5_city.isChecked()
+        t5_city_source = self.config.get('legal_t5_city_source', 0)
+        project_city = str(self.active_project.get('city', '') or '').strip()
         dash_t3_street = self.chk_dash_street.isChecked()
         sort_parcels = self.chk_sort_parcels.isChecked()
 
@@ -1423,8 +2412,26 @@ class LegalTitlesWidget(QWidget):
                         street_t5 = f"{street} {house}".strip() if street else house
                     else:
                         street_t5 = p_addr if p_addr else o.get('parcel_street', '')
+                        # Wypis trzyma miejscowość i ulicę razem
+                        # („MAKI, WYBICKIEGO J. 50”) — bierzemy samą ulicę.
+                        street_t5 = split_parcel_location(street_t5).street or street_t5
                 else:
                     street_t5 = ""
+
+                # Miejscowość: własne źródło, z zapasem w danych projektu.
+                if pull_t5_city:
+                    if t5_city_source == 1:
+                        city_t5 = split_parcel_location(p_addr).city if p_addr else ''
+                        if not city_t5:
+                            city_t5 = str(o.get('city', '') or '').strip()
+                    elif t5_city_source == 2:
+                        city_t5 = str(o.get('city', '') or '').strip()
+                    else:
+                        city_t5 = project_city
+                    if not city_t5:
+                        city_t5 = project_city
+                else:
+                    city_t5 = ""
 
                 key_t5 = f"{base_name}::{p_num}"
                 key_t5_alt = f"{pair_key_alt(base_name)}::{p_num}"
@@ -1470,7 +2477,7 @@ class LegalTitlesWidget(QWidget):
                     if p_num not in t5_grouped:
                         t5_grouped[p_num] = {
                             'owners': [], 'kw': [], 'gmina': p_muni,
-                            'miejscowosc': o.get('city', ''), 'ulica': street_t5, 'obreb': p_prec_num
+                            'miejscowosc': city_t5, 'ulica': street_t5, 'obreb': p_prec_num
                         }
                     if name_t5 not in t5_grouped[p_num]['owners']: t5_grouped[p_num]['owners'].append(name_t5)
                     if p_kw and p_kw not in t5_grouped[p_num]['kw']: t5_grouped[p_num]['kw'].append(p_kw)
@@ -1481,7 +2488,7 @@ class LegalTitlesWidget(QWidget):
                         p_muni = p.get('municipality', o.get('municipality', '')) if isinstance(p, dict) else o.get('municipality', '')
                         p_prec_num = p.get('precinct_number', o.get('precinct_number', '')) if isinstance(p, dict) else o.get('precinct_number', '')
                         self._insert_to_table(self.table_3, key_t5, [
-                            "", "Gdańsk", "", "", p_muni, o.get('city', ''), street_t5, name_t5, "",
+                            "", "Gdańsk", "", "", p_muni, city_t5, street_t5, name_t5, "",
                             p_kw, p_num, p_prec_num, "", "0", "0", "", ""
                         ])
                         new_r = self.table_3.rowCount() - 1
@@ -1714,10 +2721,30 @@ class LegalTitlesWidget(QWidget):
         if show_info:
             QMessageBox.information(self, "Zakończono", f"Zaktualizowano / Dodano {added} powiązań do tabel.")
 
+    def _auto_export_dir(self):
+        """Podfolder projektu na tytuły prawne (albo ``None`` = pytaj)."""
+        return project_output_dir(
+            self.config, 'legal_titles', self.active_project.get('path', '')
+        )
+
+    def _ask_export_path(self, title: str, default_path: str):
+        """Zwraca ścieżkę zapisu — automatyczną albo wskazaną w oknie."""
+        auto_dir = self._auto_export_dir()
+        if auto_dir is not None:
+            return str(auto_dir / Path(default_path).name)
+        path, _ = QFileDialog.getSaveFileName(
+            self, title, default_path, 'Excel (*.xlsx)'
+        )
+        return path
+
     def _get_default_export_path(self, config_key: str, default_pattern: str):
-        last_dir = self.config.get('last_legal_export_dir', '')
-        if not last_dir or not Path(last_dir).exists():
-            last_dir = self.active_project.get('path', '')
+        auto_dir = self._auto_export_dir()
+        if auto_dir is not None:
+            last_dir = str(auto_dir)
+        else:
+            last_dir = self.config.get('last_legal_export_dir', '')
+            if not last_dir or not Path(last_dir).exists():
+                last_dir = self.active_project.get('path', '')
 
         symbol = self.active_project.get('symbol', 'PROJEKT')
         city = self.active_project.get('city', 'Miejscowosc')
@@ -1744,7 +2771,7 @@ class LegalTitlesWidget(QWidget):
             return QMessageBox.warning(self, 'Brak Szablonu', 'Wybierz najpierw istniejący szablon programu Excel.')
 
         default_path = self._get_default_export_path('legal_name_1', 'Wykaz_dzialek_podmiotow_{symbol}.xlsx')
-        path, _ = QFileDialog.getSaveFileName(self, 'Zapisz jako (Zawsze format .xlsx)', default_path, 'Excel (*.xlsx)')
+        path = self._ask_export_path('Zapisz jako (Zawsze format .xlsx)', default_path)
         if not path: return
         if not path.endswith('.xlsx'): path += '.xlsx'
 
@@ -1776,7 +2803,7 @@ class LegalTitlesWidget(QWidget):
             return QMessageBox.warning(self, 'Brak Szablonu', 'Wybierz najpierw istniejący szablon programu Excel.')
 
         default_path = self._get_default_export_path('legal_name_2', 'Wykaz_szczegolowy_{symbol}.xlsx')
-        path, _ = QFileDialog.getSaveFileName(self, 'Zapisz jako (Zawsze .xlsx)', default_path, 'Excel (*.xlsx)')
+        path = self._ask_export_path('Zapisz jako (Zawsze .xlsx)', default_path)
         if not path: return
         if not path.endswith('.xlsx'): path += '.xlsx'
 
@@ -1800,7 +2827,7 @@ class LegalTitlesWidget(QWidget):
             return QMessageBox.warning(self, 'Brak Szablonu', 'Wybierz najpierw istniejący szablon programu Excel.')
 
         default_path = self._get_default_export_path('legal_name_3', 'Tabela_koncowa_{symbol}.xlsx')
-        path, _ = QFileDialog.getSaveFileName(self, 'Zapisz jako (Zawsze .xlsx)', default_path, 'Excel (*.xlsx)')
+        path = self._ask_export_path('Zapisz jako (Zawsze .xlsx)', default_path)
         if not path: return
         if not path.endswith('.xlsx'): path += '.xlsx'
 

@@ -5,12 +5,27 @@ import json
 import re
 import webbrowser
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
+from utils.shipment_tracking import (
+    TRACKING_CATEGORY_ORDER,
+    format_tracking_event,
+    format_tracking_history,
+    format_tracking_history_lines,
+    latest_tracking_event,
+    normalize_tracking_code,
+    parse_tracking_response,
+    sort_tracking_events,
+    summarize_tracking_statuses,
+    tracking_status_category,
+    tracking_status_color,
+    tracking_status_icon,
+)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QGroupBox,
-    QHeaderView, QAbstractItemView, QCheckBox, QComboBox
+    QHeaderView, QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout,
+    QScrollArea, QTabWidget, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication
@@ -25,20 +40,29 @@ class ShipmentTrackerWidget(QWidget):
         self.active_project_path = None
         self.current_project_name = ''
         self.global_mode = False
+        self._summary_shipments: list[dict] = []
         self._build_ui()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
-        # Nagłówek
         hdr = QLabel('📦 Śledzenie i Historia Przesyłek')
         hdr.setStyleSheet('font-size:16px; font-weight:700;')
         layout.addWidget(hdr)
 
+        self.history_tabs = QTabWidget()
+        self.history_tabs.setObjectName('shipment_history_tabs')
+        layout.addWidget(self.history_tabs, 1)
+
+        history_page = QWidget()
+        history_layout = QVBoxLayout(history_page)
+        history_layout.setContentsMargins(10, 12, 10, 10)
+        history_layout.setSpacing(8)
+
         # Górny pasek opcji (filtr i przyciski akcji)
         top_row = QHBoxLayout()
-        
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText('Szukaj po adresacie lub kodzie znaczka...')
         self.search_edit.textChanged.connect(self._apply_filter)
@@ -63,9 +87,21 @@ class ShipmentTrackerWidget(QWidget):
         self.chk_show_c6.stateChanged.connect(self._on_type_filter_changed)
         top_row.addWidget(self.chk_show_c6)
 
-        self.btn_fetch_status = QPushButton('🔄 Pobierz statusy')
+        self.btn_fetch_status = QPushButton('🔄 Pobierz statusy Poczty Polskiej')
+        self.btn_fetch_status.setToolTip(
+            'Pobiera najnowsze zdarzenia z systemu śledzenia Poczty Polskiej.'
+        )
         self.btn_fetch_status.clicked.connect(self._fetch_all_tracking_statuses)
         top_row.addWidget(self.btn_fetch_status)
+
+        self.btn_show_history = QPushButton('🕘 Pełna historia zdarzeń')
+        self.btn_show_history.setToolTip(
+            'Pokazuje wszystkie zdarzenia zaznaczonej przesyłki – '
+            'od najwcześniejszego do najnowszego.\n'
+            'To samo okno otworzy dwuklik na kolumnie „Status Poczty Polskiej”.'
+        )
+        self.btn_show_history.clicked.connect(self._show_selected_tracking_history)
+        top_row.addWidget(self.btn_show_history)
 
         self.btn_export_csv = QPushButton('💾 Eksportuj do CSV')
         self.btn_export_csv.clicked.connect(self._export_csv)
@@ -75,16 +111,16 @@ class ShipmentTrackerWidget(QWidget):
         self.btn_clear_history.setObjectName('btn_danger')
         self.btn_clear_history.clicked.connect(self._clear_history)
         top_row.addWidget(self.btn_clear_history)
-
-        layout.addLayout(top_row)
+        history_layout.addLayout(top_row)
 
         # Tabela przesyłek
         self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels([
-            'Projekt', 'Data generowania', 'Adresat / Opis', 'Działki', 'Typ koperty', 'Kod znaczka', 'Kopiuj', 'Śledzenie', 'Status', 'Ścieżka pliku'
+            'Projekt', 'Data generowania', 'Adresat / Opis', 'Działki',
+            'Typ koperty', 'Kod znaczka', 'Kopiuj', 'Śledzenie',
+            'Status Poczty Polskiej', 'Ścieżka pliku'
         ])
-        
-        # Ustawienia kolumn
+
         header = self.table.horizontalHeader()
         header.setSectionsMovable(True)
         for col in range(0, 9):
@@ -96,19 +132,196 @@ class ShipmentTrackerWidget(QWidget):
         if table_state:
             from PySide6.QtCore import QByteArray
             header.restoreState(QByteArray.fromHex(table_state.encode()))
-        header.sectionResized.connect(lambda *args: self.config.update({'table_state_shipments': header.saveState().toHex().data().decode()}))
-        header.sectionMoved.connect(lambda *args: self.config.update({'table_state_shipments': header.saveState().toHex().data().decode()}))
-        
+        header.sectionResized.connect(
+            lambda *args: self.config.update({
+                'table_state_shipments': header.saveState().toHex().data().decode()
+            })
+        )
+        header.sectionMoved.connect(
+            lambda *args: self.config.update({
+                'table_state_shipments': header.saveState().toHex().data().decode()
+            })
+        )
+
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.doubleClicked.connect(self._on_row_double_clicked)
-        
-        layout.addWidget(self.table)
+        history_layout.addWidget(self.table, 1)
 
         self.lbl_summary = QLabel('Łącznie przesyłek: 0')
-        self.lbl_summary.setStyleSheet('color:#aaa; font-size:12px;')
-        layout.addWidget(self.lbl_summary)
+        self.lbl_summary.setObjectName('shipment_history_count')
+        history_layout.addWidget(self.lbl_summary)
+        self.history_tabs.addTab(history_page, '📋 Historia przesyłek')
+
+        # Podsumowanie może mieć dziewięć kart statusów i tabelę szczegółów.
+        # Umieszczamy je w przewijanym obszarze, aby dolna ramka była zawsze
+        # dostępna także przy małym oknie albo dużym skalowaniu systemowym.
+        self.summary_scroll = QScrollArea()
+        self.summary_scroll.setObjectName('shipment_summary_scroll')
+        self.summary_scroll.setWidgetResizable(True)
+        self.summary_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.summary_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        summary_page = QWidget()
+        summary_page.setObjectName('shipment_summary_page')
+        self.summary_scroll.setWidget(summary_page)
+        summary_layout = QVBoxLayout(summary_page)
+        summary_layout.setContentsMargins(14, 16, 14, 14)
+        summary_layout.setSpacing(12)
+
+        summary_intro = QFrame()
+        summary_intro.setObjectName('shipment_summary_intro')
+        intro_layout = QVBoxLayout(summary_intro)
+        intro_layout.setContentsMargins(18, 16, 18, 16)
+        intro_layout.setSpacing(5)
+        summary_title = QLabel('Podsumowanie statusów kopert')
+        summary_title.setObjectName('shipment_summary_title')
+        intro_layout.addWidget(summary_title)
+        summary_description = QLabel(
+            'Zestawienie używa najnowszego zapisanego zdarzenia Poczty Polskiej '
+            'i uwzględnia aktualne filtry Historii przesyłek.'
+        )
+        summary_description.setObjectName('shipment_summary_description')
+        summary_description.setWordWrap(True)
+        intro_layout.addWidget(summary_description)
+        self.lbl_status_summary = QLabel(
+            'Brak przesyłek do podsumowania. Pobierz statusy Poczty Polskiej.'
+        )
+        self.lbl_status_summary.setObjectName('shipment_summary_overview')
+        self.lbl_status_summary.setWordWrap(True)
+        self.lbl_status_summary.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        intro_layout.addWidget(self.lbl_status_summary)
+        summary_layout.addWidget(summary_intro)
+
+        summary_filter_row = QHBoxLayout()
+        summary_filter_row.addWidget(QLabel('Szczegóły dla statusu:'))
+        self.status_summary_filter_combo = QComboBox()
+        self.status_summary_filter_combo.setMinimumWidth(245)
+        self.status_summary_filter_combo.addItem('Wszystkie statusy', '')
+        for category in TRACKING_CATEGORY_ORDER:
+            self.status_summary_filter_combo.addItem(category, category)
+        saved_status_filter = str(
+            self.config.get('shipment_summary_status_filter', '') or ''
+        )
+        filter_index = self.status_summary_filter_combo.findData(saved_status_filter)
+        self.status_summary_filter_combo.setCurrentIndex(
+            filter_index if filter_index >= 0 else 0
+        )
+        self.status_summary_filter_combo.setToolTip(
+            'Ogranicza dolną tabelę szczegółów do wybranego statusu. '
+            'Karty powyżej nadal pokazują pełne podsumowanie bieżącego widoku.'
+        )
+        self.status_summary_filter_combo.currentIndexChanged.connect(
+            self._on_status_summary_filter_changed
+        )
+        summary_filter_row.addWidget(self.status_summary_filter_combo)
+        summary_filter_row.addStretch()
+        summary_layout.addLayout(summary_filter_row)
+
+        cards_caption = QLabel('Liczba przesyłek według statusu')
+        cards_caption.setObjectName('shipment_summary_section_title')
+        summary_layout.addWidget(cards_caption)
+
+        cards_layout = QGridLayout()
+        cards_layout.setHorizontalSpacing(12)
+        cards_layout.setVerticalSpacing(10)
+        self.status_cards: dict[str, QLabel] = {}
+        card_tooltips = {
+            'Doręczona / odebrana': 'Przesyłki potwierdzone jako doręczone lub odebrane.',
+            'W doręczeniu': 'Przesyłki przekazane do doręczenia.',
+            'W transporcie': 'Przesyłki w drodze albo w sortowni.',
+            'Nadana': 'Przesyłki przyjęte lub nadane, bez kolejnego etapu.',
+            'Awizowana': 'Przesyłki z pozostawionym awizem.',
+            'Zwrot / niedoręczona': 'Przesyłki zwrócone albo niedoręczone.',
+            'Nie pobrano': 'Przesyłki bez pobranego statusu.',
+            'Problem z pobraniem': 'Przesyłki, dla których nie udało się pobrać statusu.',
+            'Inny status': 'Pozostałe zdarzenia Poczty Polskiej.',
+        }
+        for index, category in enumerate(TRACKING_CATEGORY_ORDER):
+            row, column = divmod(index, 3)
+            cards_layout.addWidget(
+                self._create_status_card(
+                    category,
+                    category,
+                    card_tooltips.get(category, 'Liczba przesyłek w tej grupie.'),
+                ),
+                row,
+                column,
+            )
+            cards_layout.setColumnStretch(column, 1)
+        summary_layout.addLayout(cards_layout)
+
+        detail_box = QGroupBox('Statusy według ostatniego zdarzenia')
+        detail_box.setObjectName('shipment_status_detail_box')
+        detail_layout = QVBoxLayout(detail_box)
+        detail_layout.setContentsMargins(12, 18, 12, 12)
+        self.status_summary_table = QTableWidget(0, 3)
+        self.status_summary_table.setObjectName('shipment_status_summary_table')
+        self.status_summary_table.setHorizontalHeaderLabels([
+            'Status', 'Liczba', 'Adresaci (wszyscy)'
+        ])
+        self.status_summary_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.status_summary_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.status_summary_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.status_summary_table.setAlternatingRowColors(True)
+        self.status_summary_table.setWordWrap(True)
+        self.status_summary_table.verticalHeader().setVisible(False)
+        summary_header = self.status_summary_table.horizontalHeader()
+        summary_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        summary_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        summary_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        detail_layout.addWidget(self.status_summary_table)
+        summary_layout.addWidget(detail_box, 1)
+
+        self.lbl_status_summary_scope = QLabel(
+            'Zmiana wyszukiwania, projektu lub typu koperty odświeża to zestawienie.'
+        )
+        self.lbl_status_summary_scope.setObjectName('shipment_summary_scope')
+        self.lbl_status_summary_scope.setWordWrap(True)
+        summary_layout.addWidget(self.lbl_status_summary_scope)
+        self.history_tabs.addTab(self.summary_scroll, '📊 Podsumowanie statusów')
+        saved_tab = self.config.get('shipment_history_active_tab', 0)
+        try:
+            saved_tab = int(saved_tab)
+        except (TypeError, ValueError):
+            saved_tab = 0
+        self.history_tabs.setCurrentIndex(max(0, min(saved_tab, self.history_tabs.count() - 1)))
+        self.history_tabs.currentChanged.connect(
+            lambda index: self.config.update({'shipment_history_active_tab': index})
+        )
+
+    def _create_status_card(self, key: str, title: str, tooltip: str) -> QFrame:
+        """Tworzy czytelną kartę wskaźnika dla zakładki podsumowania."""
+
+        card = QFrame()
+        card.setObjectName('shipment_summary_card')
+        card.setToolTip(tooltip)
+        card.setMinimumHeight(96)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(15, 12, 15, 12)
+        card_layout.setSpacing(4)
+        title_label = QLabel(title)
+        title_label.setObjectName('shipment_summary_card_title')
+        title_label.setWordWrap(True)
+        card_layout.addWidget(title_label)
+        value_label = QLabel('0')
+        value_label.setObjectName('shipment_summary_card_value')
+        value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        card_layout.addWidget(value_label)
+        card_layout.addStretch()
+        self.status_cards[key] = value_label
+        return card
 
     # ──────────────────────────────────────────────────────────────
     # Logika ładowania i zapisu danych
@@ -119,8 +332,7 @@ class ShipmentTrackerWidget(QWidget):
         self._refresh_table()
 
     def _normalize_stamp_code(self, code: str) -> str:
-        code = str(code or '').strip().replace('(00)', '00')
-        return re.sub(r'[^0-9A-Za-z]', '', code)
+        return normalize_tracking_code(code)
 
     def _copy_stamp_code(self, code: str):
         QGuiApplication.clipboard().setText(self._normalize_stamp_code(code))
@@ -146,25 +358,64 @@ class ShipmentTrackerWidget(QWidget):
     def _current_tracking_status(self, shipment: dict) -> str:
         return shipment.get('tracking_status') or 'Nie pobrano'
 
-    def _fetch_tracking_status_from_www(self, code: str) -> str:
+    def _tracking_error_result(self, message: str) -> dict:
+        return {
+            "tracking_status": f"Nie pobrano statusu: {message}"[:500],
+            "tracking_latest_event": {},
+            "tracking_events": [],
+            "tracking_checked_at": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ),
+        }
+
+    def _tracking_result_from_response(self, xml: bytes) -> dict:
+        parsed = parse_tracking_response(xml)
+        events = [
+            event for event in parsed.get("events", []) if isinstance(event, dict)
+        ]
+        latest_event = latest_tracking_event(events)
+        if latest_event:
+            return {
+                # Pierwsza część to niezmieniona nazwa zdarzenia otrzymana od
+                # Poczty Polskiej; dalsze części tylko ją czytelnie opisują.
+                "tracking_status": format_tracking_event(latest_event),
+                "tracking_latest_event": latest_event,
+                "tracking_events": events,
+                "tracking_checked_at": datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
+            }
+
+        message = str(parsed.get("message") or "brak zdarzeń w odpowiedzi SOAP")
+        return self._tracking_error_result(message)
+
+    def _fetch_tracking_status_from_www(self, code: str) -> dict:
+        """Pobiera pełną historię zdarzeń przez oficjalne SOAP Poczty Polskiej."""
         code = self._normalize_stamp_code(code)
         if not code:
-            return 'Brak kodu'
+            return self._tracking_error_result("brak kodu przesyłki")
+
         try:
             from urllib.request import Request, urlopen
-            from xml.etree import ElementTree as ET
-            from datetime import datetime, timezone
 
-            endpoint = 'https://tt.poczta-polska.pl/Sledzenie/services/Sledzenie/SledzenieHttpSoap11Endpoint'
-            created = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-            logins = ('sledeniepp', 'sledzeniepp', 'trackingpp')
-            last_error = ''
+            endpoint = (
+                "https://tt.poczta-polska.pl/Sledzenie/services/Sledzenie/"
+                "SledzenieHttpSoap11Endpoint"
+            )
+            created = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z"
+            )
+            # Pierwszy login jest aktualnym kontem jednorazowych zapytań
+            # wskazanym w dokumentacji Poczty Polskiej. Pozostałe zachowują
+            # zgodność z odpowiedziami starszych wdrożeń usługi.
+            logins = ("sledeniepp", "sledzeniepp", "trackingpp")
+            last_error = ""
             for login in logins:
-                body = f'''<?xml version="1.0" encoding="UTF-8"?>
+                body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sled="http://sledzenie.pocztapolska.pl">
   <soapenv:Header>
     <wsse:Security soapenv:mustUnderstand="1" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-      <wsse:UsernameToken xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+      <wsse:UsernameToken wsu:Id="UsernameToken-2" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
         <wsse:Username>{login}</wsse:Username>
         <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">PPSA</wsse:Password>
         <wsu:Created>{created}</wsu:Created>
@@ -174,76 +425,30 @@ class ShipmentTrackerWidget(QWidget):
   <soapenv:Body>
     <sled:sprawdzPrzesylkePl><sled:numer>{code}</sled:numer></sled:sprawdzPrzesylkePl>
   </soapenv:Body>
-</soapenv:Envelope>'''.encode('utf-8')
-                req = Request(endpoint, data=body, headers={
-                    'Content-Type': 'text/xml; charset=utf-8',
-                    'SOAPAction': 'urn:sprawdzPrzesylkePl',
-                    'User-Agent': 'Mozilla/5.0'
-                })
+</soapenv:Envelope>""".encode("utf-8")
+                request = Request(
+                    endpoint,
+                    data=body,
+                    headers={
+                        "Content-Type": "text/xml; charset=utf-8",
+                        "SOAPAction": "urn:sprawdzPrzesylkePl",
+                        "User-Agent": "Mozilla/5.0",
+                    },
+                )
                 try:
-                    with urlopen(req, timeout=25) as resp:
-                        xml = resp.read()
-                    root = ET.fromstring(xml)
-                    events = []
-                    for elem in root.iter():
-                        lname = elem.tag.split('}', 1)[-1].lower()
-                        if lname in ('zdarzenie', 'event', 'zdarzenia'):
-                            data = {}
-                            for child in elem.iter():
-                                cl = child.tag.split('}', 1)[-1].lower()
-                                txt = (child.text or '').strip()
-                                if txt:
-                                    data[cl] = txt
-                            if data:
-                                events.append(data)
-                    if events:
-                        # Wybierz najważniejszy realny status, nie techniczny wpis.
-                        priorities = [
-                            (120, ('odebran', 'odebrana', 'odebrano', 'wydano')),
-                            (100, ('doręcz', 'dorecz')),
-                            (80, ('awiz',)),
-                            (60, ('przekazano do doręczenia', 'przekazano do doreczenia')),
-                        ]
-                        best_score = -1
-                        ev = None
-                        for candidate in events:
-                            blob = ' '.join(str(v) for v in candidate.values()).lower()
-                            if 'udostępnienie podpisu' in blob or 'udostepnienie podpisu' in blob:
-                                score = 10
-                            else:
-                                score = 20
-                            for val, keys in priorities:
-                                if any(k in blob for k in keys):
-                                    score = max(score, val)
-                            if score >= best_score:
-                                best_score = score
-                                ev = candidate
-                        if ev is None:
-                            ev = events[-1]
-                        vals = [str(v) for v in ev.values() if v]
-                        status = (ev.get('nazwa') or ev.get('nazwa_zdarzenia') or ev.get('status') or ev.get('rodzaj') or '')
-                        if not status:
-                            status = next((v for v in vals if not re.search(r'\d{4}-\d{2}-\d{2}|\d{2}:\d{2}', v)), '')
-                        if 'udostępnienie podpisu' in status.lower() or 'udostepnienie podpisu' in status.lower():
-                            status = next((v for v in vals if 'doręcz' in v.lower() or 'dorecz' in v.lower()), status)
-                        when = ev.get('czas') or ev.get('data') or ev.get('dataiczas') or ev.get('data_i_czas') or ''
-                        if not when:
-                            when = next((v for v in vals if re.search(r'\d{4}-\d{2}-\d{2}|\d{2}:\d{2}', v)), '')
-                        if status and when:
-                            return f'{status} | Data i czas: {when}'[:300]
-                        if status:
-                            return status[:300]
-                        return str(ev)[:300]
-                    text = xml.decode('utf-8', errors='ignore')
-                    m = re.search(r'<[^>]*(?:opis|komunikat|status)[^>]*>(.*?)</', text, re.I | re.S)
-                    if m:
-                        return re.sub(r'\s+', ' ', m.group(1)).strip()[:250]
-                    last_error = 'brak zdarzeń w odpowiedzi SOAP'
-                except Exception as e:
-                    last_error = str(e)
-            return f'Nie pobrano statusu: {last_error}'[:300]
-        except Exception as e:
-            return f'Błąd pobrania: {e}'[:300]
+                    with urlopen(request, timeout=25) as response:
+                        xml = response.read()
+                    result = self._tracking_result_from_response(xml)
+                    if result.get("tracking_events"):
+                        return result
+                    last_error = result["tracking_status"].removeprefix(
+                        "Nie pobrano statusu: "
+                    )
+                except Exception as error:
+                    last_error = str(error)
+            return self._tracking_error_result(last_error or "brak odpowiedzi usługi")
+        except Exception as error:
+            return self._tracking_error_result(f"błąd pobrania: {error}")
 
     def _fetch_all_tracking_statuses(self):
         updated = 0
@@ -251,12 +456,272 @@ class ShipmentTrackerWidget(QWidget):
             code = self._normalize_stamp_code(shipment.get('stamp_barcode', ''))
             if not code:
                 continue
-            shipment['tracking_status'] = self._fetch_tracking_status_from_www(code)
+            shipment.update(self._fetch_tracking_status_from_www(code))
             updated += 1
         if updated:
             self._save_shipments()
             self._refresh_table()
-        QMessageBox.information(self, 'Statusy przesyłek', f'Pobrano/odświeżono statusy: {updated}')
+        QMessageBox.information(
+            self,
+            'Statusy przesyłek',
+            f'Pobrano/odświeżono statusy: {updated}',
+        )
+
+    def _tracking_events(self, shipment: dict) -> list:
+        """Zwraca zdarzenia przesyłki od najwcześniejszego do najnowszego."""
+        events = shipment.get("tracking_events")
+        if not isinstance(events, list):
+            return []
+        return sort_tracking_events(
+            (event for event in events if isinstance(event, dict)),
+            newest_first=False,
+        )
+
+    def _tracking_tooltip(self, shipment: dict) -> str:
+        checked_at = str(shipment.get("tracking_checked_at") or "").strip()
+        events = shipment.get("tracking_events")
+        if isinstance(events, list) and events:
+            # Historia od najwcześniejszego do najnowszego zdarzenia.
+            history = format_tracking_history(
+                (event for event in events if isinstance(event, dict)),
+                newest_first=False,
+            )
+            if history:
+                suffix = f"\n\nSprawdzono: {checked_at}" if checked_at else ""
+                return "Pełna historia zdarzeń z Poczty Polskiej:\n" + history + suffix
+        status = self._current_tracking_status(shipment)
+        return f"{status}\nSprawdzono: {checked_at}" if checked_at else status
+
+    def _show_tracking_history_for_row(self, row: int):
+        """Otwiera okno z pełną historią zdarzeń wybranej przesyłki."""
+        shipment = getattr(self, 'row_to_shipment', {}).get(row)
+        if not shipment:
+            return
+        self._show_tracking_history(shipment)
+
+    def _show_selected_tracking_history(self):
+        rows = {index.row() for index in self.table.selectedIndexes()}
+        if not rows:
+            return QMessageBox.information(
+                self,
+                'Historia przesyłki',
+                'Zaznacz przesyłkę na liście, aby zobaczyć pełną historię '
+                'zdarzeń z Poczty Polskiej.',
+            )
+        self._show_tracking_history_for_row(min(rows))
+
+    def _show_tracking_history(self, shipment: dict):
+        """Okno z całą historią śledzenia — od najwcześniejszego zdarzenia."""
+        events = self._tracking_events(shipment)
+        code = self._normalize_stamp_code(shipment.get('stamp_barcode', ''))
+        addressee = str(shipment.get('addressee') or '').strip() or '[brak adresata]'
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Historia przesyłki – Poczta Polska')
+        dialog.resize(900, 520)
+        layout = QVBoxLayout(dialog)
+
+        header = QLabel(
+            f'<b>{addressee}</b><br>Kod znaczka: {code or "brak"}'
+        )
+        header.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(header)
+
+        if not events:
+            info = QLabel(
+                'Brak pobranych zdarzeń dla tej przesyłki.\n'
+                'Użyj przycisku pobierania statusów, aby wczytać historię.'
+            )
+            info.setWordWrap(True)
+            layout.addWidget(info)
+        else:
+            rows = format_tracking_history_lines(events, newest_first=False)
+            table = QTableWidget(len(rows), 5)
+            table.setHorizontalHeaderLabels(
+                ['Lp.', 'Data i godzina', 'Zdarzenie', 'Placówka', 'Przyczyna']
+            )
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setSelectionBehavior(
+                QAbstractItemView.SelectionBehavior.SelectRows
+            )
+            table.setAlternatingRowColors(True)
+
+            for index, entry in enumerate(rows):
+                icon = entry.get('icon', '')
+                name = entry.get('name', '')
+                cells = [
+                    str(entry.get('step', index + 1)),
+                    entry.get('time', ''),
+                    f'{icon} {name}'.strip(),
+                    entry.get('unit', ''),
+                    entry.get('cause', ''),
+                ]
+                color = QColor(entry.get('color', '#b39ddb'))
+                for column, text in enumerate(cells):
+                    item = QTableWidgetItem(text)
+                    if column == 2:
+                        # Kolorujemy nazwę zdarzenia zgodnie z jego kategorią.
+                        item.setForeground(color)
+                        item.setFont(QFont('', -1, QFont.Weight.Bold))
+                    table.setItem(index, column, item)
+
+            table.resizeColumnsToContents()
+            table.horizontalHeader().setStretchLastSection(True)
+            layout.addWidget(table, 1)
+
+            legend = QLabel(
+                'Kolejność: od najwcześniejszego do najnowszego zdarzenia.'
+            )
+            legend.setStyleSheet('color: gray; font-size: 11px;')
+            layout.addWidget(legend)
+
+        checked_at = str(shipment.get('tracking_checked_at') or '').strip()
+        if checked_at:
+            layout.addWidget(QLabel(f'Sprawdzono: {checked_at}'))
+
+        buttons = QDialogButtonBox()
+        btn_copy = buttons.addButton(
+            '📋 Kopiuj historię', QDialogButtonBox.ButtonRole.ActionRole
+        )
+        btn_copy.clicked.connect(
+            lambda: QGuiApplication.clipboard().setText(
+                format_tracking_history(events, newest_first=False)
+            )
+        )
+        if code:
+            btn_web = buttons.addButton(
+                '🔎 Otwórz w emonitoring', QDialogButtonBox.ButtonRole.ActionRole
+            )
+            btn_web.clicked.connect(lambda: self._open_tracking(code))
+        buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        dialog.exec()
+
+    def _shipment_summary_label(self, shipment: dict) -> str:
+        recipient = re.sub(r"\s+", " ", str(shipment.get("addressee") or "")).strip()
+        recipient = recipient or "[brak adresata]"
+        if len(recipient) > 48:
+            recipient = recipient[:45].rstrip() + "…"
+        code = self._normalize_stamp_code(shipment.get("stamp_barcode", ""))
+        return f"{recipient} [{code[-8:] if code else 'brak kodu'}]"
+
+    def _on_status_summary_filter_changed(self):
+        """Odświeża wyłącznie szczegóły po zmianie filtru statusu."""
+
+        selected = str(self.status_summary_filter_combo.currentData() or '')
+        self.config['shipment_summary_status_filter'] = selected
+        self._update_status_summary(self._summary_shipments)
+
+    def _set_status_card_values(self, status_groups: dict):
+        """Ustawia licznik dla każdego rozpoznawanego statusu przesyłki."""
+
+        for category in TRACKING_CATEGORY_ORDER:
+            card = self.status_cards.get(category)
+            if card is not None:
+                card.setText(str(len(status_groups.get(category, []))))
+
+    def _update_status_summary(self, shipments: list[dict]):
+        """Odświeża podsumowanie statusów bez zmiany danych operatora."""
+
+        if not hasattr(self, 'lbl_status_summary'):
+            return
+
+        self._summary_shipments = list(shipments)
+        status_groups = summarize_tracking_statuses(self._summary_shipments)
+        selected_status = str(
+            self.status_summary_filter_combo.currentData() or ''
+        )
+        if selected_status:
+            self.lbl_status_summary_scope.setText(
+                f'Dolna tabela pokazuje tylko status: {selected_status}. '
+                'Wybierz „Wszystkie statusy”, aby przywrócić pełną listę.'
+            )
+        else:
+            self.lbl_status_summary_scope.setText(
+                'Zmiana wyszukiwania, projektu lub typu koperty odświeża to zestawienie.'
+            )
+        delivered_count = len(status_groups.get('Doręczona / odebrana', []))
+        in_delivery_count = len(status_groups.get('W doręczeniu', []))
+        in_transit_count = len(status_groups.get('W transporcie', []))
+        sent_count = len(status_groups.get('Nadana', []))
+        other_count = len(shipments) - delivered_count
+        not_fetched_count = len(status_groups.get('Nie pobrano', []))
+        self._set_status_card_values(status_groups)
+
+        self.status_summary_table.setRowCount(0)
+        if not shipments:
+            self.lbl_status_summary.setText(
+                'Brak przesyłek spełniających aktualne filtry.'
+            )
+            return
+
+        c5_count = sum(
+            shipment.get('envelope_type', shipment.get('env_type', '')) == 'C5'
+            for shipment in shipments
+        )
+        c6_count = sum(
+            shipment.get('envelope_type', shipment.get('env_type', '')) == 'C6'
+            for shipment in shipments
+        )
+        printed_count = sum(
+            bool(shipment.get('printed_on_druczek')) for shipment in shipments
+        )
+        self.lbl_status_summary.setText(
+            f'Doręczono / odebrano: {delivered_count} • '
+            f'w doręczeniu: {in_delivery_count} • '
+            f'w transporcie: {in_transit_count} • nadano: {sent_count}.\n'
+            f'Pozostałe statusy: {other_count} • nie pobrano: {not_fetched_count} • '
+            f'wszystkie przesyłki: {len(shipments)}.\n'
+            f'Koperty: C5 {c5_count}, C6 {c6_count} • '
+            f'wydrukowane na druczku: {printed_count}.'
+        )
+
+        displayed_statuses = 0
+        for category, entries in status_groups.items():
+            if selected_status and category != selected_status:
+                continue
+            displayed_statuses += 1
+            # Zestawienie ma pokazywać WSZYSTKIE osoby z danym statusem,
+            # a nie tylko kilka pierwszych przykładów.
+            labels = [self._shipment_summary_label(entry) for entry in entries]
+
+            row = self.status_summary_table.rowCount()
+            self.status_summary_table.insertRow(row)
+            category_item = QTableWidgetItem(category)
+            count_item = QTableWidgetItem(str(len(entries)))
+            count_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            )
+            count_item.setFont(QFont('', -1, QFont.Weight.Bold))
+            if selected_status:
+                # Widok szczegółów jednego statusu — każda osoba w nowej linii.
+                people_text = '\n'.join(
+                    f'{index}. {label}' for index, label in enumerate(labels, 1)
+                )
+            else:
+                people_text = '; '.join(labels)
+            example_item = QTableWidgetItem(people_text)
+            example_item.setToolTip(
+                f'Wszyscy adresaci ({len(labels)}) z tej grupy statusów.'
+            )
+            self.status_summary_table.setItem(row, 0, category_item)
+            self.status_summary_table.setItem(row, 1, count_item)
+            self.status_summary_table.setItem(row, 2, example_item)
+
+        if selected_status and not displayed_statuses:
+            self.status_summary_table.insertRow(0)
+            self.status_summary_table.setItem(
+                0, 0, QTableWidgetItem(selected_status)
+            )
+            self.status_summary_table.setItem(0, 1, QTableWidgetItem('0'))
+            self.status_summary_table.setItem(
+                0, 2, QTableWidgetItem('Brak przesyłek z tym statusem.')
+            )
+
+        self.status_summary_table.resizeRowsToContents()
 
     def _refresh_project_filter(self):
         if not hasattr(self, 'project_filter_combo'):
@@ -353,6 +818,9 @@ class ShipmentTrackerWidget(QWidget):
                 source_records = [r for r in source_records if r.get('_project_path') == chosen]
 
         shown = 0
+        shown_records = []
+        # Mapa wiersz -> przesyłka, potrzebna do podglądu pełnej historii.
+        self.row_to_shipment = {}
         for s in source_records:
             addr = s.get('addressee', '')
             env_type = s.get('envelope_type', s.get('env_type', ''))
@@ -391,13 +859,32 @@ class ShipmentTrackerWidget(QWidget):
             btn_track.clicked.connect(lambda _=False, c=bc: self._open_tracking(c))
             self.table.setCellWidget(row, 7, btn_track)
 
-            status_item = QTableWidgetItem(self._current_tracking_status(s))
-            status_item.setForeground(QColor('#f1c40f') if status_item.text() == 'Nie pobrano' else QColor('#2ecc71'))
+            latest_event = s.get("tracking_latest_event")
+            category = tracking_status_category(
+                latest_event
+                if isinstance(latest_event, dict)
+                else self._current_tracking_status(s)
+            )
+            status_item = QTableWidgetItem(
+                f"{tracking_status_icon(category)} {self._current_tracking_status(s)}".strip()
+            )
+            # Każdy status Poczty Polskiej ma własny kolor — żaden nie zostaje szary.
+            status_color = QColor(tracking_status_color(category))
+            status_item.setForeground(status_color)
+            status_item.setFont(QFont('', -1, QFont.Weight.Bold))
+            status_item.setData(Qt.ItemDataRole.UserRole, category)
+            status_item.setToolTip(self._tracking_tooltip(s))
             self.table.setItem(row, 8, status_item)
             self.table.setItem(row, 9, QTableWidgetItem(s.get('path', '')))
+            self.row_to_shipment[row] = s
+            shown_records.append(s)
             shown += 1
 
-        self.lbl_summary.setText(f'Wyświetlono przesyłek: {shown} (Razem w projekcie: {len(self.shipments)})')
+        self._update_status_summary(shown_records)
+        self.lbl_summary.setText(
+            f'Wyświetlono przesyłek: {shown} '
+            f'(w wybranym zakresie: {len(source_records)})'
+        )
 
     def _apply_filter(self):
         self._refresh_table()
@@ -430,6 +917,10 @@ class ShipmentTrackerWidget(QWidget):
 
     def _on_row_double_clicked(self, index):
         row = index.row()
+        # Dwuklik na kolumnie statusu pokazuje pełną historię z Poczty Polskiej.
+        if index.column() == 8:
+            self._show_tracking_history_for_row(row)
+            return
         path_item = self.table.item(row, 9)
         if path_item and path_item.text():
             try:

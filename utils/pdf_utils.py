@@ -2,8 +2,21 @@
 pdf_utils.py – Narzędzia do przetwarzania PDF (wypisy i druczki).
 """
 import re
+
+from utils.wypis_fields import (
+    combine_ownership_forms,
+    extract_ownership_form,
+    normalize_parcel_identifier,
+    normalize_share,
+)
 import fitz  # PyMuPDF
 from pathlib import Path
+
+from utils.wypis_metadata import (
+    META_FIELDS as _WYPIS_META_FIELDS,
+    extract_wypis_metadata as _extract_wypis_metadata_text,
+    merge_meta_into_parcels as _merge_wypis_meta_into_parcels,
+)
 
 def _get_font_path(font_name: str) -> str:
     fonts = {
@@ -123,9 +136,13 @@ def _extract_parcels_simplified_wypis(text: str) -> list[dict]:
         if m_kw:
             kw_mem = re.sub(r'\s+', '', m_kw.group(1)).upper()
             if current: current['kw'] = kw_mem
-        m_id = re.search(r'Identyfikator\s+dzia[łl]ki\s*:?\s*([0-9A-Za-z_.\-/]+)', line, re.I)
+        m_id = re.search(
+            r'Identyfikator\s+dzia[łl]ki\s*:?\s*'
+            r'([0-9A-Za-z_.\-/]+(?:[ \t]+\d+(?:/[0-9A-Za-z]+)?)*)',
+            line, re.I,
+        )
         if m_id and current:
-            current['identifier'] = m_id.group(1).strip()
+            current['identifier'] = normalize_parcel_identifier(m_id.group(1))
         if re.fullmatch(r'\d+(?:/\d+)?', line):
             look = ' '.join(lines[i+1:i+8]).lower()
             if not (re.search(r'\d+[\.,]\d{2,4}', look) or 'kw ' in look or 'identyfikator' in look):
@@ -190,8 +207,15 @@ def _extract_entities_simplified_wypis(text: str) -> list[dict]:
 def _parse_simplified_wypis_page(text: str) -> list[dict]:
     if 'UPROSZCZONY WYPIS Z REJESTRU GRUNTÓW' not in text: return []
     meta = _extract_meta_simplified_wypis(text)
+    # Uzupełniamy odczyt o wszystkie etykiety z całej strony. Uproszczony wypis
+    # także bywa wystawiany dla działek z dwóch różnych obrębów.
+    label_meta = _extract_wypis_metadata_text(text)
+    for field in _WYPIS_META_FIELDS:
+        if label_meta.get(field) and not str(meta.get(field, '') or '').strip():
+            meta[field] = label_meta[field]
     parcels = _extract_parcels_simplified_wypis(text)
     if not parcels: return []
+    _merge_wypis_meta_into_parcels(parcels, text, meta)
     for par in parcels:
         for k,v in meta.items(): par.setdefault(k, v)
     entities = _extract_entities_simplified_wypis(text)
@@ -214,23 +238,117 @@ def _parse_simplified_wypis_page(text: str) -> list[dict]:
         owners.append({
             'full_name':raw, 'name_plural':raw, 'name_separate':raw, 'first_name':fn, 'last_name':ln, 'last_name_plural':ln,
             'address':addr, 'address_2':e.get('address2',''), 'city':'', 'parcels':parcels, 'parcel_street':street,
-            'total_area_ha':total_area, 'share':'1/1', 'kw_numbers':kw_numbers, 'is_couple':False, 'is_dead':False,
+            'total_area_ha':total_area, 'share':'1/1', 'ownership_form':'', 'kw_numbers':kw_numbers, 'is_couple':False, 'is_dead':False,
             'is_institution':is_inst, 'is_company':is_company, 'is_spolka':is_spolka, 'is_church':is_church,
             'status_sprawy':'Do zrobienia', **meta
         })
     return owners
 
-def extract_wypis_metadata_file(pdf_path: str) -> dict:
+def apply_profile_to_meta(meta: dict, text: str, config: dict = None) -> dict:
+    """Uzupełnia metadane według wzoru odczytu wybranego w Ustawieniach.
+
+    Wzory pozwalają obsłużyć wypisy z urzędów, które nazywają pola inaczej.
+    Uzupełniamy tylko puste wartości — dotychczasowy odczyt ma pierwszeństwo,
+    dzięki czemu włączenie wzorów nie zmienia wyników tam, gdzie wszystko
+    działało poprawnie.
+    """
+    if not str(text or '').strip():
+        return meta
+
+    try:
+        from utils.wypis_profiles import (
+            detect_profile,
+            extract_field,
+            find_profile,
+            load_settings,
+        )
+    except Exception:
+        return meta
+
+    try:
+        # Wzory czytamy z osobnego pliku dane/wypis_profiles.json, więc
+        # działają także wtedy, gdy wywołanie nie przekazało konfiguracji.
+        settings = load_settings(config)
+        profiles = settings['profiles']
+        if settings['auto']:
+            profile, _score = detect_profile(profiles, text)
+        else:
+            profile = find_profile(profiles, settings['active'])
+        if not profile:
+            return meta
+
+        from utils.wypis_profiles import should_override
+
+        override = should_override(profile)
+        for field in _WYPIS_META_FIELDS:
+            # Wzór wbudowany tylko uzupełnia braki; wzór własny użytkownika
+            # poprawia też wartości odczytane błędnie.
+            if meta.get(field) and not override:
+                continue
+            value = extract_field(text, profile, field)
+            if value:
+                meta[field] = value
+                meta[f'{field}_values'] = [value]
+    except Exception:
+        # Błędny wzór nie może zablokować importu wypisu.
+        return meta
+    return meta
+
+
+def extract_wypis_metadata_file(pdf_path: str, config: dict = None) -> dict:
+    """Odczytuje nagłówek wypisu razem z listą wszystkich wartości.
+
+    Jeden wypis może obejmować kilka obrębów, gmin, a nawet powiatów. Dlatego
+    zwracamy zarówno tekst połączony (np. "Polki, Borkowo"), jak i pełne listy
+    w kluczach ``*_values``, aby moduł Wypisy mógł przypisać właściwą wartość
+    do konkretnej działki zamiast brać wyłącznie pierwszą znalezioną.
+    """
+    empty = {field: '' for field in _WYPIS_META_FIELDS}
+    empty.update({f'{field}_values': [] for field in _WYPIS_META_FIELDS})
+    empty['has_multiple'] = False
+
     try:
         doc = fitz.open(pdf_path)
         text = "\n".join(page.get_text() for page in doc).replace('\r\n', '\n').replace('\r', '\n')
+        doc.close()
     except Exception:
-        return {'voivodeship': '', 'county': '', 'municipality': '', 'precinct': '', 'precinct_number': ''}
-    meta = _extract_meta_simplified_wypis(text) if '_extract_meta_simplified_wypis' in globals() else {}
-    out = {'voivodeship': '', 'county': '', 'municipality': '', 'precinct': '', 'precinct_number': ''}
-    if isinstance(meta, dict):
-        for k in out: out[k] = str(meta.get(k, '') or '').strip()
-    return out
+        return empty
+
+    meta = _extract_wypis_metadata_text(text)
+
+    # Zapasowo korzystamy ze starszego odczytu bloku tabelarycznego, który
+    # radzi sobie z wypisami uproszczonymi bez wyraźnych etykiet w liniach.
+    legacy = _extract_meta_simplified_wypis(text)
+    for field in _WYPIS_META_FIELDS:
+        if not meta.get(field) and legacy.get(field):
+            value = str(legacy.get(field) or '').strip()
+            meta[field] = value
+            if value:
+                meta[f'{field}_values'] = [value]
+
+    # Na końcu dokładamy wzór odczytu zdefiniowany przez użytkownika
+    # (Ustawienia → Wzory odczytu wypisów). Uzupełnia wyłącznie pola, których
+    # standardowy odczyt nie znalazł, więc nie psuje działających wypisów.
+    apply_profile_to_meta(meta, text, config)
+    return meta
+
+def extract_wypis_parcel_metadata_file(pdf_path: str) -> dict:
+    """Zwraca metadane przypisane do konkretnych działek z pliku wypisu.
+
+    Klucz to numer działki, wartość to słownik z polami województwo, powiat,
+    jednostka ewidencyjna, obręb i numer obrębu. Dzięki temu wypis obejmujący
+    kilka obrębów nie nadpisuje wszystkich działek pierwszą znalezioną nazwą.
+    """
+    from utils.wypis_metadata import parcel_meta_map
+
+    try:
+        doc = fitz.open(pdf_path)
+        text = "\n".join(page.get_text() for page in doc).replace('\r\n', '\n').replace('\r', '\n')
+        doc.close()
+    except Exception:
+        return {}
+    return parcel_meta_map(text)
+
 
 def parse_wypis_pdf(pdf_path: str) -> list[dict]:
     doc = fitz.open(pdf_path)
@@ -280,14 +398,40 @@ def parse_wypis_pdf(pdf_path: str) -> list[dict]:
                 if v.isdigit(): global_meta['precinct_number'] = str(int(v))
                 else: global_meta['precinct'] = v
         chunk_parcels = _extract_parcels_from_text(chunk)
+        # Fragment może zawierać kilka obrębów lub gmin. Każdej działce
+        # przypisujemy wartość z jej własnej sekcji, a global_meta służy tylko
+        # jako wartość zapasowa dla działek spoza rozpoznanych sekcji.
+        _merge_wypis_meta_into_parcels(chunk_parcels, chunk, global_meta)
         for p in chunk_parcels:
             for k, v in global_meta.items():
                 if k not in p: p[k] = v
+
+        # Właściciel dostaje zestawienie wszystkich wartości występujących przy
+        # jego działkach, dzięki czemu pola Obręb/Powiat/Województwo nie gubią
+        # drugiego i kolejnych obrębów z tego samego wypisu.
+        def _owner_meta_from_parcels(owner_parcels: list) -> dict:
+            collected = {field: [] for field in _WYPIS_META_FIELDS}
+            for parcel in owner_parcels:
+                if not isinstance(parcel, dict):
+                    continue
+                for field in _WYPIS_META_FIELDS:
+                    value = str(parcel.get(field, '') or '').strip()
+                    if value and value not in collected[field]:
+                        collected[field].append(value)
+            return {
+                field: ', '.join(values)
+                for field, values in collected.items()
+                if values
+            }
+
         for block in _split_into_owner_blocks(chunk):
             parsed_list = _parse_owner_block(block, chunk_parcels)
             for owner in parsed_list:
+                owner_meta = _owner_meta_from_parcels(owner.get('parcels', []))
                 for k, v in global_meta.items():
-                    if k not in owner or not owner[k]: owner[k] = v
+                    value = owner_meta.get(k) or v
+                    if k not in owner or not owner[k]:
+                        owner[k] = value
                 all_owners.append(owner)
     _merge_same_owners(all_owners)
     return all_owners
@@ -310,6 +454,10 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
         if share_match:
             share = share_match.group(1)
             break
+    # Forma władania: "współwłasność", "wspólność ustawowa", "udział łączny"...
+    # Wypis potrafi rozbić to na kilka wierszy i drukować bez polskich znaków,
+    # więc przeszukujemy nagłówek bloku w całości.
+    ownership_form = combine_ownership_forms("\n".join(lines[:10]))
     entities = []
     current_entity = None
     for line in lines:
@@ -402,7 +550,7 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
             'first_name': f"{f1} i {f2}".strip(), 'last_name': n1,
             'last_name_plural': n_plural if n_plural else n1, 
             'address': addr1, 'address_2': addr2, 'city': '', 'parcels': parcels,
-            'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'kw_numbers': kw_numbers,
+            'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'ownership_form': ownership_form, 'kw_numbers': kw_numbers,
             'is_couple': True, 'is_dead': False, 'is_institution': False, 'is_company': False, 'is_spolka': False, 'is_church': False,
             'status_sprawy': 'Do zrobienia'
         })
@@ -427,7 +575,7 @@ def _parse_owner_block(block: str, global_parcels: list) -> list[dict]:
                 'full_name': raw, 'name_plural': raw, 'name_separate': raw,
                 'first_name': fn, 'last_name': ln, 'last_name_plural': ln, 
                 'address': addr, 'address_2': e.get('address2', ''), 'city': '', 'parcels': parcels,
-                'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'kw_numbers': kw_numbers,
+                'parcel_street': parcel_street_str, 'total_area_ha': total_area, 'share': share, 'ownership_form': ownership_form, 'kw_numbers': kw_numbers,
                 'is_couple': False, 'is_dead': e['is_dead'], 
                 'is_institution': is_inst, 'is_company': is_company, 'is_spolka': is_spolka, 'is_church': is_church,
                 'status_sprawy': 'Do zrobienia'
@@ -478,15 +626,19 @@ def _extract_parcels_from_text(text: str) -> list[dict]:
             address_buffer = ""
             continue
         if expect_identifier_line:
-            ident = line.strip(' ,;:')
+            ident = normalize_parcel_identifier(line.strip(' ,;:'))
             if ident:
                 last_identifier = ident
                 if current_parcel: current_parcel['identifier'] = ident
             expect_identifier_line = False
             continue
-        m_id = re.search(r'Identyfikator\s+dzia[łl]ki\s*:?\s*([0-9A-Za-z_.\-/]+)?', line, re.I)
+        m_id = re.search(
+            r'Identyfikator\s+dzia[łl]ki\s*:?\s*'
+            r'([0-9A-Za-z_.\-/]+(?:[ \t]+\d+(?:/[0-9A-Za-z]+)?)*)?',
+            line, re.I,
+        )
         if m_id:
-            ident = (m_id.group(1) or '').strip()
+            ident = normalize_parcel_identifier(m_id.group(1) or '')
             if ident:
                 last_identifier = ident
                 if current_parcel: current_parcel['identifier'] = ident
@@ -517,7 +669,7 @@ def _extract_parcels_from_text(text: str) -> list[dict]:
         line_clean = line
         teryt_match = re.search(r'\b(\d{2,6}[_\s\.-]+\d[_\s\.-]+\d{1,4}[_\s\.-]+(\d+(?:/[A-Za-z\d]+)?))\b', line_clean)
         if teryt_match:
-            ident_val = teryt_match.group(1)
+            ident_val = normalize_parcel_identifier(teryt_match.group(1))
             parcel_num = teryt_match.group(2)
             if current_parcel:
                 if current_parcel['number'] == parcel_num or current_parcel['number'] in ident_val:
@@ -731,9 +883,69 @@ def _clean_bc(bc: str) -> str:
     if c.startswith('00'): c = c[2:]
     return c
 
+def _all_pdf_permissions() -> int:
+    """Zwraca komplet uprawnień PDF (druk, edycja, kopiowanie, komentarze...)."""
+    names = (
+        'PDF_PERM_PRINT', 'PDF_PERM_MODIFY', 'PDF_PERM_COPY',
+        'PDF_PERM_ANNOTATE', 'PDF_PERM_FORM', 'PDF_PERM_ACCESSIBILITY',
+        'PDF_PERM_ASSEMBLE', 'PDF_PERM_PRINT_HQ',
+    )
+    permissions = 0
+    for name in names:
+        value = getattr(fitz, name, None)
+        if isinstance(value, int):
+            permissions |= value
+    return permissions or -1
+
+
+def _save_editable_pdf(doc, output_path: str):
+    """Zapisuje PDF bez blokad, żeby dało się go edytować w innych programach.
+
+    Druczki pobrane z Poczty Polskiej mają ustawione hasło właściciela
+    i ograniczenia uprawnień. PyMuPDF domyślnie przepisuje te ograniczenia do
+    pliku wynikowego, przez co gotowy druczek otwierał się tylko do odczytu.
+    Zapisujemy więc jawnie bez szyfrowania i z pełnymi uprawnieniami.
+    """
+    save_attempts = (
+        dict(
+            garbage=4,
+            deflate=True,
+            clean=True,
+            encryption=getattr(fitz, 'PDF_ENCRYPT_NONE', 0),
+            permissions=_all_pdf_permissions(),
+            owner_pw='',
+            user_pw='',
+        ),
+        dict(
+            garbage=4,
+            deflate=True,
+            clean=True,
+            encryption=getattr(fitz, 'PDF_ENCRYPT_NONE', 0),
+        ),
+        dict(garbage=4, deflate=True),
+        {},
+    )
+    last_error = None
+    for kwargs in save_attempts:
+        try:
+            doc.save(output_path, **kwargs)
+            return
+        except Exception as exc:  # pragma: no cover - zależne od wersji PyMuPDF
+            last_error = exc
+    raise last_error if last_error else RuntimeError('Nie udało się zapisać PDF')
+
+
 def fill_neoznacze_pdf(template_path: str, output_path: str, shipments: list, sender_info: dict, profile: dict = None) -> tuple[bool, int]:
     try:
         doc = fitz.open(template_path)
+        # Druczki z Poczty bywają zabezpieczone hasłem właściciela. Pustym
+        # hasłem zdejmujemy blokadę, dzięki czemu wynik nie dziedziczy
+        # ograniczeń uniemożliwiających późniejszą edycję.
+        if getattr(doc, 'is_encrypted', False):
+            try:
+                doc.authenticate('')
+            except Exception:
+                pass
         if profile is None: profile = {}
         positions = _get_positions_from_profile(profile)
         available_slots = _detect_pdf_slots(doc, profile.get('cols', 2), profile.get('rows', 2))
@@ -783,7 +995,7 @@ def fill_neoznacze_pdf(template_path: str, output_path: str, shipments: list, se
             _draw_field(page, ship.get('addressee_street', ''), 'as', pos, a_fname, profile)
             _draw_field(page, a_z, 'az', pos, a_fname, profile)
             _draw_field(page, a_c, 'ac', pos, a_fname, profile)
-        doc.save(output_path)
+        _save_editable_pdf(doc, output_path)
         doc.close()
         return True, len([s for s, slot in final_assignments if s])
     except Exception as e:
