@@ -534,7 +534,7 @@ po dodaniu własnego wzoru daje poprawne `kartuski`.
 Wzoru wbudowanego nie da się usunąć ani zmienić mu nazwy — od tego jest
 przycisk „Kopiuj”, który robi Twoją własną wersję do edycji.
 
-## 39. Wzory odczytu wypisów w osobnym pliku
+## 39. Wzory odczytu wypisów w osobnym pliku z danymi
 
 **Prośba:** żeby wzory z okna „🧩 Wzory odczytu wypisów (PDF)” były
 zapisane w osobnym pliku, a nie razem z ustawieniami programu.
@@ -610,6 +610,72 @@ tworzyć osobny mechanizm.
 Zniknęło ostrzeżenie Qt (`cannot insert an item that is already owned by
 another QTableWidget`) pojawiające się przy ponownej analizie dokumentu —
 komórki tabeli są teraz tworzone raz i tylko aktualizowane.
+
+## 40. Sekcja „Wypisy” w Ustawieniach — osobny plik z kodem
+
+**Prośba:** żeby kod sekcji „Wypisy” (z przyciskiem „🧩 Wzory odczytu
+wypisów (PDF)”) był w osobnym pliku Pythona, a nie w pliku ogólnych
+ustawień.
+
+### Co się zmieniło
+
+Cała sekcja „Wypisy — odczyt danych z dokumentu” wyprowadziła się do
+własnego pliku:
+
+```
+modules/ustawienia_wypisy.py
+```
+
+Plik `modules/ustawienia.py` schudł z **2188 do 2083 linii**, a nowy
+moduł ma 211 linii i zawiera wyłącznie sprawy wypisów.
+
+### Co jest w nowym pliku
+
+Klasa `WypisSettingsSection` (zwykły `QGroupBox`) trzyma w jednym miejscu
+komplet: pola widoczne na ekranie, ich odczyt z konfiguracji i zapis z
+powrotem.
+
+| Metoda | Do czego służy |
+| --- | --- |
+| `load_from_config(config)` | ustawia pola według zapisanej konfiguracji |
+| `settings()` | zwraca wybrane ustawienia jako słownik |
+| `save_to_config(config)` | przepisuje ustawienia do konfiguracji |
+| `refresh_profiles_label(config)` | opis wzorów: ile, jaki tryb, jaki plik |
+| `open_profiles_dialog(config)` | otwiera okno „Wzory odczytu wypisów (PDF)” |
+
+Klucze konfiguracji też są opisane w tym pliku (`FIX_IDENTIFIER_KEY`,
+`READ_OWNERSHIP_KEY`, `DEFAULTS`), więc dodanie nowej opcji odczytu
+wypisów nie wymaga już zaglądania do pliku ogólnych ustawień.
+
+### Po stronie Ustawień zostały trzy linijki
+
+Zakładka Ustawienia nie zna już żadnego z tych kluczy — tworzy sekcję,
+a przy wczytywaniu i zapisie oddaje jej sterowanie:
+
+```python
+self.wypis_section = WypisSettingsSection(self)   # budowa
+self.wypis_section.load_from_config(self.config)  # wczytanie
+self.wypis_section.save_to_config(self.config)    # zapis
+```
+
+### Dla użytkownika nic się nie zmienia
+
+Sekcja wygląda i działa tak samo, w tym samym miejscu. Sprawdzone na
+uruchomionym programie: 19 zakładek, zapis ustawień odkłada
+`wypis_fix_identifier`, `wypis_read_ownership` i tryb jednostki
+ewidencyjnej dokładnie jak wcześniej, ponowne wczytanie przywraca stan,
+a okno wzorów otwiera się zarówno z Ustawień, jak i wprost z sekcji.
+
+Przy okazji same wzory odczytu (te „co jest czym”) dostały wcześniej
+osobny plik z danymi — `dane/wypis_profiles.json`, punkt 39. Teraz
+osobny jest też kod obsługujący tę część ustawień.
+
+### Testy
+
+Nowy plik `tests/test_ustawienia_wypisy.py` — 15 testów: budowa pól,
+wartości domyślne, pełny obieg odczyt→zapis oraz sprawdzenie, że w
+`ustawienia.py` faktycznie nie ma już kodu pól wypisów. Razem
+**411 testów** (było 385).
 
 ## Uwagi techniczne
 

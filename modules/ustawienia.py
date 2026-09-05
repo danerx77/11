@@ -37,11 +37,7 @@ from utils.project_naming import (
     PLACEHOLDERS as PROJECT_PLACEHOLDERS,
     project_folder_preview,
 )
-from utils.wypis_fields import (
-    MUNICIPALITY_MODE_CHOICES,
-    MUNICIPALITY_MODE_KEY,
-    DEFAULT_MUNICIPALITY_MODE,
-)
+from modules.ustawienia_wypisy import WypisSettingsSection
 from utils.document_naming import (
     ASCII_KEY,
     COVER_PARCEL_LIMIT_KEY,
@@ -1146,98 +1142,17 @@ class SettingsTabWidget(QWidget):
         )
 
     def _build_wypis_box(self) -> QGroupBox:
-        """Sekcja ustawień odczytu danych z wypisów."""
-        box = QGroupBox("Wypisy — odczyt danych z dokumentu")
-        layout = QVBoxLayout(box)
-
-        info = QLabel(
-            "Jednostka ewidencyjna bywa zapisana jako „Maki - G” (gmina) albo "
-            "„Maki - M” (miasto). Tutaj wybierasz, w jakiej postaci program ma "
-            "zapisywać tę wartość."
-        )
-        info.setObjectName("naming_hint")
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        form = QFormLayout()
-
-        self.wypis_municipality_mode = QComboBox()
-        for label, value in MUNICIPALITY_MODE_CHOICES:
-            self.wypis_municipality_mode.addItem(label, value)
-        form.addRow("Jednostka ewidencyjna:", self.wypis_municipality_mode)
-
-        layout.addLayout(form)
-
-        self.chk_wypis_fix_identifier = QCheckBox(
-            "Poprawiaj zapis identyfikatora działki "
-            "(110101 2 0010 202 → 110101_2.0010.202)"
-        )
-        self.chk_wypis_fix_identifier.setToolTip(
-            "Numer działki rozdzielony spacjami zostanie zapisany z ukośnikiem, "
-            "np. 110101 2 0010 22 21 → 110101_2.0010.22/21."
-        )
-        layout.addWidget(self.chk_wypis_fix_identifier)
-
-        self.chk_wypis_read_ownership = QCheckBox(
-            "Odczytuj „Formę władania” i udział z wypisu (kolumna w tabeli)"
-        )
-        self.chk_wypis_read_ownership.setToolTip(
-            "Np. „14/48 współwłasność”, „wspólność ustawowa”, „udział łączny”."
-        )
-        layout.addWidget(self.chk_wypis_read_ownership)
-
-        # ── Wzory odczytu PDF ──
-        profiles_hint = QLabel(
-            "Wypisy z różnych urzędów mają inne nazwy pól — jeden pisze "
-            "„Bliższe określenie położenia”, inny „Adres nieruchomości”. "
-            "W oknie poniżej wczytasz przykładowy PDF, zobaczysz co program "
-            "z niego odczytał i poprawisz przypisania. Ustawienia zapiszą się "
-            "jako wzór dla kolejnych dokumentów z tego samego urzędu."
-        )
-        profiles_hint.setObjectName("muted_hint")
-        profiles_hint.setWordWrap(True)
-        layout.addWidget(profiles_hint)
-
-        profiles_row = QHBoxLayout()
-        btn_profiles = QPushButton("🧩 Wzory odczytu wypisów (PDF)…")
-        btn_profiles.setObjectName("btn_primary")
-        btn_profiles.setToolTip(
-            "Wczytaj przykładowy wypis, sprawdź co jest czym i dostosuj "
-            "odczyt do dokumentów o innej budowie."
-        )
-        btn_profiles.clicked.connect(self._open_wypis_profiles)
-        profiles_row.addWidget(btn_profiles)
-
-        self.lbl_wypis_profiles = QLabel()
-        self.lbl_wypis_profiles.setObjectName("muted_hint")
-        self.lbl_wypis_profiles.setWordWrap(True)
-        profiles_row.addWidget(self.lbl_wypis_profiles, 1)
-        layout.addLayout(profiles_row)
-
-        return box
+        """Sekcja odczytu danych z wypisów — kod w modules/ustawienia_wypisy.py."""
+        self.wypis_section = WypisSettingsSection(self)
+        return self.wypis_section
 
     def _refresh_wypis_profiles_label(self):
-        """Pokazuje, ile wzorów zapisano i który jest aktywny."""
-        from utils.wypis_profiles import load_settings
-
-        settings = load_settings(self.config)
-        active = settings["active"]
-        auto = bool(settings["auto"])
-        tryb = "automatyczny" if auto else f"ręczny — „{active or 'brak'}”"
-        from utils.global_settings import WYPIS_PROFILES_FILE
-
-        self.lbl_wypis_profiles.setText(
-            f"Zapisanych wzorów: {len(settings['profiles'])} • tryb: {tryb} "
-            f"• plik: dane/{WYPIS_PROFILES_FILE}"
-        )
+        """Odświeża opis wzorów odczytu wypisów."""
+        self.wypis_section.refresh_profiles_label(self.config)
 
     def _open_wypis_profiles(self):
         """Otwiera kreator wzorów odczytu wypisów."""
-        from modules.wypis_profil_dialog import WypisProfileDialog
-
-        dialog = WypisProfileDialog(self.config, self)
-        if dialog.exec():
-            self._refresh_wypis_profiles_label()
+        self.wypis_section.open_profiles_dialog(self.config)
 
     def _build_naming_box(self) -> QGroupBox:
         """Sekcja wyboru schematu nazw dla Oświadczeń i Pism przewodnich."""
@@ -1499,19 +1414,8 @@ class SettingsTabWidget(QWidget):
             combo.setCurrentIndex(index if index >= 0 else 0)
         self._update_project_folder_preview()
 
-        # Odczyt danych z wypisów.
-        mode_index = self.wypis_municipality_mode.findData(
-            self.config.get(MUNICIPALITY_MODE_KEY, DEFAULT_MUNICIPALITY_MODE)
-        )
-        self.wypis_municipality_mode.setCurrentIndex(
-            mode_index if mode_index >= 0 else 0
-        )
-        self.chk_wypis_fix_identifier.setChecked(
-            bool(self.config.get("wypis_fix_identifier", True))
-        )
-        self.chk_wypis_read_ownership.setChecked(
-            bool(self.config.get("wypis_read_ownership", True))
-        )
+        # Odczyt danych z wypisów — sekcja obsługuje się sama.
+        self.wypis_section.load_from_config(self.config)
 
         # Wygląd zakładek.
         tab_layout_mode = self.config.get("tab_layout_mode", "modern")
@@ -1546,7 +1450,6 @@ class SettingsTabWidget(QWidget):
         self.default_proj_edit.setText(
             self.config.get("default_project_root", "")
         )
-        self._refresh_wypis_profiles_label()
         for target, _label, _default in OUTPUT_TARGETS:
             enabled = is_auto_enabled(self.config, target)
             self.output_auto_checks[target].setChecked(enabled)
@@ -1785,15 +1688,7 @@ class SettingsTabWidget(QWidget):
         for key, value in self._project_folder_settings().items():
             self.config[key] = value
 
-        self.config[MUNICIPALITY_MODE_KEY] = (
-            self.wypis_municipality_mode.currentData()
-        )
-        self.config["wypis_fix_identifier"] = (
-            self.chk_wypis_fix_identifier.isChecked()
-        )
-        self.config["wypis_read_ownership"] = (
-            self.chk_wypis_read_ownership.isChecked()
-        )
+        self.wypis_section.save_to_config(self.config)
 
         selected_tab_layout = self.tab_layout_combo.currentData() or "modern"
         tab_layout_changed = selected_tab_layout != getattr(
