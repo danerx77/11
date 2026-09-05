@@ -1158,6 +1158,45 @@ do kolumny **② Etykiety w PDF** zaznaczonego wiersza. Działa też tam,
 gdzie dopasowanie po tekście zawodzi — bo liczy się to, co zaznaczysz,
 a nie to, co program zgadnie.
 
+## 50. Więcej pól wypisu + wskazywanie po tekście
+
+**Zgłoszenie:** program nie miał wszystkich pól, jakie są na wypisie —
+brakowało m.in. ulicy. Druga sprawa: żeby w trzeciej zakładce („Tekst
+dokumentu") dało się na podstawie tekstu wskazać, czym jest dany fragment,
+i na tej podstawie poprawić odczyt.
+
+### Pola — z 13 na 24
+
+Doszło jedenaście pozycji, których wcześniej nie dało się przypisać:
+
+| Nowe pole | Po co |
+|---|---|
+| Miejscowość działki | osobno od ulicy — program i tak rozdziela je do kolumn „Miejscowość działki" i „Ulica Działki" |
+| **Ulica działki** | to, czego brakowało |
+| Opis użytku | RIVa, dr, Bi — z tabeli użytków |
+| Adres właściciela | adres zamieszkania lub siedziby |
+| Miejscowość właściciela | do pism i kopert |
+| PESEL, NIP, REGON | kolumny, które program już miał w tabeli właścicieli |
+| Data wypisu | data sporządzenia |
+| Numer wypisu | znak sprawy |
+| Urząd wydający | starostwo lub urząd |
+
+Wbudowane wzory („Standardowy (EGiB)" i „Wypis uproszczony") znają już
+typowe nazwy tych pól, więc czytają się same, bez ustawiania.
+
+### Zakładka „Tekst dokumentu" — dwa przyciski zamiast jednego
+
+Wcześniej dało się tam tylko przypisać **nazwę** pola. Teraz są dwa:
+
+- **🏷️ Zaznaczenie to NAZWA pola** — jak dotąd.
+- **👁️ Zaznaczenie to WARTOŚĆ** — zaznaczasz samą wartość (np. „ul. Polna 3").
+  Program sam znajduje stojącą przy niej nazwę („Ulica"), zapamiętuje ją
+  i od tej pory czyta to pole **z każdego kolejnego wypisu** z tego urzędu.
+  Gdy przy wartości nie ma żadnej nazwy, zapisuje ją jako wpis ręczny.
+
+Pod przyciskami pojawia się zielona informacja, co zostało przypisane
+i po jakiej nazwie — widać od razu, czy program dobrze zrozumiał.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

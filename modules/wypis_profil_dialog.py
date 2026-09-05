@@ -611,15 +611,32 @@ class WypisProfileDialog(QDialog):
         text_layout.addWidget(self.text_view)
 
         use_row = QHBoxLayout()
-        btn_use = QPushButton("⬅️ Użyj zaznaczenia jako etykiety")
+        btn_use = QPushButton("🏷️ Zaznaczenie to NAZWA pola")
         btn_use.setToolTip(
             "Zaznacz w tekście nazwę pola (np. „Adres nieruchomości”) i "
             "przypisz ją do wiersza wybranego w tabeli po lewej."
         )
         btn_use.clicked.connect(self._use_selection_as_label)
         use_row.addWidget(btn_use)
+
+        btn_use_value = QPushButton("👁️ Zaznaczenie to WARTOŚĆ")
+        btn_use_value.setToolTip(
+            "Zaznacz w tekście samą wartość (np. „POMORSKIE”).\n"
+            "Program sam znajdzie stojącą przy niej nazwę pola i zapamięta ją,\n"
+            "żeby czytać tę wartość z każdego kolejnego wypisu."
+        )
+        btn_use_value.clicked.connect(self._use_selection_as_value)
+        use_row.addWidget(btn_use_value)
         use_row.addStretch()
         text_layout.addLayout(use_row)
+
+        self.lbl_text_hint = QLabel(
+            "Zaznacz fragment tekstu i kliknij jeden z przycisków — "
+            "trafi do wiersza zaznaczonego w tabeli po lewej."
+        )
+        self.lbl_text_hint.setWordWrap(True)
+        self.lbl_text_hint.setStyleSheet("color: #9fb3c8;")
+        text_layout.addWidget(self.lbl_text_hint)
 
         self.doc_tabs.addTab(text_box, "📄 Tekst dokumentu")
 
@@ -1561,6 +1578,104 @@ class WypisProfileDialog(QDialog):
         self.table.setItem(row, 1, QTableWidgetItem("; ".join(current)))
         self._store_table_into_profile()
         self._analyze()
+
+    def _use_selection_as_value(self):
+        """Zaznaczono WARTOŚĆ — program sam szuka stojącej przy niej nazwy."""
+
+        zaznaczenie = self.text_view.textCursor().selectedText().strip()
+        if not zaznaczenie:
+            QMessageBox.information(
+                self,
+                "Brak zaznaczenia",
+                "Zaznacz w tekście wartość, np. „POMORSKIE”.",
+            )
+            return
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Kliknij najpierw wiersz w tabeli po lewej, aby wskazać, "
+                "którego pola dotyczy ta wartość.",
+            )
+            return
+
+        etykieta = self._label_for_value(zaznaczenie)
+        key_item = self.table.item(row, 0)
+        key = key_item.data(Qt.ItemDataRole.UserRole)
+        self._remember()
+
+        if etykieta:
+            # Znaleziono nazwę pola — zapamiętujemy ją, żeby program czytał
+            # tę wartość także z kolejnych wypisów tego samego urzędu.
+            item = self.table.item(row, 1)
+            obecne = [
+                czesc.strip()
+                for czesc in (item.text() if item else "").split(";")
+                if czesc.strip()
+            ]
+            if etykieta not in obecne:
+                obecne.insert(0, etykieta)
+            self._loading = True
+            self.table.setItem(row, 1, QTableWidgetItem("; ".join(obecne)))
+            self._loading = False
+            self._manual_values.pop(key, None)
+            self._store_table_into_profile()
+            self._store_manual_into_profile()
+            self._analyze()
+            self._refresh_marks()
+            self.lbl_text_hint.setText(
+                f"✅ {key_item.text()} = „{zaznaczenie}” — odczytane po "
+                f"nazwie „{etykieta}”. Zadziała też w kolejnych wypisach."
+            )
+            self.lbl_text_hint.setStyleSheet("color: #2ecc71;")
+            return
+
+        # Nie ma nazwy przy wartości — zapisujemy ją jako wpis ręczny.
+        self._manual_values[key] = zaznaczenie
+        self._store_manual_into_profile()
+        self._analyze()
+        self._refresh_marks()
+        self.lbl_text_hint.setText(
+            f"✏️ {key_item.text()} = „{zaznaczenie}” — wpisane ręcznie, bo "
+            "przy tej wartości nie ma nazwy pola."
+        )
+        self.lbl_text_hint.setStyleSheet("color: #f1c40f;")
+
+    def _label_for_value(self, wartosc: str) -> str:
+        """Szuka nazwy pola stojącej przy wskazanej wartości w tekście."""
+
+        import re
+
+        tekst = self.pdf_text or ""
+        if not tekst or not wartosc:
+            return ""
+
+        for linia in tekst.splitlines():
+            if wartosc not in linia:
+                continue
+
+            przed = linia.split(wartosc)[0].strip()
+            if not przed:
+                continue
+
+            # „Województwo:  POMORSKIE” — nazwa stoi przed dwukropkiem.
+            if przed.endswith(":"):
+                return przed.rstrip(":").strip(" ,;-")
+
+            # „Województwo   POMORSKIE” — nazwa to pierwsza kolumna.
+            kolumny = [
+                czesc.strip()
+                for czesc in re.split(r"\s{2,}", przed)
+                if czesc.strip()
+            ]
+            if kolumny:
+                kandydat = kolumny[-1].strip(" :,;-")
+                # Nazwa pola nie zawiera cyfr.
+                if kandydat and not any(z.isdigit() for z in kandydat):
+                    return kandydat
+        return ""
 
     # ── Zapis ────────────────────────────────────────────────────────
 

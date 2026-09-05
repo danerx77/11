@@ -1212,3 +1212,49 @@ class NaglowekKolumnyTests(TabelaWKratkeTests):
         ):
             with self.subTest(wartosc=tekst):
                 self.assertEqual(self._klik(tekst)["label"], oczekiwany)
+
+
+class ZakladkaTekstowaTests(unittest.TestCase):
+    """Runda 20: w zakładce „Tekst dokumentu” wskazujemy wartość."""
+
+    TEKST = (
+        "Wojewodztwo   POMORSKIE\n"
+        "Powiat   kartuski\n"
+        "Obreb   0019, BOJANO\n"
+    )
+
+    def _dialog(self):
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        okno = WypisProfileDialog({})
+        okno.pdf_text = self.TEKST
+        return okno
+
+    def test_znajduje_nazwe_pola_stojaca_przy_wartosci(self):
+        if QApplication.instance() is None:
+            self.skipTest("brak Qt")
+        okno = self._dialog()
+        try:
+            self.assertEqual(okno._label_for_value("POMORSKIE"), "Wojewodztwo")
+            self.assertEqual(okno._label_for_value("kartuski"), "Powiat")
+        finally:
+            okno.deleteLater()
+
+    def test_nie_zwraca_nazwy_gdy_wartosci_nie_ma_w_tekscie(self):
+        if QApplication.instance() is None:
+            self.skipTest("brak Qt")
+        okno = self._dialog()
+        try:
+            self.assertEqual(okno._label_for_value("CZEGO NIE MA"), "")
+        finally:
+            okno.deleteLater()
+
+    def test_nazwa_pola_nie_zawiera_cyfr(self):
+        if QApplication.instance() is None:
+            self.skipTest("brak Qt")
+        okno = self._dialog()
+        try:
+            # „0019,” stoi przed „BOJANO”, ale to dana, nie nazwa pola.
+            self.assertEqual(okno._label_for_value("BOJANO"), "")
+        finally:
+            okno.deleteLater()

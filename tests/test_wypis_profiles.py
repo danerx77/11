@@ -20,6 +20,7 @@ from utils.wypis_profiles import (  # noqa: E402
     detect_profile,
     extract_field,
     find_profile,
+    default_profiles,
     labels_for,
     _value_until_next_column,
     load_profiles,
@@ -642,3 +643,66 @@ class KratkaNieMylonaZListaTests(unittest.TestCase):
         self.assertNotEqual(
             extract_field(self.TEKST, self.profil, "area"), "Opis uzytku"
         )
+
+
+class NowePolaWypisuTests(unittest.TestCase):
+    """Runda 20: wypis ma więcej pól niż 13 — m.in. ulicę i PESEL."""
+
+    def test_sa_pola_ulicy_i_miejscowosci(self):
+        for key in ("parcel_city", "parcel_street"):
+            with self.subTest(pole=key):
+                self.assertIn(key, FIELD_KEYS)
+
+    def test_sa_pola_wlasciciela(self):
+        for key in ("owner_address", "owner_city", "pesel", "nip", "regon"):
+            with self.subTest(pole=key):
+                self.assertIn(key, FIELD_KEYS)
+
+    def test_sa_pola_dokumentu(self):
+        for key in ("document_date", "document_number", "office", "land_use"):
+            with self.subTest(pole=key):
+                self.assertIn(key, FIELD_KEYS)
+
+    def test_kazde_pole_ma_nazwe_po_polsku(self):
+        for key in FIELD_KEYS:
+            with self.subTest(pole=key):
+                self.assertTrue(FIELD_LABELS.get(key))
+
+    def test_wbudowane_wzory_znaja_nowe_pola(self):
+        for profil in default_profiles():
+            for key in ("parcel_street", "pesel", "land_use"):
+                with self.subTest(wzor=profil["name"], pole=key):
+                    self.assertTrue(labels_for(profil, key))
+
+
+class OdczytNowychPolTests(unittest.TestCase):
+    """Nowe pola dają się odczytać z typowego wypisu."""
+
+    TEKST = (
+        "Starostwo Powiatowe w Kartuzach\n"
+        "Znak sprawy: GN.6621.145.2026\n"
+        "Data wypisu: 05.09.2026\n"
+        "Miejscowosc: Borkowo\n"
+        "Ulica: ul. Polna 3\n"
+        "Opis uzytku: RIVa\n"
+        "Wlasciciel: Kowalski Jan\n"
+        "Adres wlasciciela: ul. Lesna 7, 83-330 Zukowo\n"
+        "PESEL: 65042012345\n"
+        "NIP: 5891234567\n"
+    )
+
+    def test_czyta_ulice_uzytek_i_dane_wlasciciela(self):
+        profil = default_profiles()[0]
+        for pole, oczekiwane in (
+            ("parcel_city", "Borkowo"),
+            ("parcel_street", "ul. Polna 3"),
+            ("land_use", "RIVa"),
+            ("pesel", "65042012345"),
+            ("nip", "5891234567"),
+            ("document_date", "05.09.2026"),
+            ("document_number", "GN.6621.145.2026"),
+        ):
+            with self.subTest(pole=pole):
+                self.assertEqual(
+                    extract_field(self.TEKST, profil, pole), oczekiwane
+                )
