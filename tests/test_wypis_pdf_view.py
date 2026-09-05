@@ -31,6 +31,8 @@ if QApplication is not None and fitz is not None:
             label_at,
             load_page,
             page_count,
+            read_area_value,
+            text_in_rect,
         )
     except Exception:  # pragma: no cover - brak bibliotek graficznych
         QApplication = None
@@ -935,6 +937,173 @@ class TabelaWKratkeTests(unittest.TestCase):
     def test_klik_w_sam_naglowek_zwraca_naglowek(self):
         # „dzialki” to drugie słowo nagłówka „Nr dzialki”.
         self.assertEqual(self._klik("dzialki")["label"], "Nr dzialki")
+
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class ObszarOdczytuTests(unittest.TestCase):
+    """Rysowanie prostokąta, z którego czytana jest wartość."""
+
+    @classmethod
+    def setUpClass(cls):
+        TabelaWKratkeTests.setUpClass()
+        cls.pdf = TabelaWKratkeTests.pdf
+        cls.page = TabelaWKratkeTests.page
+
+    @classmethod
+    def tearDownClass(cls):
+        TabelaWKratkeTests.tearDownClass()
+
+    def _rect_slowa(self, tekst):
+        from PySide6.QtCore import QRectF
+
+        slowo = next(w for w in self.page.words if tekst in w.text)
+        return QRectF(
+            slowo.rect.left() - 6,
+            slowo.rect.top() - 4,
+            slowo.rect.width() + 12,
+            slowo.rect.height() + 8,
+        )
+
+    def test_odczyt_jednej_wartosci(self):
+        self.assertEqual(text_in_rect(self.page, self._rect_slowa("0.0235")), "0.0235")
+
+    def test_odczyt_slowa_z_przecinkiem(self):
+        self.assertIn("BOJANO", text_in_rect(self.page, self._rect_slowa("BOJANO")))
+
+    def test_pusty_obszar_daje_pusty_tekst(self):
+        from PySide6.QtCore import QRectF
+
+        self.assertEqual(text_in_rect(self.page, QRectF(5, 700, 40, 20)), "")
+
+    def test_szerszy_obszar_laczy_slowa(self):
+        from PySide6.QtCore import QRectF
+
+        slowo = next(w for w in self.page.words if "0.0235" in w.text)
+        szeroki = QRectF(
+            slowo.rect.left() - 200, slowo.rect.top() - 4, 320, slowo.rect.height() + 8
+        )
+        wynik = text_in_rect(self.page, szeroki)
+        self.assertIn("0.0235", wynik)
+        self.assertIn("145/7", wynik)
+
+    def test_read_area_value_z_procentow(self):
+        obraz = self.page.image
+        rect = self._rect_slowa("0.0235")
+        area = {
+            "x": rect.left() / obraz.width() * 100.0,
+            "y": rect.top() / obraz.height() * 100.0,
+            "w": rect.width() / obraz.width() * 100.0,
+            "h": rect.height() / obraz.height() * 100.0,
+            "page": 0,
+        }
+        self.assertEqual(read_area_value(self.pdf, area), "0.0235")
+
+    def test_brak_obszaru_daje_pusty_tekst(self):
+        self.assertEqual(read_area_value(self.pdf, {}), "")
+
+    def test_tryb_rysowania_zmienia_kursor(self):
+        widok = WypisPdfView()
+        widok.set_page(self.page)
+        widok.set_draw_mode(True)
+        self.assertTrue(widok._draw_mode)
+        widok.set_draw_mode(False)
+        self.assertFalse(widok._draw_mode)
+
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class ObszarWOknieTests(unittest.TestCase):
+    """Obszar zapisany we wzorze i użyty przy odczycie."""
+
+    @classmethod
+    def setUpClass(cls):
+        TabelaWKratkeTests.setUpClass()
+        cls.pdf = TabelaWKratkeTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        TabelaWKratkeTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _wiersz(self, nazwa):
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return row
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def _narysuj(self, nazwa_pola, tekst_slowa):
+        from PySide6.QtCore import QRectF
+
+        row = self._wiersz(nazwa_pola)
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog.btn_mode_area.setChecked(True)
+        slowo = next(
+            w for w in self.dialog.page_view.page.words if tekst_slowa in w.text
+        )
+        rect = QRectF(
+            slowo.rect.left() - 6,
+            slowo.rect.top() - 4,
+            slowo.rect.width() + 12,
+            slowo.rect.height() + 8,
+        )
+        self.dialog._on_area_selected(
+            {"rect": rect, "text": text_in_rect(self.dialog.page_view.page, rect)}
+        )
+        return row
+
+    def test_tryb_obszaru_wlacza_rysowanie(self):
+        self.dialog.btn_mode_area.setChecked(True)
+        self.assertEqual(self.dialog._click_mode(), "area")
+        self.assertTrue(self.dialog.page_view._draw_mode)
+
+    def test_narysowany_obszar_daje_wartosc(self):
+        row = self._narysuj("Numer księgi wieczystej", "0.0235")
+        self.assertEqual(self.dialog.table.item(row, 3).text(), "0.0235")
+
+    def test_stan_pokazuje_obszar(self):
+        row = self._narysuj("Numer księgi wieczystej", "0.0235")
+        self.assertIn("obszar", self.dialog.table.item(row, 2).text())
+
+    def test_obszar_zapisany_we_wzorze(self):
+        self._narysuj("Numer księgi wieczystej", "0.0235")
+        index = self.dialog._current_index()
+        self.assertIn("kw", self.dialog.profiles[index]["areas"])
+
+    def test_obszar_da_sie_cofnac(self):
+        row = self._narysuj("Numer księgi wieczystej", "0.0235")
+        self.dialog._undo_change()
+        self.assertNotIn("kw", self.dialog._areas)
+        self.assertNotEqual(self.dialog.table.item(row, 3).text(), "0.0235")
+
+    def test_usuniecie_pola_kasuje_obszar(self):
+        row = self._narysuj("Numer księgi wieczystej", "0.0235")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog._clear_row()
+        self.assertNotIn("kw", self.dialog._areas)
+
+    def test_obszar_wygrywa_z_dopasowaniem_tekstu(self):
+        # Pole „Obręb” czyta się samo, ale obszar ma pierwszeństwo.
+        row = self._narysuj("Obręb", "0.0235")
+        self.assertEqual(self.dialog.table.item(row, 3).text(), "0.0235")
 
 
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")

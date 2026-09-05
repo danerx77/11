@@ -163,6 +163,27 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         if str(key) in FIELD_KEYS and str(value or "").strip()
     }
 
+    # Obszary odczytu narysowane myszką. Trzymamy je w procentach strony
+    # (0-100), więc działają niezależnie od powiększenia i rozdzielczości.
+    raw_areas = source.get("areas")
+    raw_areas = raw_areas if isinstance(raw_areas, Mapping) else {}
+    areas: dict[str, dict[str, float]] = {}
+    for key, value in raw_areas.items():
+        if str(key) not in FIELD_KEYS or not isinstance(value, Mapping):
+            continue
+        try:
+            obszar = {
+                "x": float(value.get("x", 0.0)),
+                "y": float(value.get("y", 0.0)),
+                "w": float(value.get("w", 0.0)),
+                "h": float(value.get("h", 0.0)),
+                "page": int(value.get("page", 0)),
+            }
+        except (TypeError, ValueError):
+            continue
+        if obszar["w"] > 0 and obszar["h"] > 0:
+            areas[str(key)] = obszar
+
     return {
         "name": str(source.get("name", "") or "Nowy profil").strip() or "Nowy profil",
         "builtin": bool(source.get("builtin", False)),
@@ -170,6 +191,7 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "markers": clean_markers,
         "fields": fields,
         "manual_values": manual_values,
+        "areas": areas,
     }
 
 

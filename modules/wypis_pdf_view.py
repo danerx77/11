@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 FIELD_COLOR = QColor("#2ecc71")
 VALUE_COLOR = QColor("#3498db")
 HOVER_COLOR = QColor("#f1c40f")
+AREA_COLOR = QColor("#e67e22")   # obszar odczytu narysowany myszką
 
 
 def _fold(value: str) -> str:
@@ -244,6 +245,79 @@ def _header_above(page: PageData, cell: list["Word"]) -> list["Word"]:
     return ostatnia
 
 
+def text_in_rect(page: PageData, rect: QRectF) -> str:
+    """Zwraca tekst leżący wewnątrz narysowanego prostokąta.
+
+    Bierzemy każde słowo, którego większa część mieści się w zaznaczeniu,
+    i składamy je w kolejności czytania (wiersz po wierszu, od lewej).
+    """
+
+    if page is None or rect is None:
+        return ""
+
+    zaznaczenie = rect.normalized()
+    trafione = []
+    for word in page.words:
+        wspolne = zaznaczenie.intersected(word.rect)
+        if wspolne.isEmpty():
+            continue
+        pole_slowa = word.rect.width() * word.rect.height()
+        if pole_slowa <= 0:
+            continue
+        # Wystarczy połowa słowa — nie trzeba trafiać idealnie.
+        if (wspolne.width() * wspolne.height()) / pole_slowa >= 0.5:
+            trafione.append(word)
+
+    if not trafione:
+        return ""
+
+    trafione.sort(key=lambda w: (round(w.rect.center().y(), 1), w.rect.left()))
+
+    linie: list[list[Word]] = []
+    for word in trafione:
+        for linia in linie:
+            odniesienie = linia[0].rect.center().y()
+            if abs(word.rect.center().y() - odniesienie) <= word.rect.height() * 0.6:
+                linia.append(word)
+                break
+        else:
+            linie.append([word])
+
+    kawalki = []
+    for linia in linie:
+        linia.sort(key=lambda w: w.rect.left())
+        kawalki.append(" ".join(w.text for w in linia))
+    return " ".join(kawalki).strip(" :,;-")
+
+
+def read_area_value(pdf_path: str, area: dict, *, dpi: int = 96) -> str:
+    """Odczytuje tekst z obszaru zapisanego we wzorze.
+
+    ``area`` trzyma położenie w procentach strony, więc ten sam wzór
+    działa dla dokumentów o różnej rozdzielczości.
+    """
+
+    if not area:
+        return ""
+
+    strona = int(area.get("page", 0) or 0)
+    page = load_page(pdf_path, strona, dpi=dpi)
+    if page is None:
+        return ""
+
+    szerokosc = page.image.width()
+    wysokosc = page.image.height()
+    # Uwaga: load_page zwraca słowa bez marginesu podglądu, więc tutaj
+    # marginesu nie dodajemy — obszar jest zapisany względem samej strony.
+    rect = QRectF(
+        float(area.get("x", 0)) / 100.0 * szerokosc,
+        float(area.get("y", 0)) / 100.0 * wysokosc,
+        float(area.get("w", 0)) / 100.0 * szerokosc,
+        float(area.get("h", 0)) / 100.0 * wysokosc,
+    )
+    return text_in_rect(page, rect)
+
+
 def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     """Zwraca słowo (lub grupę słów) wskazane kursorem.
 
@@ -367,6 +441,7 @@ class WypisPdfView(QWidget):
     """
 
     label_clicked = Signal(dict)
+    area_selected = Signal(dict)   # narysowany prostokąt + odczytany tekst
     zoom_requested = Signal(int)   # +1 / -1 przy Ctrl + kółko myszy
 
     def __init__(self, parent=None):
@@ -377,6 +452,13 @@ class WypisPdfView(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._hover: QRectF | None = None
         self._hover_label = ""
+        #: Tryb rysowania obszaru odczytu zamiast klikania w słowa.
+        self._draw_mode = False
+        self._drag_start: QPointF | None = None
+        self._drag_rect: QRectF | None = None
+        #: Zapamiętane obszary pól: {klucz pola: QRectF}.
+        self._area_marks: dict[str, QRectF] = {}
+        self._area_active = ""
         #: Pas po lewej na nazwy pól — dzięki niemu podpisy nie zasłaniają
         #: treści wypisu.
         self.margin_left = 190
@@ -499,6 +581,26 @@ class WypisPdfView(QWidget):
 
         self._draw_tags(painter)
 
+        # Zapamiętane obszary odczytu — pomarańczowa ramka.
+        for key, rect in self._area_marks.items():
+            aktywny = key == self._area_active
+            kolor = QColor(AREA_COLOR)
+            painter.setPen(QPen(kolor, 3 if aktywny else 2, Qt.PenStyle.SolidLine))
+            wypelnienie = QColor(kolor)
+            wypelnienie.setAlpha(70 if aktywny else 34)
+            painter.setBrush(wypelnienie)
+            painter.drawRect(rect)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Prostokąt rysowany właśnie myszką.
+        if self._drag_rect is not None:
+            painter.setPen(QPen(QColor(AREA_COLOR), 2, Qt.PenStyle.DashLine))
+            wypelnienie = QColor(AREA_COLOR)
+            wypelnienie.setAlpha(60)
+            painter.setBrush(wypelnienie)
+            painter.drawRect(self._drag_rect)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
         # Słowo pod kursorem — na samym wierzchu.
         if self._hover is not None:
             self._draw_box(painter, self._hover, HOVER_COLOR, strong=True)
@@ -579,7 +681,42 @@ class WypisPdfView(QWidget):
             painter.drawText(tag, Qt.AlignmentFlag.AlignCenter, text)
             last_bottom = tag.bottom()
 
+    def set_draw_mode(self, enabled: bool) -> None:
+        """Włącza rysowanie obszaru odczytu zamiast klikania w słowa."""
+
+        self._draw_mode = bool(enabled)
+        self._drag_start = None
+        self._drag_rect = None
+        self._hover = None
+        self._hover_label = ""
+        self.setCursor(
+            Qt.CursorShape.CrossCursor
+            if self._draw_mode
+            else Qt.CursorShape.PointingHandCursor
+        )
+        self.setToolTip(
+            "Przeciągnij myszką prostokąt wokół wartości, którą program ma odczytywać."
+            if self._draw_mode
+            else ""
+        )
+        self.update()
+
+    def set_area_marks(self, marks: dict, active: str = "") -> None:
+        """Ustawia obszary zapamiętane dla poszczególnych pól."""
+
+        self._area_marks = dict(marks or {})
+        self._area_active = str(active or "")
+        self.update()
+
     def mouseMoveEvent(self, event):  # noqa: N802
+        if self._draw_mode:
+            if self._drag_start is not None:
+                self._drag_rect = QRectF(
+                    self._drag_start, event.position()
+                ).normalized()
+                self.update()
+            return
+
         hit = label_at(self.page, event.position().toPoint())
         rect = hit["rect"] if hit else None
         if rect != self._hover:
@@ -612,6 +749,42 @@ class WypisPdfView(QWidget):
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() != Qt.MouseButton.LeftButton:
             return
+
+        if self._draw_mode:
+            self._drag_start = event.position()
+            self._drag_rect = None
+            self.update()
+            return
+
         hit = label_at(self.page, event.position().toPoint())
         if hit:
             self.label_clicked.emit(hit)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        if not self._draw_mode or event.button() != Qt.MouseButton.LeftButton:
+            return
+
+        start = self._drag_start
+        self._drag_start = None
+        if start is None:
+            return
+
+        rect = QRectF(start, event.position()).normalized()
+        self._drag_rect = None
+
+        # Zbyt mały prostokąt to zwykłe kliknięcie — powiększamy go do
+        # rozmiaru słowa pod kursorem, żeby dało się wskazać jedną liczbę.
+        if rect.width() < 4 or rect.height() < 4:
+            punkt = event.position().toPoint()
+            slowo = next(
+                (w for w in (self.page.words if self.page else []) if w.rect.contains(punkt)),
+                None,
+            )
+            if slowo is None:
+                self.update()
+                return
+            rect = QRectF(slowo.rect)
+
+        tekst = text_in_rect(self.page, rect)
+        self.area_selected.emit({"rect": rect, "text": tekst})
+        self.update()

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -43,6 +43,7 @@ from modules.wypis_pdf_view import (
     WypisPdfView,
     load_page,
     page_count,
+    read_area_value,
     read_pdf_text,
 )
 
@@ -62,6 +63,7 @@ from utils.wypis_profiles import (
 )
 
 STATUS_COLORS = {
+    "area": "#e67e22",
     "manual": "#f1c40f",
     "ok": "#2ecc71",
     "found": "#f1c40f",
@@ -69,6 +71,7 @@ STATUS_COLORS = {
 }
 
 STATUS_TEXTS = {
+    "area": "🔲 z obszaru",
     "manual": "✏️ wpisano ręcznie",
     "ok": "✅ odczytano",
     "found": "⚠️ brak wartości",
@@ -77,6 +80,7 @@ STATUS_TEXTS = {
 
 #: Pełne wyjaśnienia statusów — pokazywane jako podpowiedź.
 STATUS_HINTS = {
+    "area": "Wartość czytana z prostokąta narysowanego na dokumencie.",
     "manual": "Wartość poprawiona ręcznie — program nie nadpisze jej odczytem z PDF.",
     "ok": "Program znalazł etykietę i odczytał wartość.",
     "found": "Etykieta jest w dokumencie, ale nie ma przy niej wartości.",
@@ -113,6 +117,8 @@ class WypisProfileDialog(QDialog):
         self._before_edit: dict | None = None
         #: Wartości poprawione ręcznie: {klucz pola: tekst}.
         self._manual_values: dict[str, str] = {}
+        #: Obszary odczytu narysowane myszką: {klucz pola: prostokąt %}.
+        self._areas: dict[str, dict] = {}
 
         self._build_ui()
         self._apply_style()
@@ -399,11 +405,10 @@ class WypisProfileDialog(QDialog):
 
         hint = QLabel(
             "Jak przypisać pole: <b>1.</b> kliknij wiersz w tabeli, "
-            "<b>2.</b> kliknij na dokumencie nazwę pola <b>albo samą "
-            "wartość</b> — program rozpozna jedno i drugie. Kolumnę "
-            "<b>④ Odczytana wartość</b> poprawisz dwuklikiem; wpisana "
-            "ręcznie wartość ma pierwszeństwo, a skasowanie jej wraca "
-            "do odczytu z dokumentu."
+            "<b>2.</b> wybierz tryb nad podglądem i wskaż dane na dokumencie. "
+            "Gdy dopasowanie po tekście zawodzi, użyj <b>🔲 OBSZAR</b> — "
+            "przeciągnij prostokąt wokół wartości, a program będzie czytał "
+            "dokładnie stamtąd."
         )
         hint.setObjectName("muted_hint")
         hint.setWordWrap(True)
@@ -464,8 +469,25 @@ class WypisProfileDialog(QDialog):
             )
             przycisk.toggled.connect(self._on_mode_changed)
 
+        self.btn_mode_area = QPushButton("🔲 OBSZAR (rysuj)")
+        self.btn_mode_area.setCheckable(True)
+        self.btn_mode_area.setMinimumHeight(34)
+        self.btn_mode_area.setToolTip(
+            "Przeciągnij myszką prostokąt wokół wartości.\n"
+            "Program będzie czytał dokładnie z tego miejsca —\n"
+            "bez dopasowywania tekstu."
+        )
+        grupa.addButton(self.btn_mode_area)
+        self.btn_mode_area.setStyleSheet(
+            "QPushButton { padding: 4px 14px; font-weight: 600; }"
+            "QPushButton:checked { background: #e67e22; color: #201005;"
+            " border: 2px solid #ffb366; }"
+        )
+        self.btn_mode_area.toggled.connect(self._on_mode_changed)
+
         mode_row.addWidget(self.btn_mode_label)
         mode_row.addWidget(self.btn_mode_value)
+        mode_row.addWidget(self.btn_mode_area)
         mode_row.addStretch()
         page_layout.addLayout(mode_row)
 
@@ -553,6 +575,7 @@ class WypisProfileDialog(QDialog):
         self.page_scroll.setWidgetResizable(False)
         self.page_view = WypisPdfView()
         self.page_view.label_clicked.connect(self._on_label_clicked)
+        self.page_view.area_selected.connect(self._on_area_selected)
         self.page_view.zoom_requested.connect(self._zoom_step)
         self.page_scroll.setWidget(self.page_view)
         page_layout.addWidget(self.page_scroll, 1)
@@ -662,6 +685,13 @@ class WypisProfileDialog(QDialog):
             value_item.setToolTip("Kliknij dwa razy, aby poprawić wartość ręcznie.")
             self.table.setItem(row, 3, value_item)
 
+        # Obszary odczytu zapisane w tym wzorze.
+        self._areas = {
+            str(k): dict(v)
+            for k, v in dict(profile.get("areas") or {}).items()
+            if isinstance(v, dict)
+        }
+
         # Ręczne poprawki zapisane wcześniej w tym wzorze.
         self._manual_values = {
             str(k): str(v)
@@ -713,15 +743,100 @@ class WypisProfileDialog(QDialog):
         if index >= 0:
             self.profiles[index]["manual_values"] = dict(self._manual_values)
 
-    def _click_mode(self) -> str:
-        """Zwraca „label” albo „value” — co robi kliknięcie w dokument."""
+    def _on_area_selected(self, dane: dict) -> None:
+        """Zapamiętuje narysowany prostokąt jako źródło odczytu pola."""
 
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Zaznacz najpierw w tabeli po lewej wiersz, dla którego "
+                "rysujesz obszar odczytu.",
+            )
+            return
+
+        rect = dane.get("rect")
+        tekst = str(dane.get("text") or "").strip()
+        if rect is None:
+            return
+
+        key_item = self.table.item(row, 0)
+        key = key_item.data(Qt.ItemDataRole.UserRole)
+
+        obraz = self.page_view.page.image if self.page_view.page else None
+        if obraz is None or obraz.width() <= 0 or obraz.height() <= 0:
+            return
+
+        # Zapis w procentach strony — niezależny od powiększenia.
+        margines = self.page_view.margin_left
+        self._remember()
+        self._areas[key] = {
+            "x": (rect.left() - margines) / obraz.width() * 100.0,
+            "y": rect.top() / obraz.height() * 100.0,
+            "w": rect.width() / obraz.width() * 100.0,
+            "h": rect.height() / obraz.height() * 100.0,
+            "page": self._page_index,
+        }
+        self._store_areas_into_profile()
+
+        if self.pdf_text:
+            self._analyze()
+        self._refresh_marks()
+
+        if tekst:
+            self.lbl_summary.setText(
+                f"🔲 {key_item.text()} = {tekst} (z narysowanego obszaru)"
+                "  •  " + self.lbl_summary.text()
+            )
+        else:
+            self.lbl_summary.setText(
+                f"🔲 Obszar dla „{key_item.text()}” zapisany, ale nie ma w nim "
+                "tekstu. Narysuj go jeszcze raz.  •  " + self.lbl_summary.text()
+            )
+
+    def _store_areas_into_profile(self) -> None:
+        """Zapisuje obszary odczytu we wzorze."""
+
+        index = self._current_index()
+        if index >= 0:
+            self.profiles[index]["areas"] = dict(self._areas)
+
+    def _area_value(self, key: str) -> str:
+        """Czyta wartość pola z zapisanego obszaru, jeśli taki istnieje."""
+
+        obszar = self._areas.get(key)
+        if not obszar or not self.pdf_path:
+            return ""
+        try:
+            return read_area_value(self.pdf_path, obszar)
+        except Exception:  # pragma: no cover - zależne od pliku
+            return ""
+
+    def _click_mode(self) -> str:
+        """Zwraca „label”, „value” albo „area” — co robi mysz na dokumencie."""
+
+        if self.btn_mode_area.isChecked():
+            return "area"
         return "value" if self.btn_mode_value.isChecked() else "label"
 
     def _on_mode_changed(self, *_args) -> None:
-        """Odświeża pasek podpowiedzi pod przyciskami trybu."""
+        """Odświeża pasek podpowiedzi i przełącza rysowanie w podglądzie."""
 
-        if self._click_mode() == "value":
+        tryb = self._click_mode()
+        if getattr(self, "page_view", None) is not None:
+            self.page_view.set_draw_mode(tryb == "area")
+
+        if tryb == "area":
+            self.lbl_mode_hint.setText(
+                "🔲 <b>Tryb obszaru.</b> Zaznacz w tabeli pole, a potem "
+                "<b>przeciągnij myszką prostokąt</b> wokół wartości na "
+                "dokumencie. Program będzie czytał dokładnie z tego miejsca."
+            )
+            self.lbl_mode_hint.setStyleSheet("color: #ffb366;")
+            return
+
+        if tryb == "value":
             self.lbl_mode_hint.setText(
                 "✏️ <b>Tryb wartości.</b> Kliknij w dokumencie tekst, który ma "
                 "trafić do kolumny <b>④ Odczytana wartość</b> zaznaczonego "
@@ -755,7 +870,11 @@ class WypisProfileDialog(QDialog):
                 continue
             key = key_item.data(Qt.ItemDataRole.UserRole)
             labels[key] = value_item.text() if value_item else ""
-        return {"labels": labels, "manual": dict(self._manual_values)}
+        return {
+            "labels": labels,
+            "manual": dict(self._manual_values),
+            "areas": {k: dict(v) for k, v in self._areas.items()},
+        }
 
     def _remember(self) -> None:
         """Odkłada stan przed zmianą, żeby dało się ją cofnąć."""
@@ -771,6 +890,9 @@ class WypisProfileDialog(QDialog):
 
         labels = snapshot.get("labels", {})
         self._manual_values = dict(snapshot.get("manual", {}))
+        self._areas = {
+            k: dict(v) for k, v in dict(snapshot.get("areas", {})).items()
+        }
 
         self._loading = True
         for row in range(self.table.rowCount()):
@@ -782,6 +904,7 @@ class WypisProfileDialog(QDialog):
         self._loading = False
         self._store_table_into_profile()
         self._store_manual_into_profile()
+        self._store_areas_into_profile()
         if self.pdf_text:
             self._analyze()
         if self.pdf_path:
@@ -832,11 +955,17 @@ class WypisProfileDialog(QDialog):
             return
 
         item = self.table.item(row, 1)
-        if not (item and item.text().strip()):
+        key = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        ma_obszar = key in self._areas
+        if not (item and item.text().strip()) and not ma_obszar:
             return
 
         self._remember()
         name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+        self._areas.pop(key, None)
+        self._manual_values.pop(key, None)
+        self._store_areas_into_profile()
+        self._store_manual_into_profile()
         self._loading = True
         self.table.setItem(row, 1, QTableWidgetItem(""))
         self._loading = False
@@ -873,7 +1002,7 @@ class WypisProfileDialog(QDialog):
             return
 
         self._remember()
-        self._apply_snapshot({"labels": {}, "manual": {}})
+        self._apply_snapshot({"labels": {}, "manual": {}, "areas": {}})
         self.lbl_summary.setText(
             "🧹 Wyczyszczono wszystkie przypisania.  •  " + self.lbl_summary.text()
         )
@@ -1093,6 +1222,7 @@ class WypisProfileDialog(QDialog):
 
         if not self.chk_show_marks.isChecked():
             self.page_view.set_marks({}, {})
+            self.page_view.set_area_marks({})
             return
 
         profile = self._current_profile()
@@ -1107,6 +1237,27 @@ class WypisProfileDialog(QDialog):
             if value_rect is not None:
                 values[FIELD_LABELS[key]] = value_rect
         self.page_view.set_marks(marks, values)
+
+        # Narysowane obszary przeliczamy z procentów na piksele podglądu.
+        obraz = self.page_view.page.image if self.page_view.page else None
+        obszary = {}
+        if obraz is not None and obraz.width() > 0:
+            margines = self.page_view.margin_left
+            for key, obszar in self._areas.items():
+                if int(obszar.get("page", 0)) != self._page_index:
+                    continue
+                obszary[key] = QRectF(
+                    float(obszar.get("x", 0)) / 100.0 * obraz.width() + margines,
+                    float(obszar.get("y", 0)) / 100.0 * obraz.height(),
+                    float(obszar.get("w", 0)) / 100.0 * obraz.width(),
+                    float(obszar.get("h", 0)) / 100.0 * obraz.height(),
+                )
+
+        aktywne = ""
+        row = self.table.currentRow()
+        if row >= 0 and self.table.item(row, 0) is not None:
+            aktywne = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        self.page_view.set_area_marks(obszary, aktywne)
 
     def _on_label_clicked(self, hit: dict) -> None:
         """Przypisuje klikniętą etykietę do wiersza wybranego w tabeli."""
@@ -1273,6 +1424,21 @@ class WypisProfileDialog(QDialog):
                     "Kliknij dwa razy, aby poprawić wartość ręcznie."
                 )
                 self.table.setItem(row, 3, value_item)
+
+            # Obszar narysowany myszką ma pierwszeństwo — użytkownik
+            # wskazał wprost, skąd czytać tę wartość.
+            z_obszaru = self._area_value(key)
+            if z_obszaru:
+                value_item.setText(z_obszaru)
+                value_item.setForeground(QColor("#ffb366"))
+                value_item.setToolTip(
+                    "Odczytane z obszaru narysowanego na dokumencie."
+                )
+                status_item.setText(STATUS_TEXTS["area"])
+                status_item.setForeground(QColor(STATUS_COLORS["area"]))
+                status_item.setToolTip(STATUS_HINTS["area"])
+                value_item.setFont(QFont("", -1, QFont.Weight.Bold))
+                continue
 
             # Ręczna poprawka użytkownika jest ważniejsza niż odczyt z PDF.
             reczna = self._manual_values.get(key)

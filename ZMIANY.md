@@ -1078,6 +1078,53 @@ gdy nazwy nie da się ustalić.
 `tests/test_wypis_profiles.py` — 69 testów (+7 na odczyt kolumnowy),
 `tests/test_wypis_pdf_view.py` — 83. Razem **512 testów** (było 504).
 
+## 48. Zaznaczanie obszaru myszką — odczyt bez dopasowywania tekstu
+
+**Zgłoszenie:** „zrób tak, że wybieram odczytaną wartość i program ma
+umożliwić narysowanie pola zaznaczenia, z którego ta wartość ma zostać
+odczytana”.
+
+Dopasowywanie po tekście zawodzi na nietypowych wypisach. Doszedł więc
+tryb, w którym użytkownik **sam rysuje prostokąt** i to on decyduje, skąd
+brana jest wartość — bez żadnego zgadywania.
+
+### Jak to działa
+
+1. Zaznacz wiersz w tabeli po lewej.
+2. Wciśnij **🔲 OBSZAR (rysuj)** nad podglądem.
+3. Przeciągnij myszką prostokąt wokół wartości na dokumencie.
+
+Wartość pojawia się od razu w kolumnie ④ ze stanem **🔲 z obszaru**.
+Obszar rysowany jest pomarańczową ramką, a ten dla zaznaczonego wiersza
+jest podświetlony mocniej.
+
+### Co doszło w kodzie
+
+| Element | Rola |
+| --- | --- |
+| `text_in_rect(page, rect)` | składa tekst ze słów, których ponad połowa mieści się w prostokącie |
+| `read_area_value(pdf, area)` | czyta wartość z obszaru zapisanego we wzorze |
+| `WypisPdfView.set_draw_mode()` | przełącza podgląd w rysowanie (kursor krzyżykowy) |
+| sygnał `area_selected` | niesie narysowany prostokąt i odczytany tekst |
+| `profile["areas"]` | obszary zapisane **w procentach strony** |
+
+Zapis w procentach sprawia, że wzór działa niezależnie od powiększenia
+i rozdzielczości — obszar zapisany przy 100% czyta się poprawnie także
+przy 200%.
+
+### Pierwszeństwo i zarządzanie
+
+Obszar **wygrywa** ze zwykłym dopasowaniem tekstu, bo użytkownik wskazał
+źródło wprost. Obszary zapisują się we wzorze (działają na kolejnych
+wypisach z tego urzędu), da się je cofnąć (`Ctrl+Z`) i usunąć przyciskiem
+„🗑️ Usuń z pola”. Bardzo mały prostokąt jest traktowany jak kliknięcie
+i rozszerzany do słowa pod kursorem, żeby dało się wskazać jedną liczbę.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 97 testów (+14 na obszary). Razem
+**526 testów** (było 512).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
