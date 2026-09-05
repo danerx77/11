@@ -209,6 +209,177 @@ class KlikanieTests(unittest.TestCase):
         self.assertEqual(len(view.marks), 0)
 
 
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class MarginesIOznaczeniaTests(unittest.TestCase):
+    """Podpisy pól stoją na marginesie i nie zasłaniają treści wypisu."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def _widok(self):
+        view = WypisPdfView()
+        view.set_page(load_page(self.pdf))
+        return view
+
+    def test_widok_jest_szerszy_o_margines(self):
+        page = load_page(self.pdf)
+        szerokosc_obrazu = page.image.width()
+        view = WypisPdfView()
+        view.set_page(page)
+        self.assertEqual(view.width(), szerokosc_obrazu + view.margin_left)
+
+    def test_slowa_sa_przesuniete_o_margines(self):
+        view = self._widok()
+        rect = view.find_label_rect("Powiat")
+        self.assertGreaterEqual(rect.left(), view.margin_left)
+
+    def test_klikanie_dziala_po_przesunieciu(self):
+        view = self._widok()
+        rect = view.find_label_rect("Powiat")
+        hit = label_at(view.page, QPoint(int(rect.center().x()), int(rect.center().y())))
+        self.assertEqual(hit["label"], "Powiat")
+        self.assertEqual(hit["value"], "kartuski")
+
+    def test_klikniecie_zwraca_prostokat_wartosci(self):
+        view = self._widok()
+        rect = view.find_label_rect("Powiat")
+        hit = label_at(view.page, QPoint(int(rect.center().x()), int(rect.center().y())))
+        self.assertIsNotNone(hit["value_rect"])
+        # Wartość stoi na prawo od etykiety.
+        self.assertGreater(hit["value_rect"].left(), rect.left())
+
+    def test_etykieta_i_wartosc_naraz(self):
+        view = self._widok()
+        etykieta, wartosc = view.label_and_value_rects(["Powiat"])
+        self.assertIsNotNone(etykieta)
+        self.assertIsNotNone(wartosc)
+
+    def test_brak_etykiety_daje_dwa_none(self):
+        view = self._widok()
+        etykieta, wartosc = view.label_and_value_rects(["Nie ma takiego pola"])
+        self.assertIsNone(etykieta)
+        self.assertIsNone(wartosc)
+
+    def test_ramki_wartosci_mozna_ustawic(self):
+        view = self._widok()
+        etykieta, wartosc = view.label_and_value_rects(["Powiat"])
+        view.set_marks({"Powiat": etykieta}, {"Powiat": wartosc})
+        self.assertEqual(len(view.marks), 1)
+        self.assertEqual(len(view.value_marks), 1)
+
+    def test_rysowanie_nie_zglasza_bledu(self):
+        """Sam paintEvent musi przejść — z ramkami i podpisami."""
+        from PySide6.QtGui import QPixmap
+
+        view = self._widok()
+        etykieta, wartosc = view.label_and_value_rects(["Powiat"])
+        view.set_marks({"Powiat": etykieta}, {"Powiat": wartosc})
+        pixmap = QPixmap(view.size())
+        view.render(pixmap)
+        self.assertFalse(pixmap.isNull())
+
+    def test_dluga_nazwa_nie_wywala_rysowania(self):
+        from PySide6.QtGui import QPixmap
+
+        view = self._widok()
+        etykieta = view.find_label_rect("Powiat")
+        view.set_marks({"Bardzo długa nazwa pola w programie": etykieta})
+        pixmap = QPixmap(view.size())
+        view.render(pixmap)
+        self.assertFalse(pixmap.isNull())
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class PowiekszenieTests(unittest.TestCase):
+    """Suwak powiększenia, przyciski +/− i „Dopasuj”."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def _okno(self):
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        dialog = WypisProfileDialog({})
+        dialog.resize(1300, 850)
+        dialog.show()
+        dialog.load_pdf_path(self.pdf)
+        return dialog
+
+    def test_domyslne_powiekszenie_to_sto_procent(self):
+        dialog = self._okno()
+        self.assertEqual(dialog.zoom_slider.value(), 100)
+        self.assertEqual(dialog.lbl_zoom.text(), "100%")
+
+    def test_powiekszanie_zwieksza_podglad(self):
+        dialog = self._okno()
+        przed = dialog.page_view.width()
+        dialog.zoom_slider.setValue(200)
+        self.assertGreater(dialog.page_view.width(), przed)
+        self.assertEqual(dialog.lbl_zoom.text(), "200%")
+
+    def test_pomniejszanie_zmniejsza_podglad(self):
+        dialog = self._okno()
+        dialog.zoom_slider.setValue(200)
+        duzy = dialog.page_view.width()
+        dialog.zoom_slider.setValue(75)
+        self.assertLess(dialog.page_view.width(), duzy)
+
+    def test_przycisk_plus_dodaje_krok(self):
+        dialog = self._okno()
+        dialog._zoom_step(1)
+        self.assertEqual(dialog.zoom_slider.value(), 125)
+
+    def test_przycisk_minus_odejmuje_krok(self):
+        dialog = self._okno()
+        dialog._zoom_step(-1)
+        self.assertEqual(dialog.zoom_slider.value(), 75)
+
+    def test_powiekszenie_nie_wychodzi_poza_zakres(self):
+        dialog = self._okno()
+        for _ in range(20):
+            dialog._zoom_step(1)
+        self.assertLessEqual(dialog.zoom_slider.value(), 300)
+        for _ in range(40):
+            dialog._zoom_step(-1)
+        self.assertGreaterEqual(dialog.zoom_slider.value(), 50)
+
+    def test_dopasuj_wraca_do_stu_procent(self):
+        dialog = self._okno()
+        dialog.zoom_slider.setValue(250)
+        dialog._zoom_fit()
+        self.assertEqual(dialog.zoom_slider.value(), 100)
+
+    def test_strona_miesci_sie_w_oknie_przy_dopasowaniu(self):
+        dialog = self._okno()
+        dialog._zoom_fit()
+        self.assertLessEqual(
+            dialog.page_view.width(),
+            dialog.page_scroll.viewport().width() + 4,
+        )
+
+    def test_oznaczenia_mozna_ukryc(self):
+        dialog = self._okno()
+        dialog.chk_show_marks.setChecked(False)
+        self.assertEqual(len(dialog.page_view.marks), 0)
+        dialog.chk_show_marks.setChecked(True)
+        self.assertGreater(len(dialog.page_view.marks), 0)
+
+
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")
 class SkladanieTekstuTests(unittest.TestCase):
     def test_fold_usuwa_ogonki(self):

@@ -168,11 +168,22 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     right = max(w.rect.right() for w in same_line[: index + 1])
     bottom = max(w.rect.bottom() for w in same_line[: index + 1])
 
+    value_rect = None
+    rest = same_line[end + 1:]
+    if rest:
+        value_rect = QRectF(
+            min(w.rect.left() for w in rest),
+            min(w.rect.top() for w in rest),
+            max(w.rect.right() for w in rest) - min(w.rect.left() for w in rest),
+            max(w.rect.bottom() for w in rest) - min(w.rect.top() for w in rest),
+        )
+
     return {
         "word": hit.text,
         "label": label,
         "value": value,
         "rect": QRectF(left, top, right - left, bottom - top),
+        "value_rect": value_rect,
     }
 
 
@@ -184,6 +195,7 @@ class WypisPdfView(QWidget):
     """
 
     label_clicked = Signal(dict)
+    zoom_requested = Signal(int)   # +1 / -1 przy Ctrl + kółko myszy
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -192,6 +204,10 @@ class WypisPdfView(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._hover: QRectF | None = None
+        self._hover_label = ""
+        #: Pas po lewej na nazwy pól — dzięki niemu podpisy nie zasłaniają
+        #: treści wypisu.
+        self.margin_left = 190
         #: pole -> prostokąt etykiety (rysowane na zielono)
         self.marks: dict[str, QRectF] = {}
         #: pole -> prostokąt wartości (rysowany na niebiesko)
@@ -203,8 +219,15 @@ class WypisPdfView(QWidget):
     def set_page(self, page: PageData | None) -> None:
         self.page = page
         self._hover = None
+        self._hover_label = ""
         if page is not None:
-            self.setFixedSize(page.image.width(), page.image.height())
+            # Przesuwamy słowa o margines, aby współrzędne kliknięć i ramek
+            # zgadzały się z tym, co widać na ekranie.
+            for word in page.words:
+                word.rect.moveLeft(word.rect.left() + self.margin_left)
+            self.setFixedSize(
+                page.image.width() + self.margin_left, page.image.height()
+            )
         self.update()
 
     def set_marks(
@@ -260,13 +283,29 @@ class WypisPdfView(QWidget):
                 return rect
         return None
 
+    def label_and_value_rects(
+        self, labels: list[str]
+    ) -> tuple[QRectF | None, QRectF | None]:
+        """Prostokąt etykiety i stojącej obok wartości."""
+
+        rect = self.label_rects(labels)
+        if rect is None or self.page is None:
+            return None, None
+        hit = label_at(
+            self.page,
+            QPoint(int(rect.center().x()), int(rect.center().y())),
+        )
+        return rect, (hit.get("value_rect") if hit else None)
+
     # ── Rysowanie ────────────────────────────────────────────────────
 
     def paintEvent(self, event):  # noqa: N802 - nazwa narzucona przez Qt
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if self.page is None:
-            painter.fillRect(self.rect(), QColor("#20303d"))
+            painter.fillRect(self.rect(), QColor("#1b2a36"))
             painter.setPen(QColor("#9fb3c5"))
+            painter.setFont(QFont("", 11))
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
@@ -274,17 +313,23 @@ class WypisPdfView(QWidget):
             )
             return
 
-        painter.drawImage(0, 0, self.page.image)
+        painter.fillRect(self.rect(), QColor("#16242f"))
+        painter.drawImage(self.margin_left, 0, self.page.image)
 
-        # Pola już przypisane — etykieta na zielono, wartość na niebiesko.
-        for key, rect in self.value_marks.items():
-            self._draw_box(painter, rect, VALUE_COLOR, fill=True)
-        for key, rect in self.marks.items():
-            self._draw_box(painter, rect, FIELD_COLOR, fill=True, label=key)
+        # Wartości odczytane — niebieska ramka przerywana.
+        for rect in self.value_marks.values():
+            self._draw_box(painter, rect, VALUE_COLOR, dashed=True)
 
-        # Słowo pod kursorem.
+        # Etykiety przypisane — zielona ramka. Podpisy rysujemy dopiero
+        # na końcu, żeby nie zasłaniały ramek innych pól.
+        for rect in self.marks.values():
+            self._draw_box(painter, rect, FIELD_COLOR)
+
+        self._draw_tags(painter)
+
+        # Słowo pod kursorem — na samym wierzchu.
         if self._hover is not None:
-            self._draw_box(painter, self._hover, HOVER_COLOR, fill=True)
+            self._draw_box(painter, self._hover, HOVER_COLOR, strong=True)
 
     def _draw_box(
         self,
@@ -292,47 +337,105 @@ class WypisPdfView(QWidget):
         rect: QRectF,
         color: QColor,
         *,
-        fill: bool = False,
-        label: str = "",
+        dashed: bool = False,
+        strong: bool = False,
     ) -> None:
+        """Rysuje samą ramkę pola (bez podpisu)."""
+
+        box = rect.adjusted(-2, -2, 2, 2)
         pen = QPen(color)
-        pen.setWidth(2)
+        pen.setWidth(3 if strong else 2)
+        if dashed:
+            pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
-        if fill:
-            wash = QColor(color)
-            wash.setAlpha(60)
-            painter.fillRect(rect, wash)
-        painter.drawRect(rect)
 
-        if label:
-            font = QFont("", 8, QFont.Weight.Bold)
-            painter.setFont(font)
-            # Szerokość podpisu liczymy z tekstu, żeby nazwa pola nie była ucięta.
-            text = f" {label} "
-            width = painter.fontMetrics().horizontalAdvance(text) + 2
-            top = rect.top() - 14
-            if top < 0:                     # etykieta przy górnej krawędzi strony
-                top = rect.bottom() + 1
-            tag = QRectF(rect.left(), top, width, 13)
-            painter.fillRect(tag, color)
+        wash = QColor(color)
+        wash.setAlpha(70 if strong else 40)
+        painter.fillRect(box, wash)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(box, 3, 3)
+
+    def _draw_tags(self, painter: QPainter) -> None:
+        """Rysuje nazwy pól na marginesie, z linią do ramki.
+
+        Podpisy stawiamy obok dokumentu, a nie na nim — inaczej zasłaniałyby
+        treść wypisu, którą użytkownik właśnie chce przeczytać.
+        """
+
+        if not self.marks:
+            return
+
+        painter.setFont(QFont("", 9, QFont.Weight.Bold))
+        metrics = painter.fontMetrics()
+        height = metrics.height() + 4
+
+        # Układamy podpisy z góry na dół, bez nachodzenia na siebie.
+        items = sorted(self.marks.items(), key=lambda kv: kv[1].top())
+        last_bottom = -1.0
+        usable = self.margin_left - 12
+        for name, rect in items:
+            # Nazwa musi zmieścić się na marginesie — dłuższe skracamy.
+            text = f" {name} "
+            if metrics.horizontalAdvance(text) + 8 > usable:
+                text = " " + metrics.elidedText(
+                    name, Qt.TextElideMode.ElideRight, usable - 16
+                ) + " "
+            width = metrics.horizontalAdvance(text) + 8
+
+            top = max(rect.top() - 1, last_bottom + 3)
+            left = self.margin_left - width - 8
+            if left < 2:                      # brak marginesu: podpis nad ramką
+                left = min(rect.left(), max(self.width() - width - 2, 2))
+                top = max(rect.top() - height - 3, last_bottom + 3)
+
+            tag = QRectF(left, top, width, height)
+
+            # Linia łącząca podpis z polem na dokumencie.
+            pen = QPen(QColor(FIELD_COLOR))
+            pen.setWidth(1)
+            painter.setPen(pen)
+            painter.drawLine(
+                int(tag.right()), int(tag.center().y()),
+                int(rect.left() - 2), int(rect.center().y()),
+            )
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(FIELD_COLOR)
+            painter.drawRoundedRect(tag, 4, 4)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QColor("#10222e"))
-            painter.drawText(tag, Qt.AlignmentFlag.AlignVCenter, text)
-
-    # ── Mysz ─────────────────────────────────────────────────────────
+            painter.drawText(tag, Qt.AlignmentFlag.AlignCenter, text)
+            last_bottom = tag.bottom()
 
     def mouseMoveEvent(self, event):  # noqa: N802
         hit = label_at(self.page, event.position().toPoint())
         rect = hit["rect"] if hit else None
         if rect != self._hover:
             self._hover = rect
-            self.setToolTip(
-                f"Kliknij, aby przypisać: „{hit['label']}”" if hit else ""
-            )
+            self._hover_label = hit["label"] if hit else ""
+            if hit:
+                value = hit.get("value") or "—"
+                self.setToolTip(
+                    f"Kliknij, aby przypisać etykietę „{hit['label']}”\n"
+                    f"Odczytana wartość: {value}"
+                )
+            else:
+                self.setToolTip("")
             self.update()
 
     def leaveEvent(self, event):  # noqa: N802
         self._hover = None
+        self._hover_label = ""
         self.update()
+
+    def wheelEvent(self, event):  # noqa: N802
+        """Ctrl + kółko myszy powiększa i pomniejsza podgląd."""
+
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.zoom_requested.emit(1 if event.angleDelta().y() > 0 else -1)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() != Qt.MouseButton.LeftButton:

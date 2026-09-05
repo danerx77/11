@@ -751,6 +751,66 @@ położenia słów, klikanie w etykietę, w wartość i w odstęp, ogonki,
 najdłuższe dopasowanie oraz zachowanie przy braku pliku. Doszedł też test
 kolejności sekcji w Ustawieniach. Razem **434 testy** (było 411).
 
+## 42. Podgląd wypisu — powiększanie, czytelne oznaczenia, nowy wygląd
+
+**Prośby:** poprawić wielkość podglądu, wyraźniej oznaczać co jest czym
+i co się odczytuje, oraz unowocześnić i powiększyć okno.
+
+### Powiększanie podglądu
+
+Nad dokumentem jest pasek sterowania:
+
+| Element | Działanie |
+| --- | --- |
+| `−` / `+` | zmiana o 25% |
+| suwak | płynnie od 50% do 300% |
+| `Dopasuj` | wraca do szerokości okna (100%) |
+| **Ctrl + kółko myszy** | powiększanie wprost na dokumencie |
+
+Bieżąca wartość jest widoczna obok suwaka. Powiększenie 100% oznacza
+stronę dopasowaną do szerokości panelu, więc nic nie ucieka w bok.
+
+### Wyraźniejsze „co jest czym”
+
+Wcześniej podpisy pól rysowały się **na dokumencie** i zasłaniały tekst,
+który użytkownik chciał przeczytać. Teraz:
+
+- nazwy pól stoją **na marginesie obok strony**, połączone z polem
+  cienką linią — treść wypisu pozostaje w całości czytelna,
+- podpisy układają się jeden pod drugim i nie nachodzą na siebie,
+- za długie nazwy są skracane wielokropkiem,
+- **zielona ramka** = etykieta przypisana, **niebieska przerywana** =
+  odczytana wartość, **żółta** = pole pod kursorem,
+- pod paskiem narzędzi jest legenda tych trzech kolorów,
+- podpowiedź pod kursorem pokazuje nie tylko nazwę etykiety, ale też
+  wartość, która zostanie z niej odczytana.
+
+Dzięki ramkom wartości od razu widać **co program wyciągnie**, a nie
+tylko gdzie znalazł nazwę pola.
+
+### Nowocześniejsze i większe okno
+
+- Okno otwiera się w rozmiarze **1480 × 940** (wcześniej 1180 × 780),
+  z minimalnym rozmiarem 1000 × 640 i uchwytem do zmiany wielkości.
+- Spójny ciemny motyw: zaokrąglone ramki, wyraźne zakładki z podkreśleniem
+  aktywnej, przyciski z podświetleniem pod kursorem, akcent na przyciskach
+  głównych.
+- Tabela bez siatki, z wyższymi wierszami i czytelnym nagłówkiem;
+  kolumny ponumerowane `① Pole w programie`, `② Etykiety w PDF`,
+  `③ Stan`, `④ Odczytana wartość` — widać kolejność pracy.
+- Statusy skrócone (`⚠️ brak wartości` zamiast długiego opisu), a pełne
+  wyjaśnienie przeniesione do podpowiedzi.
+- Nagłówek okna skrócony do jednego zdania, żeby zostawić miejsce na
+  dokument.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` urósł do 39 testów — doszły margines
+i przesunięcie współrzędnych (klikanie musi trafiać mimo przesunięcia
+strony), prostokąty wartości, rysowanie z podpisami, skracanie długich
+nazw oraz komplet zachowań powiększenia: kroki, zakres 50–300%,
+`Dopasuj` i ukrywanie oznaczeń. Razem **452 testy** (było 434).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

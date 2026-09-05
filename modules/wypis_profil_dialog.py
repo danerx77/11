@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -62,8 +63,15 @@ STATUS_COLORS = {
 
 STATUS_TEXTS = {
     "ok": "✅ odczytano",
-    "found": "⚠️ etykieta jest, brak wartości",
+    "found": "⚠️ brak wartości",
     "missing": "❌ nie znaleziono",
+}
+
+#: Pełne wyjaśnienia statusów — pokazywane jako podpowiedź.
+STATUS_HINTS = {
+    "ok": "Program znalazł etykietę i odczytał wartość.",
+    "found": "Etykieta jest w dokumencie, ale nie ma przy niej wartości.",
+    "missing": "Nie znaleziono tej etykiety — wskaż ją na dokumencie.",
 }
 
 
@@ -74,7 +82,10 @@ class WypisProfileDialog(QDialog):
         super().__init__(parent)
         self.config = config if config is not None else {}
         self.setWindowTitle("Wzory odczytu wypisów (PDF)")
-        self.resize(1180, 780)
+        # Okno robocze — na małych ekranach zajmie tyle, ile się da.
+        self.resize(1480, 940)
+        self.setMinimumSize(1000, 640)
+        self.setSizeGripEnabled(True)
 
         settings = load_settings(self.config)
         self.profiles = settings["profiles"]
@@ -85,20 +96,128 @@ class WypisProfileDialog(QDialog):
         self._loading = False
         self._page_index = 0
         self._page_total = 0
+        self._zoom = 100          # procent powiększenia podglądu
+        self._fit_zoom = 100      # powiększenie dopasowane do szerokości okna
 
         self._build_ui()
+        self._apply_style()
         self._reload_profile_combo()
 
     # ── Budowa okna ──────────────────────────────────────────────────
+
+    def _apply_style(self) -> None:
+        """Nowoczesny wygląd okna — czytelne zakładki, ramki i przyciski."""
+
+        self.setStyleSheet("""
+            QDialog { background: #14232e; }
+            QLabel { color: #e6eef5; }
+            QLabel#muted_hint { color: #8fa6b8; }
+            QLabel#info_banner {
+                background: #1b3242;
+                border: 1px solid #27506b;
+                border-radius: 8px;
+                padding: 10px 12px;
+                color: #dbe9f4;
+            }
+            QGroupBox {
+                border: 1px solid #274255;
+                border-radius: 10px;
+                margin-top: 14px;
+                padding-top: 10px;
+                font-weight: 600;
+                color: #dbe9f4;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #274255;
+                border-radius: 10px;
+                top: -1px;
+                background: #162733;
+            }
+            QTabBar::tab {
+                background: #1b2d3a;
+                color: #9fb3c5;
+                border: 1px solid #274255;
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 9px 20px;
+                margin-right: 4px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QTabBar::tab:selected {
+                background: #162733;
+                color: #ffffff;
+                border-color: #3a7fb0;
+            }
+            QTabBar::tab:hover:!selected { color: #d5e4f0; }
+            QPushButton {
+                background: #22394a;
+                color: #e6eef5;
+                border: 1px solid #31556e;
+                border-radius: 7px;
+                padding: 7px 14px;
+            }
+            QPushButton:hover { background: #2b4759; border-color: #3f7ea6; }
+            QPushButton:pressed { background: #1d3141; }
+            QPushButton:disabled { color: #6b8398; border-color: #24404f; }
+            QPushButton#btn_primary {
+                background: #2f7fb5;
+                border-color: #3f9ad4;
+                color: #ffffff;
+                font-weight: 600;
+            }
+            QPushButton#btn_primary:hover { background: #3b93cc; }
+            QTableWidget {
+                background: #162733;
+                alternate-background-color: #1a2e3c;
+                color: #e6eef5;
+                border: 1px solid #274255;
+                border-radius: 8px;
+                gridline-color: #24404f;
+                selection-background-color: #2f7fb5;
+                selection-color: #ffffff;
+            }
+            QHeaderView::section {
+                background: #1e3648;
+                color: #cfe0ee;
+                border: none;
+                border-bottom: 2px solid #31556e;
+                padding: 8px 6px;
+                font-weight: 700;
+            }
+            QComboBox, QLineEdit, QPlainTextEdit {
+                background: #1a2e3c;
+                color: #e6eef5;
+                border: 1px solid #31556e;
+                border-radius: 6px;
+                padding: 5px 8px;
+                selection-background-color: #2f7fb5;
+            }
+            QComboBox:hover, QLineEdit:hover { border-color: #3f7ea6; }
+            QCheckBox { color: #dbe9f4; spacing: 7px; }
+            QScrollArea { border: 1px solid #274255; border-radius: 8px; }
+            QSlider::groove:horizontal {
+                height: 5px; background: #24404f; border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #3f9ad4; width: 15px; margin: -6px 0;
+                border-radius: 7px;
+            }
+        """)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
         intro = QLabel(
-            "Wczytaj przykładowy wypis, a program pokaże, <b>co odczytał i po "
-            "jakiej etykiecie</b>. Jeśli Twój urząd używa innych nazw pól, "
-            "dopisz je w kolumnie „Etykiety w PDF” i zapisz jako nowy wzór — "
-            "kolejne wypisy z tego urzędu odczytają się już poprawnie."
+            "Wczytaj przykładowy wypis i <b>klikaj pola wprost na dokumencie</b>, "
+            "aby ustawić, co jest czym. Zapisany wzór posłuży kolejnym wypisom "
+            "z tego samego urzędu."
         )
         intro.setObjectName("info_banner")
         intro.setWordWrap(True)
@@ -192,15 +311,25 @@ class WypisProfileDialog(QDialog):
 
         self.table = QTableWidget(len(FIELD_KEYS), 4)
         self.table.setHorizontalHeaderLabels(
-            ["Pole w programie", "Etykiety w PDF", "Rozpoznano", "Odczytana wartość"]
+            [
+                "① Pole w programie",
+                "② Etykiety w PDF",
+                "③ Stan",
+                "④ Odczytana wartość",
+            ]
         )
         self.table.horizontalHeaderItem(1).setToolTip(
             "Nazwy pól używane w Twoim PDF. Kilka wariantów oddziel średnikiem."
         )
-        self.table.setColumnWidth(1, 230)
+        self.table.setColumnWidth(1, 240)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.horizontalHeader().setHighlightSections(False)
+        self.table.setWordWrap(True)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -242,33 +371,84 @@ class WypisProfileDialog(QDialog):
         page_layout.addWidget(page_hint)
 
         nav_row = QHBoxLayout()
-        self.btn_prev_page = QPushButton("◀ Poprzednia")
+        nav_row.setSpacing(8)
+
+        self.btn_prev_page = QPushButton("◀")
+        self.btn_prev_page.setToolTip("Poprzednia strona")
+        self.btn_prev_page.setFixedWidth(38)
         self.btn_prev_page.clicked.connect(lambda: self._change_page(-1))
         nav_row.addWidget(self.btn_prev_page)
 
         self.lbl_page = QLabel("Strona —")
-        self.lbl_page.setObjectName("muted_hint")
+        self.lbl_page.setMinimumWidth(110)
+        self.lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         nav_row.addWidget(self.lbl_page)
 
-        self.btn_next_page = QPushButton("Następna ▶")
+        self.btn_next_page = QPushButton("▶")
+        self.btn_next_page.setToolTip("Następna strona")
+        self.btn_next_page.setFixedWidth(38)
         self.btn_next_page.clicked.connect(lambda: self._change_page(1))
         nav_row.addWidget(self.btn_next_page)
 
-        self.chk_show_marks = QCheckBox("Pokaż przypisane pola")
+        nav_row.addSpacing(16)
+
+        # ── Powiększenie ──
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_out.setToolTip("Pomniejsz (Ctrl + kółko myszy)")
+        self.btn_zoom_out.setFixedWidth(38)
+        self.btn_zoom_out.clicked.connect(lambda: self._zoom_step(-1))
+        nav_row.addWidget(self.btn_zoom_out)
+
+        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
+        self.zoom_slider.setRange(50, 300)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.setFixedWidth(150)
+        self.zoom_slider.setToolTip("Powiększenie podglądu")
+        self.zoom_slider.valueChanged.connect(self._on_zoom_changed)
+        nav_row.addWidget(self.zoom_slider)
+
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setToolTip("Powiększ (Ctrl + kółko myszy)")
+        self.btn_zoom_in.setFixedWidth(38)
+        self.btn_zoom_in.clicked.connect(lambda: self._zoom_step(1))
+        nav_row.addWidget(self.btn_zoom_in)
+
+        self.lbl_zoom = QLabel("100%")
+        self.lbl_zoom.setMinimumWidth(52)
+        self.lbl_zoom.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        nav_row.addWidget(self.lbl_zoom)
+
+        self.btn_fit = QPushButton("Dopasuj")
+        self.btn_fit.setToolTip("Dopasuj szerokość strony do okna")
+        self.btn_fit.clicked.connect(self._zoom_fit)
+        nav_row.addWidget(self.btn_fit)
+
+        nav_row.addStretch()
+
+        self.chk_show_marks = QCheckBox("Pokaż oznaczenia")
         self.chk_show_marks.setChecked(True)
         self.chk_show_marks.setToolTip(
-            "Zielone ramki to etykiety przypisane do pól, niebieskie — "
-            "odczytane wartości."
+            "Zielone ramki to etykiety przypisane do pól, niebieskie "
+            "przerywane — odczytane wartości."
         )
         self.chk_show_marks.toggled.connect(self._refresh_marks)
         nav_row.addWidget(self.chk_show_marks)
-        nav_row.addStretch()
         page_layout.addLayout(nav_row)
+
+        # Legenda kolorów — od razu wiadomo, co oznacza która ramka.
+        legend = QLabel(
+            '<span style="color:#2ecc71;">■</span> etykieta przypisana &nbsp; '
+            '<span style="color:#3498db;">▪</span> odczytana wartość &nbsp; '
+            '<span style="color:#f1c40f;">■</span> pod kursorem'
+        )
+        legend.setObjectName("muted_hint")
+        page_layout.addWidget(legend)
 
         self.page_scroll = QScrollArea()
         self.page_scroll.setWidgetResizable(False)
         self.page_view = WypisPdfView()
         self.page_view.label_clicked.connect(self._on_label_clicked)
+        self.page_view.zoom_requested.connect(self._zoom_step)
         self.page_scroll.setWidget(self.page_view)
         page_layout.addWidget(self.page_scroll, 1)
 
@@ -528,12 +708,23 @@ class WypisProfileDialog(QDialog):
             self.lbl_page.setText("Strona —")
             return
 
-        # Szerokość dobieramy do panelu, aby nie trzeba było przewijać w bok.
-        available = max(self.page_scroll.viewport().width() - 24, 380)
-        page = load_page(self.pdf_path, self._page_index, dpi=96)
-        if page is not None and page.image.width() > available:
-            dpi = max(int(96 * available / page.image.width()), 48)
-            page = load_page(self.pdf_path, self._page_index, dpi=dpi) or page
+        # Powiększenie 100% = strona dopasowana do szerokości panelu.
+        # Odejmujemy margines na podpisy pól, żeby strona zmieściła się w oknie.
+        available = max(
+            self.page_scroll.viewport().width() - 26 - self.page_view.margin_left,
+            340,
+        )
+        probe = load_page(self.pdf_path, self._page_index, dpi=96)
+        if probe is None:
+            self.page_view.set_page(None)
+            self.lbl_page.setText(
+                "Nie udało się narysować strony — użyj zakładki „Tekst dokumentu”."
+            )
+            return
+        self._fit_zoom = 96 * available / probe.image.width()
+
+        dpi = max(int(self._fit_zoom * self._zoom / 100), 40)
+        page = load_page(self.pdf_path, self._page_index, dpi=dpi) or probe
         self.page_view.set_page(page)
         if page is None:
             self.lbl_page.setText(
@@ -546,6 +737,26 @@ class WypisProfileDialog(QDialog):
         self.btn_prev_page.setEnabled(self._page_index > 0)
         self.btn_next_page.setEnabled(self._page_index + 1 < self._page_total)
         self._refresh_marks()
+
+    def _on_zoom_changed(self, value: int) -> None:
+        """Suwak powiększenia — przerysowuje stronę w nowej skali."""
+
+        self._zoom = int(value)
+        self.lbl_zoom.setText(f"{self._zoom}%")
+        if self.pdf_path:
+            self._load_page_view()
+
+    def _zoom_step(self, direction: int) -> None:
+        """Powiększa lub pomniejsza o jeden krok (przyciski, Ctrl+kółko)."""
+
+        self.zoom_slider.setValue(
+            max(50, min(300, self._zoom + (25 if direction > 0 else -25)))
+        )
+
+    def _zoom_fit(self) -> None:
+        """Wraca do powiększenia dopasowanego do szerokości okna."""
+
+        self.zoom_slider.setValue(100)
 
     def _change_page(self, step: int) -> None:
         new_index = self._page_index + step
@@ -562,11 +773,16 @@ class WypisProfileDialog(QDialog):
 
         profile = self._current_profile()
         marks: dict[str, object] = {}
+        values: dict[str, object] = {}
         for key in FIELD_KEYS:
-            rect = self.page_view.label_rects(profile["fields"].get(key, []))
+            rect, value_rect = self.page_view.label_and_value_rects(
+                profile["fields"].get(key, [])
+            )
             if rect is not None:
                 marks[FIELD_LABELS[key]] = rect
-        self.page_view.set_marks(marks, {})
+            if value_rect is not None:
+                values[FIELD_LABELS[key]] = value_rect
+        self.page_view.set_marks(marks, values)
 
     def _on_label_clicked(self, hit: dict) -> None:
         """Przypisuje klikniętą etykietę do wiersza wybranego w tabeli."""
@@ -663,11 +879,10 @@ class WypisProfileDialog(QDialog):
                 self.table.setItem(row, 2, status_item)
             status_item.setText(STATUS_TEXTS.get(status, ""))
             status_item.setForeground(QColor(STATUS_COLORS.get(status, "#cccccc")))
-            status_item.setToolTip(
-                f"Dopasowano etykietę: {data['matched_label']}"
-                if data.get("matched_label")
-                else ""
-            )
+            tip = STATUS_HINTS.get(status, "")
+            if data.get("matched_label"):
+                tip += f"\nDopasowana etykieta: {data['matched_label']}"
+            status_item.setToolTip(tip)
 
             value_item = self.table.item(row, 3)
             if value_item is None:
