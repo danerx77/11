@@ -91,6 +91,67 @@ def load_page(pdf_path: str, page_number: int = 0, dpi: int = 96) -> PageData | 
         return None
 
 
+def read_pdf_text(pdf_path: str) -> str:
+    """Zwraca tekst PDF z zachowanym układem wierszy.
+
+    Zwykłe ``page.get_text()`` wypisuje tabelę w kratkę pionowo — każda
+    komórka w osobnej linii — przez co nagłówek traci związek z wartością
+    („Pow. [ha]” i „0.0235” lądują w różnych wierszach i program nic nie
+    odczytuje). Składamy więc tekst ze słów: te o zbliżonym Y trafiają do
+    jednego wiersza, a odstępy między kolumnami zaznaczamy spacjami.
+    """
+
+    try:
+        import fitz
+    except Exception:  # pragma: no cover - brak PyMuPDF
+        return ""
+
+    strony: list[str] = []
+    try:
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                slowa = page.get_text("words")
+                if not slowa:
+                    strony.append(page.get_text())
+                    continue
+
+                # words: (x0, y0, x1, y1, tekst, block, line, word_no)
+                wysokosci = [w[3] - w[1] for w in slowa if w[3] > w[1]]
+                tolerancja = (sum(wysokosci) / len(wysokosci) * 0.6) if wysokosci else 3.0
+
+                wiersze: list[list[tuple]] = []
+                for slowo in sorted(slowa, key=lambda w: (round(w[1], 1), w[0])):
+                    srodek = (slowo[1] + slowo[3]) / 2
+                    for wiersz in wiersze:
+                        odniesienie = (wiersz[0][1] + wiersz[0][3]) / 2
+                        if abs(srodek - odniesienie) <= tolerancja:
+                            wiersz.append(slowo)
+                            break
+                    else:
+                        wiersze.append([slowo])
+
+                linie = []
+                for wiersz in wiersze:
+                    wiersz.sort(key=lambda w: w[0])
+                    tekst = wiersz[0][4]
+                    for poprzednie, biezace in zip(wiersz, wiersz[1:]):
+                        przerwa = biezace[0] - poprzednie[2]
+                        szerokosc_znaku = max(
+                            (poprzednie[2] - poprzednie[0])
+                            / max(len(poprzednie[4]), 1),
+                            1.0,
+                        )
+                        # Szeroka przerwa = osobna kolumna tabeli.
+                        odstep = "   " if przerwa > szerokosc_znaku * 1.8 else " "
+                        tekst += odstep + biezace[4]
+                    linie.append(tekst)
+                strony.append("\n".join(linie))
+    except Exception:  # pragma: no cover - zależne od pliku
+        return ""
+
+    return "\n".join(strony)
+
+
 def page_count(pdf_path: str) -> int:
     """Liczba stron dokumentu (0, gdy pliku nie da się otworzyć)."""
 

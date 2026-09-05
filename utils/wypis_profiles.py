@@ -471,7 +471,15 @@ def _label_pattern(label: str) -> re.Pattern:
     # \b działa tylko obok znaku alfanumerycznego. Etykiety typu „Pow. [ha]”
     # kończą się nawiasem, więc granicę dodajemy warunkowo.
     prefix = r"\b" if label_text[:1].isalnum() else ""
-    suffix = r"\b" if label_text[-1:].isalnum() else ""
+    if label_text[-1:].isalnum():
+        suffix = r"\b"
+    elif label_text.endswith("."):
+        # „Pow.” nie może dopasować się wewnątrz „Pow. [ha]” — po kropce
+        # musi kończyć się tekst albo zaczynać wartość, a nie dalszy
+        # ciąg nazwy pola.
+        suffix = r"(?!\s*[\[\(A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż])"
+    else:
+        suffix = ""
     return re.compile(prefix + body + suffix + r"\s*:?\s*(.*)", re.IGNORECASE)
 
 
@@ -543,7 +551,9 @@ def extract_field(
     # Najdłuższe najpierw: „Nr obrębu” zanim „Nr”.
     inne_etykiety.sort(key=len, reverse=True)
 
-    for label in labels:
+    # Najdłuższe etykiety sprawdzamy najpierw, inaczej „Pow.” dopasowałoby
+    # się wewnątrz „Pow. [ha]” i zwróciło „[ha]” jako wartość.
+    for label in sorted(labels, key=len, reverse=True):
         pattern = _label_pattern(label)
         for index, line in enumerate(lines):
             if not line.strip():
@@ -552,13 +562,107 @@ def extract_field(
             if not match:
                 continue
             value = _value_until_next_column(match.group(1), inne_etykiety)
-            if value:
+
+            # Wiersz nagłówków tabeli: etykieta i „wartość” to dwie osobne
+            # kolumny tego samego wiersza. Wtedy prawdziwa wartość stoi
+            # pod spodem, więc takie trafienie pomijamy.
+            kolumny = _split_columns(line)
+            wiersz_naglowkow = False
+            if len(kolumny) >= 2 and value:
+                pozycje = {
+                    _fold(tekst): numer for numer, (_, tekst) in enumerate(kolumny)
+                }
+                numer_etykiety = pozycje.get(_fold(label))
+                numer_wartosci = pozycje.get(_fold(value))
+                wiersz_naglowkow = (
+                    numer_wartosci is not None and numer_etykiety != numer_wartosci
+                )
+
+            fragment_etykiety = _fold(value) and _fold(value) in _fold(label)
+            if (
+                value
+                and not wiersz_naglowkow
+                and not fragment_etykiety
+                and not _looks_like_label(value, profile)
+            ):
                 return value[:max_length]
-            # Wartość w kolejnej niepustej linii.
-            for nxt in lines[index + 1: index + 3]:
-                candidate = _value_until_next_column(nxt, inne_etykiety)
-                if candidate and not _looks_like_label(candidate, profile):
-                    return candidate[:max_length]
+            # Wartość w kolejnej niepustej linii — ale tylko gdy etykieta
+            # stoi sama w wierszu. Inaczej w tabeli w kratkę wzięlibyśmy
+            # sąsiedni nagłówek zamiast danych spod spodu.
+            if len(_split_columns(line)) <= 1:
+                for nxt in lines[index + 1: index + 3]:
+                    candidate = _value_until_next_column(nxt, inne_etykiety)
+                    if candidate and not _looks_like_label(candidate, profile):
+                        return candidate[:max_length]
+
+    # Tabela w kratkę: etykieta stoi w nagłówku kolumny, a wartość
+    # w wierszu poniżej, w tej samej kolumnie znakowej.
+    kolumnowa = _extract_from_column(lines, labels, profile)
+    if kolumnowa:
+        return kolumnowa[:max_length]
+
+    return ""
+
+
+def _split_columns(line: str) -> list[tuple[int, str]]:
+    """Dzieli wiersz na kolumny po dwóch lub więcej spacjach."""
+
+    kolumny = []
+    for match in re.finditer(r"\S(?:.*?\S)?(?=\s{2,}|$)", line):
+        tekst = match.group().strip()
+        if tekst:
+            kolumny.append((match.start(), tekst))
+    return kolumny
+
+
+def _extract_from_column(
+    lines: list[str],
+    labels: Iterable[str],
+    profile: Mapping[str, Any] | None,
+) -> str:
+    """Czyta wartość z tabeli, w której nazwa pola jest nagłówkiem kolumny.
+
+    Szuka wiersza, w którym któraś z etykiet stoi jako osobna kolumna,
+    a potem bierze z następnego wiersza kolumnę zaczynającą się w tym
+    samym miejscu.
+    """
+
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        kolumny = _split_columns(line)
+        if len(kolumny) < 2:
+            continue                     # to nie wygląda na wiersz tabeli
+
+        for pozycja, (start, tekst) in enumerate(kolumny):
+            trafiona = any(_fold(tekst) == _fold(label) for label in labels)
+            if not trafiona:
+                continue
+
+            # Pierwszy niepusty wiersz poniżej z tą samą liczbą kolumn.
+            for nizej in lines[index + 1: index + 6]:
+                if not nizej.strip():
+                    continue
+                ponizej = _split_columns(nizej)
+                if not ponizej:
+                    continue
+
+                # Dopasowanie po pozycji znakowej, z zapasem na drobne
+                # przesunięcia; awaryjnie po numerze kolumny.
+                najlepsza = min(
+                    ponizej, key=lambda para: abs(para[0] - start), default=None
+                )
+                if najlepsza is not None and abs(najlepsza[0] - start) <= 4:
+                    wartosc = najlepsza[1]
+                elif pozycja < len(ponizej):
+                    wartosc = ponizej[pozycja][1]
+                else:
+                    continue
+
+                wartosc = wartosc.strip(" :,;-")
+                if wartosc and not _looks_like_label(wartosc, profile):
+                    return wartosc
+                break
     return ""
 
 

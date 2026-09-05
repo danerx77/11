@@ -1013,6 +1013,71 @@ trybu wartości, zielony dla trybu nazwy.
 `tests/test_wypis_pdf_view.py` — 82 testy (+6 na tabelę w kratkę).
 Razem **504 testy** (było 498).
 
+## 47. Prawdziwy odczyt z tabeli w kratkę (bez ręcznego wpisywania)
+
+**Zgłoszenie:** „nie ma być ręcznie wpisany tylko dokładnie odczytany,
+nie pokazują się pola, nic”.
+
+### Przyczyna: program czytał tabelę pionowo
+
+`page.get_text()` z PyMuPDF wypisuje tabelę w kratkę **komórka po
+komórce, każda w osobnej linii**:
+
+```
+Obreb
+Nr dzialki
+Pow. [ha]
+0019, BOJANO
+145/7
+0.0235
+```
+
+Nagłówek tracił związek z wartością, więc odczyt nie znajdował **niczego**
+— stąd puste pola. Dlatego wcześniejsze poprawki nic nie dawały: naprawiały
+klikanie, a nie odczyt.
+
+Nowa funkcja `read_pdf_text()` składa tekst ze słów: te o zbliżonej
+wysokości trafiają do jednego wiersza, a szerokie przerwy zostają jako
+odstępy kolumn:
+
+```
+Obreb   Nr dzialki   Pow. [ha]   Opis uzytku
+0019, BOJANO   145/7   0.0235   dr
+```
+
+### Odczyt z nagłówka kolumny
+
+`extract_field` dostał `_extract_from_column()`: gdy etykieta stoi jako
+osobna kolumna wiersza, wartość brana jest z wiersza **poniżej**, z tej
+samej pozycji znakowej. Wiersz nagłówków jest rozpoznawany i pomijany,
+więc sąsiedni nagłówek nie trafia już jako wartość.
+
+| Pole | Odczytana wartość |
+| --- | --- |
+| Obręb | `0019, BOJANO` |
+| Nr działki | `145/7` |
+| Powierzchnia | `0.0235` |
+| Opis użytku | `dr` |
+
+### „Pow.” nie łapie się w „Pow. [ha]”
+
+Etykieta kończąca się kropką dopasowywała się w środku dłuższej nazwy i
+zwracała `[ha]`. `_label_pattern` ma teraz po kropce warunek, że nie może
+po niej stać dalszy ciąg nazwy. Etykiety sprawdzane są od najdłuższej.
+
+### Wskazanie wartości = nauka, nie wpisanie
+
+Tryb „✏️ WARTOŚĆ” **nie wpisuje** już tekstu na sztywno. Zapamiętuje nazwę
+pola (nagłówek kolumny albo tekst przed dwukropkiem) i pozwala programowi
+**odczytać** wartość — stan pokazuje **✅ odczytano**, a wzór zadziała na
+kolejnych wypisach z tego urzędu. Ręczny wpis pozostaje tylko awaryjnie,
+gdy nazwy nie da się ustalić.
+
+### Testy
+
+`tests/test_wypis_profiles.py` — 69 testów (+7 na odczyt kolumnowy),
+`tests/test_wypis_pdf_view.py` — 83. Razem **512 testów** (było 504).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

@@ -452,6 +452,68 @@ class WartoscBezSasiedniejKolumnyTests(unittest.TestCase):
         self.assertEqual(extract_field(tekst, profil, "county"), "kartuski")
         self.assertEqual(extract_field(tekst, profil, "municipality"), "Zukowo")
 
+
+class OdczytZTabeliWKratkeTests(unittest.TestCase):
+    """Nagłówek kolumny jako etykieta, wartość w wierszu poniżej."""
+
+    TEKST = (
+        "Obreb   Nr dzialki   Pow. [ha]   Opis uzytku\n"
+        "0019, BOJANO   145/7   0.0235   dr\n"
+        "0019, BOJANO   145/8   0.1120   RIVa\n"
+    )
+
+    def _profil(self):
+        return normalize_profile(
+            {
+                "name": "Kratka",
+                "fields": {
+                    "precinct": ["Obreb"],
+                    "parcel_number": ["Nr dzialki"],
+                    "area": ["Pow. [ha]", "Pow."],
+                    "ownership_form": ["Opis uzytku"],
+                },
+            }
+        )
+
+    def test_odczyt_powierzchni_z_kolumny(self):
+        self.assertEqual(extract_field(self.TEKST, self._profil(), "area"), "0.0235")
+
+    def test_odczyt_numeru_dzialki_z_kolumny(self):
+        self.assertEqual(
+            extract_field(self.TEKST, self._profil(), "parcel_number"), "145/7"
+        )
+
+    def test_odczyt_obrebu_z_przecinkiem(self):
+        self.assertEqual(
+            extract_field(self.TEKST, self._profil(), "precinct"), "0019, BOJANO"
+        )
+
+    def test_ostatnia_kolumna(self):
+        self.assertEqual(
+            extract_field(self.TEKST, self._profil(), "ownership_form"), "dr"
+        )
+
+    def test_nie_zwraca_sasiedniego_naglowka(self):
+        for key in ("precinct", "parcel_number", "area", "ownership_form"):
+            wartosc = extract_field(self.TEKST, self._profil(), key)
+            self.assertNotIn("Nr dzialki", wartosc)
+            self.assertNotIn("Opis uzytku", wartosc)
+
+    def test_krotka_etykieta_nie_lapie_sie_w_dluzszej(self):
+        # „Pow.” nie może dopasować się wewnątrz „Pow. [ha]” i zwrócić „[ha]”.
+        profil = normalize_profile(
+            {"name": "P", "fields": {"area": ["Powierzchnia", "Pow."]}}
+        )
+        self.assertNotEqual(extract_field(self.TEKST, profil, "area"), "[ha]")
+
+    def test_uklad_z_dwukropkami_dziala_dalej(self):
+        tekst = "Powiat: kartuski   Gmina: Zukowo\n"
+        profil = normalize_profile(
+            {"name": "D", "fields": {"county": ["Powiat"], "municipality": ["Gmina"]}}
+        )
+        self.assertEqual(extract_field(tekst, profil, "county"), "kartuski")
+        self.assertEqual(extract_field(tekst, profil, "municipality"), "Zukowo")
+
 if __name__ == "__main__":
     unittest.main()
 

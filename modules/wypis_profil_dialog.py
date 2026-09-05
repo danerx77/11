@@ -39,7 +39,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modules.wypis_pdf_view import WypisPdfView, load_page, page_count
+from modules.wypis_pdf_view import (
+    WypisPdfView,
+    load_page,
+    page_count,
+    read_pdf_text,
+)
 
 from utils.global_settings import wypis_profiles_path
 from utils.wypis_profiles import (
@@ -993,11 +998,7 @@ class WypisProfileDialog(QDialog):
         """Wczytuje tekst z PDF (wydzielone, by dało się testować)."""
 
         try:
-            import fitz
-
-            with fitz.open(path) as doc:
-                pages = [page.get_text() for page in doc]
-            self.pdf_text = "\n".join(pages)
+            self.pdf_text = read_pdf_text(path)
         except Exception as exc:  # pragma: no cover - zależne od pliku
             QMessageBox.critical(
                 self,
@@ -1123,14 +1124,48 @@ class WypisProfileDialog(QDialog):
         label = str(hit.get("label") or "").strip()
         value = str(hit.get("value") or "").strip()
 
-        # Tryb „wartość”: kliknięty tekst wpisujemy wprost do kolumny ④.
+        # Tryb „wartość”: uczymy program, skąd brać tę daną. Zapamiętujemy
+        # nazwę pola (nagłówek kolumny lub tekst przed dwukropkiem), więc
+        # wartość zostanie ODCZYTANA — także z kolejnych wypisów.
         if self._click_mode() == "value":
             wpis = value or str(hit.get("word") or "").strip()
+            key_item = self.table.item(row, 0)
+            key = key_item.data(Qt.ItemDataRole.UserRole)
+
+            if label:
+                # Znamy nazwę pola — uczymy jej i czytamy automatycznie.
+                self._remember()
+                item = self.table.item(row, 1)
+                obecne = [
+                    czesc.strip()
+                    for czesc in (item.text() if item else "").split(";")
+                    if czesc.strip()
+                ]
+                if label not in obecne:
+                    obecne.insert(0, label)
+                self._loading = True
+                self.table.setItem(row, 1, QTableWidgetItem("; ".join(obecne)))
+                self._loading = False
+                self._manual_values.pop(key, None)
+                self._store_table_into_profile()
+                self._store_manual_into_profile()
+                if self.pdf_text:
+                    self._analyze()
+                self._refresh_marks()
+
+                odczytane = self.table.item(row, 3)
+                odczytane = odczytane.text() if odczytane else ""
+                if odczytane:
+                    self.lbl_summary.setText(
+                        f"✅ {key_item.text()} = {odczytane} "
+                        f"(odczytane z „{label}”)  •  " + self.lbl_summary.text()
+                    )
+                    return
+                # Nie udało się odczytać — wpisujemy to, co kliknięto.
+
             if not wpis:
                 return
             self._remember()
-            key_item = self.table.item(row, 0)
-            key = key_item.data(Qt.ItemDataRole.UserRole)
             self._manual_values[key] = wpis
             self._store_manual_into_profile()
             self._loading = True
@@ -1140,7 +1175,7 @@ class WypisProfileDialog(QDialog):
                 self._analyze()
             self._refresh_marks()
             self.lbl_summary.setText(
-                f"✏️ Wskazano wartość „{wpis}” → {key_item.text()}"
+                f"✏️ Wpisano „{wpis}” → {key_item.text()}"
                 "  •  " + self.lbl_summary.text()
             )
             return

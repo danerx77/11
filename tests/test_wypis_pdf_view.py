@@ -794,13 +794,14 @@ class TrybKlikaniaTests(unittest.TestCase):
         self._klik("Powiat")
         self.assertIn("Powiat", self.dialog.table.item(row, 1).text())
 
-    def test_tryb_wartosci_nie_rusza_etykiet(self):
+    def test_tryb_wartosci_uczy_etykiety_zeby_odczytac(self):
+        # Wskazanie wartości uczy program nazwy pola, dzięki czemu
+        # wartość jest ODCZYTANA, a nie wpisana na sztywno.
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
-        przed = self.dialog.table.item(row, 1).text()
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
-        self.assertEqual(self.dialog.table.item(row, 1).text(), przed)
+        self.assertIn("Pow. [ha]", self.dialog.table.item(row, 1).text())
 
     def test_tryb_wartosci_wpisuje_do_kolumny_wartosci(self):
         row = self._wiersz("Numer księgi wieczystej")
@@ -809,12 +810,14 @@ class TrybKlikaniaTests(unittest.TestCase):
         self._klik("0,4500")
         self.assertEqual(self.dialog.table.item(row, 3).text(), "0,4500")
 
-    def test_tryb_wartosci_ustawia_stan_reczny(self):
+    def test_tryb_wartosci_daje_stan_odczytano(self):
+        # Kluczowe: ma być „odczytano”, nie „wpisano ręcznie”.
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
-        self.assertIn("ręcznie", self.dialog.table.item(row, 2).text())
+        self.assertIn("odczytano", self.dialog.table.item(row, 2).text())
+        self.assertNotIn("ręcznie", self.dialog.table.item(row, 2).text())
 
     def test_wskazana_wartosc_da_sie_cofnac(self):
         row = self._wiersz("Numer księgi wieczystej")
@@ -825,15 +828,20 @@ class TrybKlikaniaTests(unittest.TestCase):
         self.dialog._undo_change()
         self.assertEqual(self.dialog.table.item(row, 3).text(), przed)
 
-    def test_wskazana_wartosc_trafia_do_wzoru(self):
+    def test_wskazana_wartosc_zapisuje_etykiete_we_wzorze(self):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         index = self.dialog._current_index()
-        self.assertEqual(
-            self.dialog.profiles[index]["manual_values"].get("kw"), "0,4500"
-        )
+        self.assertIn("Pow. [ha]", self.dialog.profiles[index]["fields"]["kw"])
+
+    def test_wskazana_wartosc_jest_odczytana_z_dokumentu(self):
+        row = self._wiersz("Numer księgi wieczystej")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog.btn_mode_value.setChecked(True)
+        self._klik("0,4500")
+        self.assertEqual(self.dialog.table.item(row, 3).text(), "0,4500")
 
 
 @unittest.skipIf(
