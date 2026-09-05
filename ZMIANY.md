@@ -1197,6 +1197,34 @@ Wcześniej dało się tam tylko przypisać **nazwę** pola. Teraz są dwa:
 Pod przyciskami pojawia się zielona informacja, co zostało przypisane
 i po jakiej nazwie — widać od razu, czy program dobrze zrozumiał.
 
+## 51. Data sporządzenia wstawia się sama
+
+**Zgłoszenie:** żeby data sporządzenia wstawiała się automatycznie —
+aktualna data z komputera — z możliwością włączenia i wyłączenia tego
+w Ustawieniach, ale też z możliwością ręcznej zmiany.
+
+**Co się zmieniło.** Pola dat w pismach same wypełniają się dzisiejszą
+datą przy otwarciu zakładki:
+
+- **Pisma przewodnie** → „Data sporządzenia"
+- **Oświadczenia woli** → „Data"
+
+Format jak dotąd: `05.09.2026` (dzień i miesiąc zawsze dwucyfrowe).
+
+**Ręczna zmiana ma pierwszeństwo.** Wpisana data zostaje — program jej
+nie nadpisuje ani przy generowaniu pisma, ani przy przełączaniu
+właścicieli. Jeśli chcesz wystawić pismo z inną datą, po prostu ją
+wpisujesz. Podpowiedź pod kursorem przypomina, że datę można zmienić
+i gdzie wyłączyć automat.
+
+**Włącznik w Ustawieniach.** Nowa sekcja **„Data w pismach"** z jednym
+ptaszkiem: „Wstawiaj dzisiejszą datę automatycznie". Opis pokazuje, jaka
+data zostałaby dziś wpisana. Po odznaczeniu pola dat zostają puste — tak
+jak działało to wcześniej. Domyślnie opcja jest włączona.
+
+Ustawienie zapisuje się pod kluczem `auto_today_date`, a całą logikę
+trzyma `utils/auto_date.py`, więc łatwo podpiąć ją w kolejnych miejscach.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

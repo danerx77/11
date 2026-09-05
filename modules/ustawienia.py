@@ -38,6 +38,11 @@ from utils.project_naming import (
     project_folder_preview,
 )
 from modules.ustawienia_wypisy import WypisSettingsSection
+from utils.auto_date import (
+    AUTO_DATE_KEY,
+    is_auto_date_enabled,
+    today_text,
+)
 from utils.document_naming import (
     ASCII_KEY,
     COVER_PARCEL_LIMIT_KEY,
@@ -566,6 +571,7 @@ class SettingsTabWidget(QWidget):
         main_layout.addWidget(decl_box)
 
         main_layout.addWidget(self._build_naming_box())
+        main_layout.addWidget(self._build_auto_date_box())
 
         main_layout.addWidget(self._build_project_folder_box())
         main_layout.addWidget(self._build_output_folders_box())
@@ -1158,6 +1164,33 @@ class SettingsTabWidget(QWidget):
         """Otwiera kreator wzorów odczytu wypisów."""
         self.wypis_section.open_profiles_dialog(self.config)
 
+    def _build_auto_date_box(self) -> QGroupBox:
+        """Sekcja automatycznego wstawiania dzisiejszej daty w pismach."""
+
+        box = QGroupBox("Data w pismach")
+        layout = QVBoxLayout(box)
+
+        self.chk_auto_date = QCheckBox(
+            "Wstawiaj dzisiejszą datę automatycznie"
+        )
+        self.chk_auto_date.setChecked(
+            is_auto_date_enabled(self.config)
+        )
+        layout.addWidget(self.chk_auto_date)
+
+        info = QLabel(
+            "Po włączeniu pola „Data sporządzenia” (Pisma przewodnie) i "
+            "„Data” (Oświadczenia woli) same wypełnią się datą z komputera "
+            f"— dziś byłoby to <b>{today_text()}</b>. Datę zawsze możesz "
+            "poprawić ręcznie: wpisana zmiana zostaje i program jej nie "
+            "nadpisuje. Po wyłączeniu pola pozostają puste, tak jak dawniej."
+        )
+        info.setWordWrap(True)
+        info.setObjectName("naming_hint")
+        layout.addWidget(info)
+
+        return box
+
     def _build_naming_box(self) -> QGroupBox:
         """Sekcja wyboru schematu nazw dla Oświadczeń i Pism przewodnich."""
         box = QGroupBox("Nazewnictwo plików — Oświadczenia i Pisma (PSM)")
@@ -1693,6 +1726,9 @@ class SettingsTabWidget(QWidget):
             self.config[key] = value
 
         self.wypis_section.save_to_config(self.config)
+
+        # Automatyczna data w pismach — patrz utils/auto_date.py.
+        self.config[AUTO_DATE_KEY] = self.chk_auto_date.isChecked()
 
         selected_tab_layout = self.tab_layout_combo.currentData() or "modern"
         tab_layout_changed = selected_tab_layout != getattr(

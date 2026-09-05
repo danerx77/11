@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont, QColor
 
 from utils.output_paths import project_output_dir
 from utils.document_naming import declaration_filename
+from utils.auto_date import initial_date_text
 
 class NoWheelComboBox(QComboBox):
     def wheelEvent(self, e): e.ignore()
@@ -147,6 +148,14 @@ class DeclGeneratorWidget(QWidget):
         self.project_num_edit = QLineEdit() 
         proj_form.addRow('Nr projektu (OBI/OBM):', self.project_num_edit)
         self.date_edit = QLineEdit()
+        self.date_edit.setPlaceholderText('np. 20.10.2026')
+        # Dzisiejsza data wstawia się sama — patrz Ustawienia.
+        self.date_edit.setText(initial_date_text(self.config))
+        self.date_edit.setToolTip(
+            'Data z komputera wstawia się sama.\n'
+            'Możesz ją zmienić — wpisana data zostanie zachowana.\n'
+            'Automat włączysz i wyłączysz w Ustawieniach.'
+        )
         proj_form.addRow('Data:', self.date_edit)
         self.place_edit = QLineEdit() 
         proj_form.addRow('Miejscowość złożenia:', self.place_edit)

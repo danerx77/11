@@ -18,6 +18,7 @@ from PySide6.QtGui import QColor, QFont
 
 from utils.output_paths import project_output_dir
 from utils.document_naming import cover_letter_filename
+from utils.auto_date import initial_date_text
 
 from utils.generation_targets import cover_generation_exclusion_reason
 
@@ -252,6 +253,14 @@ class CoverLetterWidget(QWidget):
         meta_form = QFormLayout(meta_box)
         self.date_edit = QLineEdit()
         self.date_edit.setPlaceholderText('np. 20.10.2026')
+        # Dzisiejsza data wstawia się sama, o ile nie wyłączono tego
+        # w Ustawieniach. Wpisaną ręcznie zmianę program zostawia.
+        self.date_edit.setText(initial_date_text(self.config))
+        self.date_edit.setToolTip(
+            'Data z komputera wstawia się sama.\n'
+            'Możesz ją zmienić — wpisana data zostanie zachowana.\n'
+            'Automat włączysz i wyłączysz w Ustawieniach.'
+        )
         meta_form.addRow('Data sporządzenia:', self.date_edit)
         self.sender_place_edit = QLineEdit(self.config.get('sender', {}).get('city', ''))
         self.sender_place_edit.setPlaceholderText('np. Gdańsk')
