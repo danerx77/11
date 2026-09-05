@@ -475,12 +475,17 @@ def _label_pattern(label: str) -> re.Pattern:
     return re.compile(prefix + body + suffix + r"\s*:?\s*(.*)", re.IGNORECASE)
 
 
-def _value_until_next_column(text: str) -> str:
+def _value_until_next_column(
+    text: str, known_labels: Iterable[str] = ()
+) -> str:
     """Zwraca wartość stojącą po etykiecie, bez sąsiedniej kolumny.
 
     Wiersz wypisu bywa tabelką: ``Powiat: kartuski    Gmina: Żukowo``.
-    Wartością pola „Powiat” jest wyłącznie ``kartuski`` — resztę odcinamy
-    po dużym odstępie albo przed kolejną etykietą z dwukropkiem.
+    Wartością pola „Powiat” jest wyłącznie ``kartuski`` — kolejną kolumnę
+    odcinamy po szerokim odstępie (dwie lub więcej spacji).
+
+    Uwaga: nie tniemy „przed słowem z dwukropkiem”, bo psuło to etykiety
+    wielowyrazowe — ``Nr obrębu: 0019`` dawało wartość ``Nr``.
     """
 
     value = str(text or "")
@@ -488,11 +493,21 @@ def _value_until_next_column(text: str) -> str:
     # 1. Dwie lub więcej spacji = następna kolumna.
     value = re.split(r"\s{2,}", value.strip(), maxsplit=1)[0]
 
-    # 2. Zapas dla wypisów bez wyraźnych odstępów: „kartuski Gmina: Żukowo”.
-    #    Ucinamy przed ostatnim słowem, jeśli po nim stoi dwukropek.
-    match = re.search(r"\s+\S+\s*:(?:\s|$)", value)
-    if match:
-        value = value[: match.start()]
+    # 2. Wypisy bez wyraźnych odstępów: „kartuski Gmina: Żukowo”. Tniemy
+    #    tylko przed etykietą, którą wzór faktycznie zna — inaczej
+    #    „Nr obrębu: 0019” zostałoby pocięte na „Nr”.
+    najblizsze = None
+    for label in known_labels:
+        label = str(label or "").strip()
+        if not label:
+            continue
+        match = re.search(
+            r"\s+" + re.escape(label) + r"\s*:", value, flags=re.IGNORECASE
+        )
+        if match and (najblizsze is None or match.start() < najblizsze):
+            najblizsze = match.start()
+    if najblizsze is not None:
+        value = value[:najblizsze]
 
     return re.sub(r"\s+", " ", value).strip(" :,;-")
 
@@ -518,6 +533,16 @@ def extract_field(
     # kolumny w wypisach tabelarycznych („Powiat: X    Gmina: Y”).
     lines = [line.rstrip() for line in str(text).split("\n")]
 
+    # Etykiety pozostałych pól — po nich poznajemy kolejną kolumnę wiersza.
+    wlasne = {_fold(l) for l in labels}
+    inne_etykiety = []
+    for key in FIELD_KEYS:
+        for other in labels_for(profile, key):
+            if _fold(other) not in wlasne and other not in inne_etykiety:
+                inne_etykiety.append(other)
+    # Najdłuższe najpierw: „Nr obrębu” zanim „Nr”.
+    inne_etykiety.sort(key=len, reverse=True)
+
     for label in labels:
         pattern = _label_pattern(label)
         for index, line in enumerate(lines):
@@ -526,12 +551,12 @@ def extract_field(
             match = pattern.search(line)
             if not match:
                 continue
-            value = _value_until_next_column(match.group(1))
+            value = _value_until_next_column(match.group(1), inne_etykiety)
             if value:
                 return value[:max_length]
             # Wartość w kolejnej niepustej linii.
             for nxt in lines[index + 1: index + 3]:
-                candidate = _value_until_next_column(nxt)
+                candidate = _value_until_next_column(nxt, inne_etykiety)
                 if candidate and not _looks_like_label(candidate, profile):
                     return candidate[:max_length]
     return ""

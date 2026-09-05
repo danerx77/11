@@ -920,6 +920,57 @@ walczyć z etykietami, można po prostu wpisać poprawną wartość.
 `tests/test_wypis_pdf_view.py` — 69 testów (+5 na klik w wartość, +7 na
 ręczną edycję). Razem **488 testów** (było 476).
 
+## 45. Wybór: klikam etykietę czy wartość + poprawka „Nr”
+
+**Zgłoszenia:** „dalej nie mogę wskazać odczytywanej wartości, dalej to
+się wpisuje do etykiety w PDF” oraz „w niektórych miejscach źle
+odczytuje”.
+
+### Przełącznik trybu klikania
+
+Kliknięcie w dokument **zawsze** dopisywało tekst do kolumny
+② Etykiety w PDF. Dlatego w kolumnie etykiet lądowały wartości, np.
+`221509_2, Szemud; Nr obrębu; Numer obrębu`.
+
+Nad podglądem jest teraz lista wyboru **„Kliknięcie w dokument:”**:
+
+| Tryb | Co robi kliknięcie |
+| --- | --- |
+| 🏷️ uczy nazwy pola (etykieta) | dopisuje nazwę do kolumny ②, wzór rozpozna ją w kolejnych wypisach — zachowanie domyślne |
+| ✏️ wpisuje odczytaną wartość | wstawia kliknięty tekst wprost do kolumny ④, **nie ruszając etykiet** |
+
+Wartość wskazana myszką dostaje stan ✏️ wpisano ręcznie, ma pierwszeństwo
+przed odczytem, zapisuje się we wzorze i da się cofnąć (`Ctrl+Z`).
+
+### Błąd: wartość „Nr” zamiast numeru
+
+Wiersz `Nr obrębu: 0019` dawał wartość `Nr`. Winna była heurystyka z
+sekcji 43: ucinała tekst przed **każdym** słowem zakończonym dwukropkiem,
+więc rozbijała etykiety wielowyrazowe.
+
+Teraz cięcie następuje wyłącznie przed etykietą, którą wzór **rzeczywiście
+zna** (dłuższe sprawdzane są pierwsze, więc „Nr obrębu” wygrywa z „Nr”).
+Podział po szerokim odstępie działa jak dotąd.
+
+Sprawdzone na układzie ze zgłoszenia:
+
+| Pole | Wartość przed | Wartość teraz |
+| --- | --- | --- |
+| Jednostka ewidencyjna / Gmina | `Nr` | `221509_2, Szemud` |
+| Obręb | `Nr` | `Nr 0019, BOJANO` |
+| Nr obrębu | `Nr` | `0019` |
+
+### Cofanie obejmuje też wartości
+
+`_fields_snapshot` zapamiętuje teraz etykiety **i** ręczne wartości, więc
+`Ctrl+Z` cofa również wskazanie wartości myszką.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 76 testów (+7 na tryb klikania),
+`tests/test_wypis_profiles.py` — 62 (+3 na cięcie kolumn). Razem
+**498 testów** (było 488).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

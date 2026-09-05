@@ -734,6 +734,108 @@ class RecznaWartoscTests(unittest.TestCase):
         self.assertEqual(zapisane.get("county"), "wejherowski")
 
 
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class TrybKlikaniaTests(unittest.TestCase):
+    """Przełącznik: kliknięcie uczy etykiety albo wpisuje wartość."""
+
+    @classmethod
+    def setUpClass(cls):
+        TabelaWWierszuTests.setUpClass()
+        cls.pdf = TabelaWWierszuTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        TabelaWWierszuTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _wiersz(self, nazwa: str) -> int:
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return row
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def _klik(self, tekst: str) -> None:
+        slowo = next(
+            w
+            for w in self.dialog.page_view.page.words
+            if w.text.strip().rstrip(":") == tekst
+        )
+        hit = label_at(
+            self.dialog.page_view.page,
+            QPoint(int(slowo.rect.center().x()), int(slowo.rect.center().y())),
+        )
+        self.dialog._on_label_clicked(hit)
+
+    def test_domyslnie_tryb_etykiety(self):
+        self.assertEqual(self.dialog.click_mode.currentData(), "label")
+
+    def test_tryb_etykiety_dopisuje_do_kolumny_etykiet(self):
+        row = self._wiersz("Powiat")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog.click_mode.setCurrentIndex(0)
+        self._klik("Powiat")
+        self.assertIn("Powiat", self.dialog.table.item(row, 1).text())
+
+    def test_tryb_wartosci_nie_rusza_etykiet(self):
+        row = self._wiersz("Numer księgi wieczystej")
+        self.dialog.table.setCurrentCell(row, 0)
+        przed = self.dialog.table.item(row, 1).text()
+        self.dialog.click_mode.setCurrentIndex(1)
+        self._klik("0,4500")
+        self.assertEqual(self.dialog.table.item(row, 1).text(), przed)
+
+    def test_tryb_wartosci_wpisuje_do_kolumny_wartosci(self):
+        row = self._wiersz("Numer księgi wieczystej")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog.click_mode.setCurrentIndex(1)
+        self._klik("0,4500")
+        self.assertEqual(self.dialog.table.item(row, 3).text(), "0,4500")
+
+    def test_tryb_wartosci_ustawia_stan_reczny(self):
+        row = self._wiersz("Numer księgi wieczystej")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog.click_mode.setCurrentIndex(1)
+        self._klik("0,4500")
+        self.assertIn("ręcznie", self.dialog.table.item(row, 2).text())
+
+    def test_wskazana_wartosc_da_sie_cofnac(self):
+        row = self._wiersz("Numer księgi wieczystej")
+        self.dialog.table.setCurrentCell(row, 0)
+        przed = self.dialog.table.item(row, 3).text()
+        self.dialog.click_mode.setCurrentIndex(1)
+        self._klik("0,4500")
+        self.dialog._undo_change()
+        self.assertEqual(self.dialog.table.item(row, 3).text(), przed)
+
+    def test_wskazana_wartosc_trafia_do_wzoru(self):
+        row = self._wiersz("Numer księgi wieczystej")
+        self.dialog.table.setCurrentCell(row, 0)
+        self.dialog.click_mode.setCurrentIndex(1)
+        self._klik("0,4500")
+        index = self.dialog._current_index()
+        self.assertEqual(
+            self.dialog.profiles[index]["manual_values"].get("kw"), "0,4500"
+        )
+
+
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")
 class SkladanieTekstuTests(unittest.TestCase):
     def test_fold_usuwa_ogonki(self):

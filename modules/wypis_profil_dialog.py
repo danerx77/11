@@ -421,6 +421,24 @@ class WypisProfileDialog(QDialog):
         page_hint.setWordWrap(True)
         page_layout.addWidget(page_hint)
 
+        # ── Co robi kliknięcie: uczy nazwy pola czy wpisuje wartość? ──
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        mode_row.addWidget(QLabel("Kliknięcie w dokument:"))
+
+        self.click_mode = QComboBox()
+        self.click_mode.addItem("🏷️ uczy nazwy pola (etykieta)", "label")
+        self.click_mode.addItem("✏️ wpisuje odczytaną wartość", "value")
+        self.click_mode.setToolTip(
+            "🏷️ Etykieta — program zapamięta nazwę pola i sam znajdzie ją\n"
+            "w kolejnych wypisach z tego urzędu.\n\n"
+            "✏️ Wartość — kliknięty tekst trafia wprost do kolumny\n"
+            "„Odczytana wartość” dla zaznaczonego wiersza."
+        )
+        mode_row.addWidget(self.click_mode, 1)
+        mode_row.addStretch()
+        page_layout.addLayout(mode_row)
+
         nav_row = QHBoxLayout()
         nav_row.setSpacing(8)
 
@@ -668,17 +686,17 @@ class WypisProfileDialog(QDialog):
     # ── Cofanie i ponawianie ─────────────────────────────────────────
 
     def _fields_snapshot(self) -> dict:
-        """Zapamiętuje bieżące przypisania pól wybranego wzoru."""
+        """Zapamiętuje etykiety i ręczne wartości wybranego wzoru."""
 
-        snapshot = {}
+        labels = {}
         for row in range(self.table.rowCount()):
             key_item = self.table.item(row, 0)
             value_item = self.table.item(row, 1)
             if key_item is None:
                 continue
             key = key_item.data(Qt.ItemDataRole.UserRole)
-            snapshot[key] = value_item.text() if value_item else ""
-        return snapshot
+            labels[key] = value_item.text() if value_item else ""
+        return {"labels": labels, "manual": dict(self._manual_values)}
 
     def _remember(self) -> None:
         """Odkłada stan przed zmianą, żeby dało się ją cofnąć."""
@@ -690,7 +708,10 @@ class WypisProfileDialog(QDialog):
         self._update_history_buttons()
 
     def _apply_snapshot(self, snapshot: dict) -> None:
-        """Przywraca zapamiętane przypisania do tabeli."""
+        """Przywraca zapamiętane etykiety i ręczne wartości."""
+
+        labels = snapshot.get("labels", {})
+        self._manual_values = dict(snapshot.get("manual", {}))
 
         self._loading = True
         for row in range(self.table.rowCount()):
@@ -698,9 +719,10 @@ class WypisProfileDialog(QDialog):
             if key_item is None:
                 continue
             key = key_item.data(Qt.ItemDataRole.UserRole)
-            self.table.setItem(row, 1, QTableWidgetItem(snapshot.get(key, "")))
+            self.table.setItem(row, 1, QTableWidgetItem(labels.get(key, "")))
         self._loading = False
         self._store_table_into_profile()
+        self._store_manual_into_profile()
         if self.pdf_text:
             self._analyze()
         if self.pdf_path:
@@ -792,7 +814,7 @@ class WypisProfileDialog(QDialog):
             return
 
         self._remember()
-        self._apply_snapshot({})
+        self._apply_snapshot({"labels": {}, "manual": {}})
         self.lbl_summary.setText(
             "🧹 Wyczyszczono wszystkie przypisania.  •  " + self.lbl_summary.text()
         )
@@ -1045,6 +1067,30 @@ class WypisProfileDialog(QDialog):
             return
 
         label = str(hit.get("label") or "").strip()
+        value = str(hit.get("value") or "").strip()
+
+        # Tryb „wartość”: kliknięty tekst wpisujemy wprost do kolumny ④.
+        if self.click_mode.currentData() == "value":
+            wpis = value or str(hit.get("word") or "").strip()
+            if not wpis:
+                return
+            self._remember()
+            key_item = self.table.item(row, 0)
+            key = key_item.data(Qt.ItemDataRole.UserRole)
+            self._manual_values[key] = wpis
+            self._store_manual_into_profile()
+            self._loading = True
+            self.table.setItem(row, 3, QTableWidgetItem(wpis))
+            self._loading = False
+            if self.pdf_text:
+                self._analyze()
+            self._refresh_marks()
+            self.lbl_summary.setText(
+                f"✏️ Wskazano wartość „{wpis}” → {key_item.text()}"
+                "  •  " + self.lbl_summary.text()
+            )
+            return
+
         if not label:
             return
 
@@ -1066,7 +1112,6 @@ class WypisProfileDialog(QDialog):
         self._refresh_marks()
 
         field_name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
-        value = str(hit.get("value") or "").strip()
         self.lbl_summary.setText(
             f"Przypisano „{label}” → {field_name}"
             + (f" (odczytano: {value})" if value else "")

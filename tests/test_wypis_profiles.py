@@ -408,8 +408,28 @@ class WartoscBezSasiedniejKolumnyTests(unittest.TestCase):
     def test_odstep_konczy_wartosc(self):
         self.assertEqual(_value_until_next_column("kartuski    Gmina: Zukowo"), "kartuski")
 
-    def test_pojedyncza_spacja_przed_etykieta(self):
-        self.assertEqual(_value_until_next_column("kartuski Gmina: Zukowo"), "kartuski")
+    def test_pojedyncza_spacja_przed_znana_etykieta(self):
+        # Tniemy tylko przed etykietą, którą wzór zna.
+        self.assertEqual(
+            _value_until_next_column("kartuski Gmina: Zukowo", ["Gmina"]), "kartuski"
+        )
+
+    def test_nie_tnie_etykiety_wielowyrazowej(self):
+        # Regresja: „Nr obrębu: 0019” dawało wcześniej wartość „Nr”.
+        self.assertEqual(
+            _value_until_next_column("Nr obrębu: 0019", ["Nr obrębu"]),
+            "Nr obrębu: 0019",
+        )
+
+    def test_bez_znanych_etykiet_nic_nie_ucina(self):
+        self.assertEqual(
+            _value_until_next_column("kartuski Gmina: Zukowo"), "kartuski Gmina: Zukowo"
+        )
+
+    def test_dluzsza_etykieta_ma_pierwszenstwo(self):
+        self.assertEqual(
+            _value_until_next_column("0019 Nr obrębu: 22", ["Nr", "Nr obrębu"]), "0019"
+        )
 
     def test_wartosc_wielowyrazowa_zostaje_cala(self):
         self.assertEqual(
