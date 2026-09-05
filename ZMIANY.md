@@ -515,8 +515,9 @@ Etykiety przypisujesz na dwa sposoby:
 2. zaznaczając nazwę pola w tekście dokumentu i klikając **„⬅️ Użyj
    zaznaczenia jako etykiety”**.
 
-Wzory zapisują się w konfiguracji, więc kolejny wypis z tego samego
-urzędu odczyta się już poprawnie — bez ponownego ustawiania.
+Wzory zapisują się w osobnym pliku `dane/wypis_profiles.json` (opis
+w punkcie 39), więc kolejny wypis z tego samego urzędu odczyta się już
+poprawnie — bez ponownego ustawiania.
 
 ### Wzór własny poprawia też błędny odczyt
 
@@ -532,6 +533,83 @@ po dodaniu własnego wzoru daje poprawne `kartuski`.
 
 Wzoru wbudowanego nie da się usunąć ani zmienić mu nazwy — od tego jest
 przycisk „Kopiuj”, który robi Twoją własną wersję do edycji.
+
+## 39. Wzory odczytu wypisów w osobnym pliku
+
+**Prośba:** żeby wzory z okna „🧩 Wzory odczytu wypisów (PDF)” były
+zapisane w osobnym pliku, a nie razem z ustawieniami programu.
+
+### Co się zmieniło
+
+Wzory nie trafiają już do `app_config.json`. Mają własny plik:
+
+```
+dane/wypis_profiles.json
+```
+
+Program pokazuje tę ścieżkę w dwóch miejscach, żeby nie trzeba jej było
+szukać: w oknie wzorów (pod nagłówkiem) oraz w Ustawieniach obok
+przycisku.
+
+### Budowa pliku
+
+Plik jest czytelny i można go otworzyć zwykłym notatnikiem:
+
+```json
+{
+  "version": 1,
+  "active": "Starostwo Kartuzy",
+  "auto": false,
+  "profiles": [
+    {
+      "name": "Starostwo Kartuzy",
+      "builtin": false,
+      "override": true,
+      "markers": ["STAROSTWO POWIATOWE W KARTUZACH"],
+      "fields": { "county": ["Powiat"], "municipality": ["Gmina"] }
+    }
+  ]
+}
+```
+
+Zapisujemy tu komplet ustawień odczytu: same wzory, wybrany wzór
+(`active`) oraz tryb pracy (`auto`). Dzięki temu wystarczy skopiować ten
+jeden plik, aby przenieść całą konfigurację odczytu wypisów na inny
+komputer albo przekazać ją współpracownikowi.
+
+### Stare wzory przenoszą się same
+
+Jeżeli używałeś już wzorów zapisanych w `app_config.json`, program
+przy pierwszym uruchomieniu po aktualizacji przepisze je do nowego pliku
+i usunie stare wpisy z konfiguracji. Nic nie trzeba robić ręcznie i nic
+nie ginie — sprawdzone na pełnym cyklu: wzór, wybrany tryb ręczny oraz
+nazwa aktywnego wzoru trafiają do nowego pliku, a pozostałe ustawienia
+programu (motyw, dane nadawcy) zostają nietknięte.
+
+Gdyby plik z wzorami już istniał, to on ma pierwszeństwo — migracja nie
+nadpisze nowszych ustawień starymi.
+
+### Odporność na błędy
+
+- Uszkodzony lub ręcznie źle poprawiony plik nie wywraca programu —
+  wracają wtedy wzory wbudowane.
+- Nieudany zapis (np. folder tylko do odczytu) pokazuje czytelny
+  komunikat ze ścieżką pliku, zamiast po cichu gubić zmiany.
+- Odczyt wypisu korzysta z pliku również wtedy, gdy wywołanie nie
+  przekazało konfiguracji — wzory działają w całym programie tak samo.
+
+### Dlaczego akurat tak
+
+Program trzymał już w ten sposób inne ustawienia narzędzi
+(`stamp_profiles.json`, `druczek_profile.json`, `envelope_preferences.json`),
+więc wzory wypisów dołączyły do tej samej, sprawdzonej konwencji zamiast
+tworzyć osobny mechanizm.
+
+### Przy okazji
+
+Zniknęło ostrzeżenie Qt (`cannot insert an item that is already owned by
+another QTableWidget`) pojawiające się przy ponownej analizie dokumentu —
+komórki tabeli są teraz tworzone raz i tylko aktualizowane.
 
 ## Uwagi techniczne
 

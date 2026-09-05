@@ -1218,14 +1218,17 @@ class SettingsTabWidget(QWidget):
 
     def _refresh_wypis_profiles_label(self):
         """Pokazuje, ile wzorów zapisano i który jest aktywny."""
-        from utils.wypis_profiles import ACTIVE_KEY, AUTO_KEY, load_profiles
+        from utils.wypis_profiles import load_settings
 
-        profiles = load_profiles(self.config)
-        active = str(self.config.get(ACTIVE_KEY, "") or "")
-        auto = bool(self.config.get(AUTO_KEY, True))
+        settings = load_settings(self.config)
+        active = settings["active"]
+        auto = bool(settings["auto"])
         tryb = "automatyczny" if auto else f"ręczny — „{active or 'brak'}”"
+        from utils.global_settings import WYPIS_PROFILES_FILE
+
         self.lbl_wypis_profiles.setText(
-            f"Zapisanych wzorów: {len(profiles)} • tryb: {tryb}."
+            f"Zapisanych wzorów: {len(settings['profiles'])} • tryb: {tryb} "
+            f"• plik: dane/{WYPIS_PROFILES_FILE}"
         )
 
     def _open_wypis_profiles(self):

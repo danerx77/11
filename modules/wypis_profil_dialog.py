@@ -35,9 +35,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from utils.global_settings import wypis_profiles_path
 from utils.wypis_profiles import (
-    ACTIVE_KEY,
-    AUTO_KEY,
     FIELD_DEFS,
     FIELD_HINTS,
     FIELD_KEYS,
@@ -45,9 +44,9 @@ from utils.wypis_profiles import (
     analyze_text,
     detect_profile,
     find_profile,
-    load_profiles,
+    load_settings,
     normalize_profile,
-    save_profiles,
+    save_settings,
     summarize,
 )
 
@@ -73,7 +72,10 @@ class WypisProfileDialog(QDialog):
         self.setWindowTitle("Wzory odczytu wypisów (PDF)")
         self.resize(1180, 780)
 
-        self.profiles = load_profiles(self.config)
+        settings = load_settings(self.config)
+        self.profiles = settings["profiles"]
+        self._active_name = settings["active"]
+        self._auto = settings["auto"]
         self.pdf_text = ""
         self.pdf_path = ""
         self._loading = False
@@ -95,6 +97,17 @@ class WypisProfileDialog(QDialog):
         intro.setObjectName("info_banner")
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        # Użytkownik ma wiedzieć, gdzie leży plik — łatwiej go skopiować
+        # na inny komputer albo przekazać współpracownikowi.
+        self.lbl_file = QLabel(f"Wzory zapisują się w pliku: {wypis_profiles_path()}")
+        self.lbl_file.setObjectName("muted_hint")
+        self.lbl_file.setWordWrap(True)
+        self.lbl_file.setToolTip(
+            "Osobny plik — niezależny od pozostałych ustawień programu. "
+            "Możesz go skopiować, aby przenieść wzory na inny komputer."
+        )
+        layout.addWidget(self.lbl_file)
 
         # ── Pasek wzoru ──
         profile_row = QHBoxLayout()
@@ -127,7 +140,7 @@ class WypisProfileDialog(QDialog):
             "wybierze najlepiej pasujący. Po odznaczeniu zawsze używany jest "
             "wzór wybrany powyżej."
         )
-        self.chk_auto.setChecked(bool(self.config.get(AUTO_KEY, True)))
+        self.chk_auto.setChecked(bool(self._auto))
         mode_row.addWidget(self.chk_auto)
 
         mode_row.addWidget(QLabel(" | Znaczniki rozpoznawania:"))
@@ -250,7 +263,7 @@ class WypisProfileDialog(QDialog):
             suffix = "  (wbudowany)" if profile.get("builtin") else ""
             self.profile_combo.addItem(f"{profile['name']}{suffix}", profile["name"])
 
-        target = select_name or str(self.config.get(ACTIVE_KEY, "") or "")
+        target = select_name or str(self._active_name or "")
         index = self.profile_combo.findData(target)
         self.profile_combo.setCurrentIndex(index if index >= 0 else 0)
         self._loading = False
@@ -482,20 +495,28 @@ class WypisProfileDialog(QDialog):
             data = rows.get(key, {})
             status = data.get("status", "missing")
 
-            status_item = self.table.item(row, 2) or QTableWidgetItem()
+            # Komórki tworzymy tylko raz — ponowne setItem() na istniejącym
+            # elemencie Qt zgłasza ostrzeżenie o zmianie właściciela.
+            status_item = self.table.item(row, 2)
+            if status_item is None:
+                status_item = QTableWidgetItem()
+                status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, 2, status_item)
             status_item.setText(STATUS_TEXTS.get(status, ""))
             status_item.setForeground(QColor(STATUS_COLORS.get(status, "#cccccc")))
-            if data.get("matched_label"):
-                status_item.setToolTip(f"Dopasowano etykietę: {data['matched_label']}")
-            status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 2, status_item)
+            status_item.setToolTip(
+                f"Dopasowano etykietę: {data['matched_label']}"
+                if data.get("matched_label")
+                else ""
+            )
 
-            value_item = self.table.item(row, 3) or QTableWidgetItem()
+            value_item = self.table.item(row, 3)
+            if value_item is None:
+                value_item = QTableWidgetItem()
+                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, 3, value_item)
             value_item.setText(data.get("value", ""))
-            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            if status == "ok":
-                value_item.setFont(QFont("", -1, QFont.Weight.Bold))
-            self.table.setItem(row, 3, value_item)
+            value_item.setFont(QFont("", -1, QFont.Weight.Bold if status == "ok" else QFont.Weight.Normal))
         self._loading = False
 
         self.lbl_summary.setText(summarize(rows.values()))
@@ -539,7 +560,21 @@ class WypisProfileDialog(QDialog):
     def _save_and_close(self):
         self._store_table_into_profile()
         self._store_markers()
-        save_profiles(self.config, self.profiles)
-        self.config[ACTIVE_KEY] = str(self.profile_combo.currentData() or "")
-        self.config[AUTO_KEY] = self.chk_auto.isChecked()
+
+        active = str(self.profile_combo.currentData() or "")
+        auto = self.chk_auto.isChecked()
+        # Wzory trafiają do własnego pliku dane/wypis_profiles.json, więc
+        # zapis nie rusza pozostałych ustawień programu.
+        if not save_settings(self.profiles, active=active, auto=auto):
+            QMessageBox.critical(
+                self,
+                "Nie udało się zapisać",
+                "Program nie zdołał zapisać pliku ze wzorami:\n"
+                f"{wypis_profiles_path()}\n\n"
+                "Sprawdź, czy folder „dane” nie jest tylko do odczytu.",
+            )
+            return
+
+        self._active_name = active
+        self._auto = auto
         self.accept()

@@ -1,11 +1,14 @@
 """Testy profili odczytu wypisów z PDF."""
 
+import json
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from utils.global_settings import WYPIS_PROFILES_FILE  # noqa: E402
 from utils.wypis_profiles import (  # noqa: E402
     ACTIVE_KEY,
     AUTO_KEY,
@@ -19,10 +22,15 @@ from utils.wypis_profiles import (  # noqa: E402
     find_profile,
     labels_for,
     load_profiles,
+    load_settings,
+    migrate_from_config,
     normalize_profile,
+    read_profiles_file,
     save_profiles,
+    save_settings,
     score_profile,
     summarize,
+    write_profiles_file,
 )
 
 # Typowy wypis — etykieta i wartość w tej samej linii.
@@ -86,22 +94,29 @@ class NormalizeTests(unittest.TestCase):
 
 
 class LoadSaveTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.data_dir = Path(self._tmp.name) / "dane"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
     def test_pusta_konfiguracja_daje_profile_wbudowane(self):
-        profiles = load_profiles({})
+        profiles = load_profiles({}, self.data_dir)
         self.assertGreaterEqual(len(profiles), 2)
         self.assertTrue(all(p["builtin"] for p in profiles))
 
     def test_zapis_i_odczyt(self):
-        config = {}
         wlasny = normalize_profile({"name": "Mój urząd", "fields": {"county": ["Powiat"]}})
-        save_profiles(config, [wlasny])
-        self.assertIn(CONFIG_KEY, config)
-        wczytane = load_profiles(config)
+        save_settings([wlasny], data_dir=self.data_dir)
+        wczytane = load_profiles({}, self.data_dir)
         self.assertIsNotNone(find_profile(wczytane, "Mój urząd"))
 
     def test_wbudowane_sa_dopisywane_gdy_ich_brak(self):
-        config = {CONFIG_KEY: [{"name": "Tylko mój", "fields": {}}]}
-        profiles = load_profiles(config)
+        write_profiles_file(
+            [normalize_profile({"name": "Tylko mój"})], data_dir=self.data_dir
+        )
+        profiles = load_profiles({}, self.data_dir)
         self.assertIsNotNone(find_profile(profiles, "Standardowy (EGiB)"))
 
     def test_szukanie_ignoruje_wielkosc_liter_i_ogonki(self):
@@ -236,6 +251,154 @@ class LabelsForTests(unittest.TestCase):
     def test_nieznane_pole_daje_pusta_liste(self):
         self.assertEqual(labels_for(default_profiles()[0], "nie_ma_takiego"), [])
 
+
+
+class OsobnyPlikTests(unittest.TestCase):
+    """Wzory mają mieszkać w dane/wypis_profiles.json, nie w app_config.json."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.data_dir = Path(self._tmp.name) / "dane"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plik(self) -> Path:
+        return self.data_dir / WYPIS_PROFILES_FILE
+
+    def test_zapis_tworzy_wlasny_plik(self):
+        save_settings(default_profiles(), data_dir=self.data_dir)
+        self.assertTrue(self._plik().is_file())
+
+    def test_plik_ma_czytelna_budowe(self):
+        wlasny = normalize_profile({"name": "Starostwo Kartuzy"})
+        save_settings(
+            [wlasny], active="Starostwo Kartuzy", auto=False, data_dir=self.data_dir
+        )
+        dane = json.loads(self._plik().read_text(encoding="utf-8"))
+        self.assertEqual(dane["version"], 1)
+        self.assertEqual(dane["active"], "Starostwo Kartuzy")
+        self.assertFalse(dane["auto"])
+        self.assertEqual(dane["profiles"][0]["name"], "Starostwo Kartuzy")
+
+    def test_tryb_i_aktywny_wzor_wracaja_po_odczycie(self):
+        save_settings(
+            [normalize_profile({"name": "Mój"})],
+            active="Mój",
+            auto=False,
+            data_dir=self.data_dir,
+        )
+        ustawienia = load_settings({}, self.data_dir)
+        self.assertEqual(ustawienia["active"], "Mój")
+        self.assertFalse(ustawienia["auto"])
+
+    def test_brak_pliku_daje_ustawienia_domyslne(self):
+        ustawienia = load_settings({}, self.data_dir)
+        self.assertTrue(ustawienia["auto"])
+        self.assertEqual(ustawienia["active"], "")
+        self.assertGreaterEqual(len(ustawienia["profiles"]), 2)
+
+    def test_uszkodzony_plik_nie_wywraca_programu(self):
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._plik().write_text("{to nie jest JSON", encoding="utf-8")
+        profile = load_profiles({}, self.data_dir)
+        self.assertGreaterEqual(len(profile), 2)
+
+    def test_zapis_nie_dopisuje_wzorow_do_konfiguracji(self):
+        config = {}
+        save_profiles(config, default_profiles(), self.data_dir)
+        self.assertNotIn(CONFIG_KEY, config)
+
+
+class MigracjaTests(unittest.TestCase):
+    """Stare wzory z app_config.json mają trafić do osobnego pliku."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.data_dir = Path(self._tmp.name) / "dane"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _stara_konfiguracja(self) -> dict:
+        return {
+            "theme": "dark",
+            CONFIG_KEY: [{"name": "Stary urząd", "fields": {"county": ["Powiat"]}}],
+            ACTIVE_KEY: "Stary urząd",
+            AUTO_KEY: False,
+        }
+
+    def test_wzory_trafiaja_do_pliku(self):
+        config = self._stara_konfiguracja()
+        self.assertTrue(migrate_from_config(config, self.data_dir))
+        profile = load_profiles({}, self.data_dir)
+        self.assertIsNotNone(find_profile(profile, "Stary urząd"))
+
+    def test_stare_klucze_znikaja_z_konfiguracji(self):
+        config = self._stara_konfiguracja()
+        migrate_from_config(config, self.data_dir)
+        for key in (CONFIG_KEY, ACTIVE_KEY, AUTO_KEY):
+            self.assertNotIn(key, config)
+
+    def test_pozostale_ustawienia_zostaja_nietkniete(self):
+        config = self._stara_konfiguracja()
+        migrate_from_config(config, self.data_dir)
+        self.assertEqual(config["theme"], "dark")
+
+    def test_tryb_reczny_jest_zachowany(self):
+        config = self._stara_konfiguracja()
+        migrate_from_config(config, self.data_dir)
+        ustawienia = load_settings({}, self.data_dir)
+        self.assertFalse(ustawienia["auto"])
+        self.assertEqual(ustawienia["active"], "Stary urząd")
+
+    def test_brak_starych_kluczy_nic_nie_robi(self):
+        config = {"theme": "dark"}
+        self.assertFalse(migrate_from_config(config, self.data_dir))
+        self.assertFalse((self.data_dir / WYPIS_PROFILES_FILE).exists())
+
+    def test_istniejacy_plik_ma_pierwszenstwo(self):
+        save_settings(
+            [normalize_profile({"name": "Nowy zapis"})], data_dir=self.data_dir
+        )
+        config = self._stara_konfiguracja()
+        migrate_from_config(config, self.data_dir)
+        profile = load_profiles({}, self.data_dir)
+        self.assertIsNotNone(find_profile(profile, "Nowy zapis"))
+        self.assertIsNone(find_profile(profile, "Stary urząd"))
+
+    def test_migracja_dziala_gdy_wzorow_nie_bylo(self):
+        config = {ACTIVE_KEY: "", AUTO_KEY: True}
+        self.assertTrue(migrate_from_config(config, self.data_dir))
+        self.assertGreaterEqual(len(load_profiles({}, self.data_dir)), 2)
+
+
+class ZgodnoscWsteczTests(unittest.TestCase):
+    """Do czasu migracji program ma czytać wzory ze starej konfiguracji."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.data_dir = Path(self._tmp.name) / "dane"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_wzory_ze_starej_konfiguracji_sa_widoczne(self):
+        config = {CONFIG_KEY: [{"name": "Z konfiguracji", "fields": {}}]}
+        profile = load_profiles(config, self.data_dir)
+        self.assertIsNotNone(find_profile(profile, "Z konfiguracji"))
+
+    def test_plik_wygrywa_ze_stara_konfiguracja(self):
+        save_settings([normalize_profile({"name": "Z pliku"})], data_dir=self.data_dir)
+        config = {CONFIG_KEY: [{"name": "Z konfiguracji", "fields": {}}]}
+        profile = load_profiles(config, self.data_dir)
+        self.assertIsNotNone(find_profile(profile, "Z pliku"))
+        self.assertIsNone(find_profile(profile, "Z konfiguracji"))
+
+    def test_odczyt_pliku_zwraca_informacje_o_istnieniu(self):
+        self.assertFalse(read_profiles_file(self.data_dir)["exists"])
+        save_settings(default_profiles(), data_dir=self.data_dir)
+        self.assertTrue(read_profiles_file(self.data_dir)["exists"])
 
 if __name__ == "__main__":
     unittest.main()

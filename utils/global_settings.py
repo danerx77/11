@@ -17,6 +17,9 @@ from typing import Any
 STAMP_SETTINGS_FILE = "stamp_profiles.json"
 DRUCZEK_PROFILE_FILE = "druczek_profile.json"
 ENVELOPE_PREFERENCES_FILE = "envelope_preferences.json"
+# Wzory odczytu wypisów PDF trzymamy poza app_config.json, aby dało się je
+# skopiować albo podmienić bez ruszania pozostałych ustawień programu.
+WYPIS_PROFILES_FILE = "wypis_profiles.json"
 
 # Ustawienia sposobu pracy w zakładce Koperty. Nie zapisujemy tu danych
 # projektu (adresatów, historii generowania ani katalogu wyjściowego), tylko
@@ -181,6 +184,11 @@ def save_global_envelope_preferences(
         elif key == "envelope_table_state" and isinstance(value, str):
             payload[key] = value
     return save_json_dict(envelope_preferences_path(data_dir), payload)
+
+
+def wypis_profiles_path(data_dir: str | Path | None = None) -> Path:
+    """Ścieżka pliku ze wzorami odczytu wypisów PDF."""
+    return _data_dir(data_dir) / WYPIS_PROFILES_FILE
 
 
 def druczek_profile_path(data_dir: str | Path | None = None) -> Path:

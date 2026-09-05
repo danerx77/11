@@ -631,6 +631,18 @@ class MainWindow(QMainWindow):
         if druczek_profile:
             self.config["druczek_profile"] = druczek_profile
 
+        # Wzory odczytu wypisów PDF były kiedyś częścią app_config.json.
+        # Przy pierwszym uruchomieniu po aktualizacji przenosimy je do
+        # osobnego pliku dane/wypis_profiles.json.
+        try:
+            from utils.wypis_profiles import migrate_from_config
+
+            if migrate_from_config(self.config, self.data_dir):
+                self.save_configuration()
+        except Exception:
+            # Nieudane przeniesienie nie może zablokować startu programu.
+            pass
+
     def save_configuration(self):
         try:
             with open(self.config_path, "w", encoding="utf-8") as file:

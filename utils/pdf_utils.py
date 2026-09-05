@@ -252,27 +252,28 @@ def apply_profile_to_meta(meta: dict, text: str, config: dict = None) -> dict:
     dzięki czemu włączenie wzorów nie zmienia wyników tam, gdzie wszystko
     działało poprawnie.
     """
-    if not config or not str(text or '').strip():
+    if not str(text or '').strip():
         return meta
 
     try:
         from utils.wypis_profiles import (
-            ACTIVE_KEY,
-            AUTO_KEY,
             detect_profile,
             extract_field,
             find_profile,
-            load_profiles,
+            load_settings,
         )
     except Exception:
         return meta
 
     try:
-        profiles = load_profiles(config)
-        if config.get(AUTO_KEY, True):
+        # Wzory czytamy z osobnego pliku dane/wypis_profiles.json, więc
+        # działają także wtedy, gdy wywołanie nie przekazało konfiguracji.
+        settings = load_settings(config)
+        profiles = settings['profiles']
+        if settings['auto']:
             profile, _score = detect_profile(profiles, text)
         else:
-            profile = find_profile(profiles, str(config.get(ACTIVE_KEY, '') or ''))
+            profile = find_profile(profiles, settings['active'])
         if not profile:
             return meta
 

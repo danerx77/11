@@ -8,7 +8,9 @@ from utils.global_settings import (
     DRUCZEK_PROFILE_FILE,
     ENVELOPE_PREFERENCES_FILE,
     STAMP_SETTINGS_FILE,
+    WYPIS_PROFILES_FILE,
     get_global_data_dir,
+    wypis_profiles_path,
     load_global_druczek_profile,
     load_global_envelope_preferences,
     load_global_stamp_settings,
@@ -25,6 +27,18 @@ class GlobalSettingsTests(unittest.TestCase):
                 get_global_data_dir(temp_dir),
                 Path(temp_dir) / "dane",
             )
+
+    def test_wypis_profiles_have_their_own_file_in_data_directory(self):
+        """Wzory odczytu wypisów są osobnym plikiem, nie częścią ustawień."""
+        with TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir) / "dane"
+            self.assertEqual(
+                wypis_profiles_path(data_dir),
+                data_dir / WYPIS_PROFILES_FILE,
+            )
+            self.assertNotIn("app_config", WYPIS_PROFILES_FILE)
+            self.assertNotEqual(WYPIS_PROFILES_FILE, STAMP_SETTINGS_FILE)
+            self.assertNotEqual(WYPIS_PROFILES_FILE, DRUCZEK_PROFILE_FILE)
 
     def test_c5_and_c6_crop_profiles_round_trip_in_data_directory(self):
         with TemporaryDirectory() as temp_dir:

@@ -20,7 +20,14 @@ działa dla kolejnych wypisów z tego samego urzędu.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+from utils.global_settings import (
+    load_json_dict,
+    save_json_dict,
+    wypis_profiles_path,
+)
 
 # ── Pola, które program potrafi odczytać z wypisu ────────────────────
 # (klucz, etykieta w oknie, krótkie wyjaśnienie)
@@ -44,9 +51,16 @@ FIELD_KEYS: tuple[str, ...] = tuple(key for key, _l, _h in FIELD_DEFS)
 FIELD_LABELS: dict[str, str] = {key: label for key, label, _h in FIELD_DEFS}
 FIELD_HINTS: dict[str, str] = {key: hint for key, _l, hint in FIELD_DEFS}
 
+# Wzory mieszkają w osobnym pliku ``dane/wypis_profiles.json``. Poniższe
+# klucze pochodzą z wcześniejszej wersji, gdy wszystko trafiało do
+# ``app_config.json`` — czytamy je jeszcze przy przenoszeniu starych danych,
+# ale program już ich nie zapisuje.
 CONFIG_KEY = "wypis_profiles"
 ACTIVE_KEY = "wypis_active_profile"
 AUTO_KEY = "wypis_profile_auto"
+
+#: Wersja formatu pliku — ułatwia późniejsze zmiany budowy zapisu.
+FILE_VERSION = 1
 
 # ── Profil wbudowany: dotychczasowe zachowanie programu ──────────────
 DEFAULT_PROFILE: dict[str, Any] = {
@@ -154,20 +168,19 @@ def default_profiles() -> list[dict[str, Any]]:
     return [normalize_profile(profile) for profile in BUILTIN_PROFILES]
 
 
-def load_profiles(config: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """Wczytuje profile z konfiguracji, uzupełniając brakujące wbudowane."""
+def _profiles_from_list(raw: Any) -> list[dict[str, Any]]:
+    """Zamienia surową listę na komplet poprawnych profili."""
 
-    stored = []
-    if isinstance(config, Mapping):
-        raw = config.get(CONFIG_KEY)
-        if isinstance(raw, list):
-            stored = [normalize_profile(item) for item in raw if isinstance(item, Mapping)]
+    if not isinstance(raw, list):
+        return []
+    return [normalize_profile(item) for item in raw if isinstance(item, Mapping)]
+
+
+def _with_builtins(stored: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dokłada brakujące profile wbudowane — muszą istnieć zawsze."""
 
     if not stored:
         return default_profiles()
-
-    # Profile wbudowane muszą istnieć zawsze — użytkownik mógł je usunąć
-    # ze starszego pliku konfiguracji.
     names = {_fold(p["name"]) for p in stored}
     for builtin in default_profiles():
         if _fold(builtin["name"]) not in names:
@@ -175,12 +188,161 @@ def load_profiles(config: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     return stored
 
 
-def save_profiles(config: Any, profiles: Iterable[Mapping[str, Any]]) -> None:
-    """Zapisuje profile do konfiguracji."""
+def read_profiles_file(data_dir: str | Path | None = None) -> dict[str, Any]:
+    """Czyta plik ``wypis_profiles.json``.
 
-    if config is None:
-        return
-    config[CONFIG_KEY] = [normalize_profile(p) for p in profiles]
+    Zwraca słownik z kluczami ``profiles``, ``active`` i ``auto``. Brakujący
+    lub uszkodzony plik daje pusty wynik, dzięki czemu program startuje
+    z ustawieniami domyślnymi zamiast zgłaszać błąd.
+    """
+
+    raw = load_json_dict(wypis_profiles_path(data_dir))
+    profiles = _profiles_from_list(raw.get("profiles"))
+    active = raw.get("active")
+    auto = raw.get("auto")
+    return {
+        "profiles": profiles,
+        "active": str(active or "") if isinstance(active, str) else "",
+        "auto": auto if isinstance(auto, bool) else True,
+        "exists": bool(raw),
+    }
+
+
+def write_profiles_file(
+    profiles: Iterable[Mapping[str, Any]],
+    *,
+    active: str = "",
+    auto: bool = True,
+    data_dir: str | Path | None = None,
+) -> bool:
+    """Zapisuje wzory do ``dane/wypis_profiles.json``.
+
+    Plik jest oddzielny od ``app_config.json``, więc można go skopiować
+    na inny komputer albo wysłać koledze bez przenoszenia całych ustawień.
+    """
+
+    payload = {
+        "version": FILE_VERSION,
+        "active": str(active or ""),
+        "auto": bool(auto),
+        "profiles": [normalize_profile(p) for p in profiles or ()],
+    }
+    return save_json_dict(wypis_profiles_path(data_dir), payload)
+
+
+def migrate_from_config(
+    config: Any,
+    data_dir: str | Path | None = None,
+) -> bool:
+    """Przenosi wzory ze starego ``app_config.json`` do osobnego pliku.
+
+    Wcześniejsza wersja programu trzymała wzory razem z resztą ustawień.
+    Przy pierwszym uruchomieniu po aktualizacji przepisujemy je do nowego
+    pliku i usuwamy stare klucze, aby dane nie istniały w dwóch miejscach.
+    Zwraca ``True``, jeśli coś faktycznie przeniesiono.
+    """
+
+    if not isinstance(config, Mapping):
+        return False
+    if not any(key in config for key in (CONFIG_KEY, ACTIVE_KEY, AUTO_KEY)):
+        return False
+
+    # Plik z wzorami już istnieje — ma pierwszeństwo, stare klucze tylko
+    # sprzątamy, żeby nie wracały przy kolejnym zapisie konfiguracji.
+    current = read_profiles_file(data_dir)
+    if not current["exists"]:
+        stored = _profiles_from_list(config.get(CONFIG_KEY))
+        active = config.get(ACTIVE_KEY)
+        auto = config.get(AUTO_KEY)
+        write_profiles_file(
+            _with_builtins(stored),
+            active=str(active or "") if isinstance(active, str) else "",
+            auto=auto if isinstance(auto, bool) else True,
+            data_dir=data_dir,
+        )
+
+    for key in (CONFIG_KEY, ACTIVE_KEY, AUTO_KEY):
+        try:
+            del config[key]
+        except (KeyError, TypeError):
+            pass
+    return True
+
+
+def load_profiles(
+    config: Mapping[str, Any] | None = None,
+    data_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Wczytuje wzory z pliku, uzupełniając brakujące wbudowane.
+
+    ``config`` jest przyjmowany dla zgodności ze starszymi wywołaniami: gdy
+    plik jeszcze nie istnieje, a w konfiguracji siedzą wzory z poprzedniej
+    wersji, korzystamy z nich.
+    """
+
+    stored = read_profiles_file(data_dir)
+    if stored["profiles"]:
+        return _with_builtins(stored["profiles"])
+
+    if not stored["exists"] and isinstance(config, Mapping):
+        legacy = _profiles_from_list(config.get(CONFIG_KEY))
+        if legacy:
+            return _with_builtins(legacy)
+
+    return default_profiles()
+
+
+def save_profiles(
+    config: Any,
+    profiles: Iterable[Mapping[str, Any]],
+    data_dir: str | Path | None = None,
+) -> bool:
+    """Zapisuje wzory do osobnego pliku, zachowując tryb i wybór użytkownika."""
+
+    current = read_profiles_file(data_dir)
+    active = current["active"]
+    auto = current["auto"]
+
+    # Zapis nie może zgubić ustawień, które wcześniej były w konfiguracji.
+    if isinstance(config, Mapping):
+        if isinstance(config.get(ACTIVE_KEY), str):
+            active = config.get(ACTIVE_KEY) or active
+        if isinstance(config.get(AUTO_KEY), bool):
+            auto = config.get(AUTO_KEY)
+
+    return write_profiles_file(profiles, active=active, auto=auto, data_dir=data_dir)
+
+
+def load_settings(
+    config: Mapping[str, Any] | None = None,
+    data_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Zwraca komplet ustawień odczytu: wzory, aktywny wzór i tryb."""
+
+    stored = read_profiles_file(data_dir)
+    profiles = load_profiles(config, data_dir)
+
+    active = stored["active"]
+    auto = stored["auto"]
+    if not stored["exists"] and isinstance(config, Mapping):
+        if isinstance(config.get(ACTIVE_KEY), str):
+            active = config.get(ACTIVE_KEY) or ""
+        if isinstance(config.get(AUTO_KEY), bool):
+            auto = config.get(AUTO_KEY)
+
+    return {"profiles": profiles, "active": active, "auto": auto}
+
+
+def save_settings(
+    profiles: Iterable[Mapping[str, Any]],
+    *,
+    active: str = "",
+    auto: bool = True,
+    data_dir: str | Path | None = None,
+) -> bool:
+    """Zapisuje wzory razem z wyborem aktywnego wzoru i trybem pracy."""
+
+    return write_profiles_file(profiles, active=active, auto=auto, data_dir=data_dir)
 
 
 def find_profile(profiles: Iterable[Mapping[str, Any]], name: str) -> dict[str, Any] | None:
