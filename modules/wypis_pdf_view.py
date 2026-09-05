@@ -117,6 +117,72 @@ def _column_gap(words: list["Word"]) -> float:
     return max(height * 1.6, 14.0)
 
 
+def _header_above(page: PageData, cell: list["Word"]) -> list["Word"]:
+    """Szuka nagłówka kolumny stojącego nad wskazaną komórką.
+
+    W wypisach dane bywają w tabeli w kratkę, bez dwukropków — nazwa
+    kolumny („Pow. [ha]”) stoi wtedy w wierszu nagłówka nad wartością.
+    Idziemy w górę kolumny aż do jej pierwszego wiersza, bo pod nagłówkiem
+    może stać kilka wierszy z danymi.
+    """
+
+    if not cell:
+        return []
+
+    gap = _column_gap(page.words)
+    biezaca = cell
+    ostatnia: list[Word] = []
+
+    for _ in range(12):                     # zabezpieczenie przed pętlą
+        left = min(w.rect.left() for w in biezaca)
+        right = max(w.rect.right() for w in biezaca)
+        top = min(w.rect.top() for w in biezaca)
+        height = max(w.rect.height() for w in biezaca)
+
+        kandydaci = []
+        for word in page.words:
+            if word.rect.bottom() > top - 1:
+                continue                    # nie leży wyżej
+            if word.rect.right() <= left or word.rect.left() >= right:
+                continue                    # inna kolumna
+            odleglosc = top - word.rect.bottom()
+            if odleglosc > height * 6:
+                continue                    # za daleko, to już nie nagłówek
+            kandydaci.append((odleglosc, word))
+
+        if not kandydaci:
+            break
+
+        najblizszy = min(kandydaci, key=lambda para: para[0])[1]
+
+        # Cały wiersz nagłówka dzielimy na komórki i bierzemy tę, w której
+        # leży znalezione słowo — dzięki temu „Opis użytku” zostaje w całości.
+        wiersz = [
+            w
+            for w in page.words
+            if w.block == najblizszy.block and w.line == najblizszy.line
+        ]
+        wiersz.sort(key=lambda w: w.rect.left())
+
+        komorki: list[list[Word]] = [[wiersz[0]]]
+        for poprzednie, slowo in zip(wiersz, wiersz[1:]):
+            if slowo.rect.left() - poprzednie.rect.right() >= gap:
+                komorki.append([slowo])
+            else:
+                komorki[-1].append(slowo)
+
+        komorka = next(k for k in komorki if najblizszy in k)
+
+        # Wiersz z dwukropkiem to opis „etykieta: wartość”, nie nagłówek.
+        if any(w.text.endswith(":") for w in komorka):
+            break
+
+        ostatnia = komorka
+        biezaca = komorka
+
+    return ostatnia
+
+
 def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     """Zwraca słowo (lub grupę słów) wskazane kursorem.
 
@@ -195,8 +261,14 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
             label_chunk = poprzednia
             value_chunk = cell
         else:
-            label_chunk = cell
-            value_chunk = []
+            # Tabela w kratkę: nagłówek stoi NAD komórką, nie obok niej.
+            naglowek = _header_above(page, cell)
+            if naglowek:
+                label_chunk = naglowek
+                value_chunk = cell
+            else:
+                label_chunk = cell
+                value_chunk = []
 
     label = _text(label_chunk).rstrip(":").strip()
     value = _text(value_chunk).strip(" :,;-")

@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -424,20 +425,50 @@ class WypisProfileDialog(QDialog):
         # ── Co robi kliknięcie: uczy nazwy pola czy wpisuje wartość? ──
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
-        mode_row.addWidget(QLabel("Kliknięcie w dokument:"))
+        mode_row.addWidget(QLabel("<b>Klikam, żeby wskazać:</b>"))
 
-        self.click_mode = QComboBox()
-        self.click_mode.addItem("🏷️ uczy nazwy pola (etykieta)", "label")
-        self.click_mode.addItem("✏️ wpisuje odczytaną wartość", "value")
-        self.click_mode.setToolTip(
-            "🏷️ Etykieta — program zapamięta nazwę pola i sam znajdzie ją\n"
-            "w kolejnych wypisach z tego urzędu.\n\n"
-            "✏️ Wartość — kliknięty tekst trafia wprost do kolumny\n"
-            "„Odczytana wartość” dla zaznaczonego wiersza."
+        # Dwa duże przyciski — widać od razu, co zrobi kliknięcie.
+        self.btn_mode_label = QPushButton("🏷️ NAZWĘ POLA")
+        self.btn_mode_label.setCheckable(True)
+        self.btn_mode_label.setChecked(True)
+        self.btn_mode_label.setMinimumHeight(34)
+        self.btn_mode_label.setToolTip(
+            "Program zapamięta nazwę pola i sam znajdzie ją\n"
+            "w kolejnych wypisach z tego urzędu."
         )
-        mode_row.addWidget(self.click_mode, 1)
+
+        self.btn_mode_value = QPushButton("✏️ WARTOŚĆ")
+        self.btn_mode_value.setCheckable(True)
+        self.btn_mode_value.setMinimumHeight(34)
+        self.btn_mode_value.setToolTip(
+            "Kliknięty tekst trafia wprost do kolumny\n"
+            "„Odczytana wartość” — etykiety zostają nietknięte."
+        )
+
+        grupa = QButtonGroup(self)
+        grupa.setExclusive(True)
+        grupa.addButton(self.btn_mode_label)
+        grupa.addButton(self.btn_mode_value)
+        self._mode_group = grupa
+
+        for przycisk in (self.btn_mode_label, self.btn_mode_value):
+            przycisk.setStyleSheet(
+                "QPushButton { padding: 4px 14px; font-weight: 600; }"
+                "QPushButton:checked { background: #2ecc71; color: #10222b;"
+                " border: 2px solid #7ef5b0; }"
+            )
+            przycisk.toggled.connect(self._on_mode_changed)
+
+        mode_row.addWidget(self.btn_mode_label)
+        mode_row.addWidget(self.btn_mode_value)
         mode_row.addStretch()
         page_layout.addLayout(mode_row)
+
+        # Pasek stanu — mówi wprost, co się stanie po kliknięciu.
+        self.lbl_mode_hint = QLabel()
+        self.lbl_mode_hint.setWordWrap(True)
+        page_layout.addWidget(self.lbl_mode_hint)
+        self._on_mode_changed()
 
         nav_row = QHBoxLayout()
         nav_row.setSpacing(8)
@@ -676,6 +707,29 @@ class WypisProfileDialog(QDialog):
         index = self._current_index()
         if index >= 0:
             self.profiles[index]["manual_values"] = dict(self._manual_values)
+
+    def _click_mode(self) -> str:
+        """Zwraca „label” albo „value” — co robi kliknięcie w dokument."""
+
+        return "value" if self.btn_mode_value.isChecked() else "label"
+
+    def _on_mode_changed(self, *_args) -> None:
+        """Odświeża pasek podpowiedzi pod przyciskami trybu."""
+
+        if self._click_mode() == "value":
+            self.lbl_mode_hint.setText(
+                "✏️ <b>Tryb wartości.</b> Kliknij w dokumencie tekst, który ma "
+                "trafić do kolumny <b>④ Odczytana wartość</b> zaznaczonego "
+                "wiersza. Etykiety nie zostaną zmienione."
+            )
+            self.lbl_mode_hint.setStyleSheet("color: #f1c40f;")
+        else:
+            self.lbl_mode_hint.setText(
+                "🏷️ <b>Tryb nazwy pola.</b> Kliknij nazwę pola w dokumencie, "
+                "a program zapamięta ją w kolumnie <b>② Etykiety w PDF</b> i "
+                "rozpozna w kolejnych wypisach."
+            )
+            self.lbl_mode_hint.setStyleSheet("color: #7ef5b0;")
 
     def _before_cell_edit(self, _item=None) -> None:
         """Zapamiętuje treść komórek tuż przed ręczną edycją."""
@@ -1070,7 +1124,7 @@ class WypisProfileDialog(QDialog):
         value = str(hit.get("value") or "").strip()
 
         # Tryb „wartość”: kliknięty tekst wpisujemy wprost do kolumny ④.
-        if self.click_mode.currentData() == "value":
+        if self._click_mode() == "value":
             wpis = value or str(hit.get("word") or "").strip()
             if not wpis:
                 return

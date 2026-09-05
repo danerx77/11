@@ -785,12 +785,12 @@ class TrybKlikaniaTests(unittest.TestCase):
         self.dialog._on_label_clicked(hit)
 
     def test_domyslnie_tryb_etykiety(self):
-        self.assertEqual(self.dialog.click_mode.currentData(), "label")
+        self.assertEqual(self.dialog._click_mode(), "label")
 
     def test_tryb_etykiety_dopisuje_do_kolumny_etykiet(self):
         row = self._wiersz("Powiat")
         self.dialog.table.setCurrentCell(row, 0)
-        self.dialog.click_mode.setCurrentIndex(0)
+        self.dialog.btn_mode_label.setChecked(True)
         self._klik("Powiat")
         self.assertIn("Powiat", self.dialog.table.item(row, 1).text())
 
@@ -798,21 +798,21 @@ class TrybKlikaniaTests(unittest.TestCase):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
         przed = self.dialog.table.item(row, 1).text()
-        self.dialog.click_mode.setCurrentIndex(1)
+        self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         self.assertEqual(self.dialog.table.item(row, 1).text(), przed)
 
     def test_tryb_wartosci_wpisuje_do_kolumny_wartosci(self):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
-        self.dialog.click_mode.setCurrentIndex(1)
+        self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         self.assertEqual(self.dialog.table.item(row, 3).text(), "0,4500")
 
     def test_tryb_wartosci_ustawia_stan_reczny(self):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
-        self.dialog.click_mode.setCurrentIndex(1)
+        self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         self.assertIn("ręcznie", self.dialog.table.item(row, 2).text())
 
@@ -820,7 +820,7 @@ class TrybKlikaniaTests(unittest.TestCase):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
         przed = self.dialog.table.item(row, 3).text()
-        self.dialog.click_mode.setCurrentIndex(1)
+        self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         self.dialog._undo_change()
         self.assertEqual(self.dialog.table.item(row, 3).text(), przed)
@@ -828,12 +828,105 @@ class TrybKlikaniaTests(unittest.TestCase):
     def test_wskazana_wartosc_trafia_do_wzoru(self):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
-        self.dialog.click_mode.setCurrentIndex(1)
+        self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         index = self.dialog._current_index()
         self.assertEqual(
             self.dialog.profiles[index]["manual_values"].get("kw"), "0,4500"
         )
+
+
+@unittest.skipIf(
+    QApplication is None or fitz is None, "PySide6 lub PyMuPDF nie jest dostępne"
+)
+class TabelaWKratkeTests(unittest.TestCase):
+    """Wypis w kratkę: nazwa kolumny stoi NAD wartością, bez dwukropka."""
+
+    NAGLOWKI = ["Obreb", "Nr dzialki", "Pow. [ha]", "Opis uzytku"]
+    WIERSZE = [
+        ["0019, BOJANO", "145/7", "0.0235", "dr"],
+        ["0019, BOJANO", "145/8", "0.1120", "RIVa"],
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.pdf = str(Path(cls._tmp.name) / "kratka.pdf")
+        font = PodgladStronyTests.FONT
+        font = font if Path(font).is_file() else None
+
+        doc = fitz.open()
+        page = doc.new_page()
+        x0, y0, szer, wys = 40, 60, 120, 22
+
+        def komorka(kolumna, wiersz, tekst):
+            rect = fitz.Rect(
+                x0 + kolumna * szer,
+                y0 + wiersz * wys,
+                x0 + (kolumna + 1) * szer,
+                y0 + (wiersz + 1) * wys,
+            )
+            page.draw_rect(rect)
+            if font:
+                page.insert_text(
+                    (rect.x0 + 4, rect.y0 + 15),
+                    tekst,
+                    fontsize=9,
+                    fontfile=font,
+                    fontname="DJ",
+                )
+            else:  # pragma: no cover
+                page.insert_text((rect.x0 + 4, rect.y0 + 15), tekst, fontsize=9)
+
+        for kolumna, tekst in enumerate(cls.NAGLOWKI):
+            komorka(kolumna, 0, tekst)
+        for numer, wiersz in enumerate(cls.WIERSZE, start=1):
+            for kolumna, tekst in enumerate(wiersz):
+                komorka(kolumna, numer, tekst)
+
+        doc.save(cls.pdf)
+        doc.close()
+        cls.page = load_page(cls.pdf)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def _klik(self, tekst: str) -> dict:
+        slowo = next(w for w in self.page.words if tekst in w.text)
+        return label_at(
+            self.page,
+            QPoint(int(slowo.rect.center().x()), int(slowo.rect.center().y())),
+        )
+
+    def test_wartosc_dostaje_naglowek_kolumny(self):
+        hit = self._klik("0.0235")
+        self.assertEqual(hit["label"], "Pow. [ha]")
+        self.assertEqual(hit["value"], "0.0235")
+
+    def test_drugi_wiersz_tez_wskazuje_naglowek(self):
+        # Regresja: brał wiersz bezpośrednio nad sobą, czyli dane.
+        hit = self._klik("0.1120")
+        self.assertEqual(hit["label"], "Pow. [ha]")
+        self.assertEqual(hit["value"], "0.1120")
+
+    def test_naglowek_wielowyrazowy_w_calosci(self):
+        # Regresja: „Opis uzytku” ucinane do „Opis”.
+        self.assertEqual(self._klik("RIVa")["label"], "Opis uzytku")
+
+    def test_numer_dzialki_z_kratki(self):
+        hit = self._klik("145/8")
+        self.assertEqual(hit["label"], "Nr dzialki")
+        self.assertEqual(hit["value"], "145/8")
+
+    def test_wartosc_z_przecinkiem(self):
+        hit = self._klik("BOJANO")
+        self.assertEqual(hit["label"], "Obreb")
+        self.assertEqual(hit["value"], "0019, BOJANO")
+
+    def test_klik_w_sam_naglowek_zwraca_naglowek(self):
+        # „dzialki” to drugie słowo nagłówka „Nr dzialki”.
+        self.assertEqual(self._klik("dzialki")["label"], "Nr dzialki")
 
 
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")

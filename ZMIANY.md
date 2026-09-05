@@ -971,6 +971,48 @@ Sprawdzone na układzie ze zgłoszenia:
 `tests/test_wypis_profiles.py` — 62 (+3 na cięcie kolumn). Razem
 **498 testów** (było 488).
 
+## 46. Tabela w kratkę i wyraźny wybór trybu klikania
+
+**Zgłoszenia:** „dane się zlewają, żółte są innymi danymi”, „dalej nie
+mogę wskazać wartości odczytywanej, a dalej etykieta się wpisuje”.
+
+### Główna przyczyna: tabela w kratkę bez dwukropków
+
+Wcześniejsze poprawki zakładały układ `Etykieta: wartość`. W wypisach
+z **tabelą w kratkę** (kolumny `Obręb | Nr działki | Pow. [ha] | Opis
+użytku`) dwukropków nie ma wcale — nazwa kolumny stoi **nad** wartością.
+
+Program brał wtedy klikniętą liczbę za nazwę pola, więc `0.0235`
+lądowało w kolumnie „Etykiety w PDF”, a oznaczenia pokazywały nie te
+dane, co trzeba.
+
+Nowa funkcja `_header_above()` idzie **w górę kolumny** aż do wiersza
+nagłówka i bierze z niego całą komórkę:
+
+| Kliknięto | Rozpoznana nazwa | Wartość |
+| --- | --- | --- |
+| `0.0235` | `Pow. [ha]` | `0.0235` |
+| `0.1120` (drugi wiersz) | `Pow. [ha]` | `0.1120` |
+| `145/8` | `Nr dzialki` | `145/8` |
+| `BOJANO` | `Obreb` | `0019, BOJANO` |
+| `RIVa` | `Opis uzytku` | `RIVa` |
+
+Wędrówka w górę rozwiązuje przypadek drugiego i dalszych wierszy (brały
+wcześniej wiersz danych nad sobą), a podział nagłówka na komórki chroni
+nazwy wielowyrazowe („Opis użytku” nie skraca się już do „Opis”).
+
+### Wybór trybu widoczny na pierwszy rzut oka
+
+Lista rozwijana z sekcji 45 była zbyt dyskretna. Zastąpiły ją dwa duże
+przyciski **„🏷️ NAZWĘ POLA”** i **„✏️ WARTOŚĆ”**; aktywny świeci na
+zielono. Pod nimi pasek tekstem mówi, co zrobi kliknięcie — żółty dla
+trybu wartości, zielony dla trybu nazwy.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 82 testy (+6 na tabelę w kratkę).
+Razem **504 testy** (było 498).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,
