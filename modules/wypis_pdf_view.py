@@ -395,6 +395,65 @@ def _wartosc_pod_spodem(page: PageData, cell: list["Word"]) -> bool:
     return False
 
 
+def _value_below(page: PageData, cell: list["Word"]) -> list["Word"]:
+    """Szuka wartości stojącej POD etykietą (układ kolumnowy).
+
+    W wielu wypisach nazwa rubryki stoi nad wartością, a nie obok niej —
+    „Numer działki” z „27/176” pod spodem. Bez tego program widział samą
+    nazwę i zostawiał pole puste.
+    """
+
+    if not page or not cell:
+        return []
+
+    left = min(w.rect.left() for w in cell)
+    right = max(w.rect.right() for w in cell)
+    bottom = max(w.rect.bottom() for w in cell)
+    height = max(w.rect.height() for w in cell)
+
+    kandydaci = []
+    for word in page.words:
+        if word in cell or word.rect.top() < bottom - 1:
+            continue
+        odleglosc = word.rect.top() - bottom
+        if odleglosc > height * 5:
+            continue                       # za daleko, to już inna rubryka
+        # Kolumny muszą na siebie zachodzić — wypisy bywają nierówne.
+        if word.rect.right() <= left - 4 or word.rect.left() >= right + 4:
+            continue
+        kandydaci.append((round(odleglosc, 1), word.rect.left(), word))
+
+    if not kandydaci:
+        return []
+
+    # Bierzemy najbliższy wiersz pod spodem i całą jego komórkę.
+    kandydaci.sort(key=lambda para: (para[0], para[1]))
+    najblizszy = kandydaci[0][2]
+    gap = _column_gap(page.words)
+    komorka = [najblizszy]
+    for grupa in _row_cells(page, najblizszy, gap):
+        if najblizszy in grupa:
+            komorka = grupa
+            break
+
+    # To, co stoi pod spodem, musi być wartością — a nie nazwą kolejnego
+    # pola. W pionowej liście („Województwo   POMORSKIE”, a niżej
+    # „Powiat   kartuski”) wiersz poniżej ma własną wartość po prawej,
+    # więc jego pierwsza komórka jest nazwą rubryki, nie naszą wartością.
+    wiersz_nizej = _row_cells(page, najblizszy, gap)
+    pierwsza = wiersz_nizej[0] if wiersz_nizej else []
+    jest_pierwsza = bool(pierwsza) and pierwsza[0] is komorka[0]
+    if len(wiersz_nizej) > 1 and jest_pierwsza:
+        obok = " ".join(w.text for w in wiersz_nizej[1]).strip()
+        nasza = " ".join(w.text for w in komorka)
+        # Pod spodem stoi kolejna para „nazwa  wartość” — czyli następne
+        # pole listy, a nie wartość tego, w które kliknięto.
+        if obok and not _is_data_like(nasza):
+            return []
+
+    return komorka
+
+
 def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
     """Zwraca słowo (lub grupę słów) wskazane kursorem.
 
@@ -501,6 +560,16 @@ def label_at(page: PageData, point: QPoint) -> dict[str, Any] | None:
             else:
                 label_chunk = cell
                 value_chunk = []
+
+    # Nadal bez wartości? Zajrzyj POD etykietę — w wielu wypisach nazwa
+    # rubryki stoi nad wartością, a nie obok niej. Pomijamy to, gdy
+    # w klikniętym wierszu jest już druga kolumna: wtedy wartość stoi
+    # obok (lista „Województwo   POMORSKIE”), a niżej jest kolejne pole.
+    if not value_chunk and label_chunk:
+        # Gdy w tym samym wierszu stoi obok NAZWA kolejnej rubryki, to
+        # wiersz nagłówków tabeli — wartości są pod spodem. Gdy stoi tam
+        # wartość, niżej zaczyna się następne pole i w dół nie schodzimy.
+        value_chunk = _value_below(page, label_chunk)
 
     label = _text(label_chunk).rstrip(":").strip()
     value = _text(value_chunk).strip(" :,;-")

@@ -65,6 +65,31 @@ FIELD_LABELS: dict[str, str] = {key: label for key, label, _h in FIELD_DEFS}
 #: które pola można usunąć i zmienić im nazwę, a których ruszać nie wolno.
 CUSTOM_PREFIX = "custom_"
 
+#: Skąd czytać wartość względem nazwy pola.
+DIRECTION_AUTO = "auto"        # program sam decyduje (jak dotąd)
+DIRECTION_RIGHT = "right"      # zawsze z prawej strony
+DIRECTION_BELOW = "below"      # zawsze spod spodu
+
+DIRECTIONS: tuple[tuple[str, str], ...] = (
+    (DIRECTION_AUTO, "🔎 Sam wybierz"),
+    (DIRECTION_RIGHT, "➡️ Obok, z prawej"),
+    (DIRECTION_BELOW, "⬇️ Pod spodem"),
+)
+
+DIRECTION_LABELS: dict[str, str] = dict(DIRECTIONS)
+
+
+def field_direction(profile: Mapping[str, Any] | None, key: str) -> str:
+    """Kierunek odczytu ustawiony dla pola."""
+
+    if isinstance(profile, Mapping):
+        raw = profile.get("directions")
+        if isinstance(raw, Mapping):
+            wartosc = str(raw.get(key, "") or "").strip()
+            if wartosc in DIRECTION_LABELS:
+                return wartosc
+    return DIRECTION_AUTO
+
 
 def is_custom_field(key: str) -> bool:
     """Czy to pole dodane przez użytkownika (a nie wbudowane)?"""
@@ -285,6 +310,15 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         if klucz.startswith(CUSTOM_PREFIX) and nazwa:
             custom_fields[klucz] = nazwa
 
+    # Kierunek odczytu ustawiony ręcznie dla poszczególnych pól.
+    raw_dirs = source.get("directions")
+    raw_dirs = raw_dirs if isinstance(raw_dirs, Mapping) else {}
+    directions: dict[str, str] = {}
+    for key, value in raw_dirs.items():
+        kierunek = str(value or "").strip()
+        if kierunek in DIRECTION_LABELS and kierunek != DIRECTION_AUTO:
+            directions[str(key)] = kierunek
+
     # Pola z celowo skasowaną wartością — program nie ma ich odczytywać.
     raw_skipped = source.get("skipped_values")
     skipped_values = []
@@ -337,6 +371,7 @@ def normalize_profile(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "custom_fields": custom_fields,
         "hidden_fields": hidden_fields,
         "skipped_values": skipped_values,
+        "directions": directions,
     }
 
 
@@ -775,6 +810,15 @@ def extract_field(
                     if candidate and not _looks_like_label(candidate, profile):
                         return candidate[:max_length]
 
+    # Kierunek wymuszony ręcznie przez użytkownika w kolumnie „Skąd".
+    kierunek = field_direction(profile, field)
+    if kierunek == DIRECTION_BELOW:
+        ponizej = _extract_from_column(lines, labels, profile)
+        return ponizej[:max_length] if ponizej else ""
+    if kierunek == DIRECTION_RIGHT:
+        obok_tylko = _extract_from_same_row(lines, labels, profile)
+        return obok_tylko[:max_length] if obok_tylko else ""
+
     # Pionowa lista pól bez dwukropków — „Województwo   POMORSKIE”.
     # Etykieta jest pierwszą kolumną, wartość następną w TYM SAMYM wierszu.
     # Sprawdzamy to PRZED tabelą, bo inaczej jako wartość wzięlibyśmy
@@ -803,7 +847,7 @@ def _extract_from_same_row(
     dwukropka, a wartość oddziela od nazwy tylko odstęp.
     """
 
-    for line in lines:
+    for numer, line in enumerate(lines):
         if not line.strip():
             continue
         kolumny = _split_columns(line)
@@ -823,9 +867,57 @@ def _extract_from_same_row(
             if not any(_fold(tekst) == _fold(label) for label in labels):
                 continue
             wartosc = kolumny[pozycja + 1][1].strip(" :,;-")
-            if wartosc and not _looks_like_label(wartosc, profile):
-                return wartosc
+            if not wartosc or _looks_like_label(wartosc, profile):
+                continue
+            # Gdy pod spodem stoi wiersz danych o tej samej budowie, to
+            # tabela — wartość jest niżej, a obok stoi kolejna rubryka.
+            if _ma_wiersz_danych_pod(lines, numer, kolumny, profile):
+                continue
+            return wartosc
     return ""
+
+
+def _ma_wiersz_danych_pod(
+    lines: list[str],
+    numer: int,
+    kolumny: list[tuple[int, str]],
+    profile: Mapping[str, Any] | None,
+) -> bool:
+    """Czy pod wierszem stoi wiersz danych ustawiony w tych samych kolumnach?
+
+    Tak wygląda tabela: „Numer działki | Bliższe określenie” u góry, a pod
+    spodem wartości zaczynające się w tych samych miejscach. W pionowej
+    liście pól kolumny są poprzesuwane, więc reguła tam nie zadziała.
+    """
+
+    zakresy = [(start, start + len(tekst)) for start, tekst in kolumny]
+    for nizej in lines[numer + 1: numer + 3]:
+        if not nizej.strip():
+            continue
+        ponizej = _split_columns(nizej)
+        if len(ponizej) != len(kolumny):
+            return False
+        # Kolumny muszą stać jedna pod drugą — każda komórka niżej musi
+        # zachodzić na rubrykę nad sobą (napisy bywają różnej długości,
+        # więc same początki nie wystarczą).
+        if any(
+            start >= koniec_gory or start + len(tekst) <= poczatek_gory
+            for (start, tekst), (poczatek_gory, koniec_gory)
+            in zip(ponizej, zakresy)
+        ):
+            return False
+        # Same nazwy pól to nie są dane.
+        if all(_looks_like_label(tekst, profile) for _start, tekst in ponizej):
+            return False
+        # Pierwsza kolumna niżej musi wyglądać na daną. W pionowej liście
+        # („Powiat  kartuski” nad „Gmina  Zukowo”) stoi tam nazwa rubryki,
+        # więc to nie jest wiersz danych, tylko kolejne pole.
+        pierwsza = ponizej[0][1] if ponizej else ""
+        if _looks_like_label(pierwsza, profile):
+            return False
+        # Wiersz danych: pierwsza komórka zawiera cyfrę.
+        return any(znak.isdigit() for znak in pierwsza)
+    return False
 
 
 def _split_columns(line: str) -> list[tuple[int, str]]:

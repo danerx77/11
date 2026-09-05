@@ -60,7 +60,13 @@ from utils.wypis_profiles import (
     normalize_profile,
     save_settings,
     summarize,
+    DIRECTION_AUTO,
+    DIRECTION_BELOW,
+    DIRECTION_RIGHT,
+    DIRECTIONS,
     custom_field_key,
+    extract_field,
+    field_direction,
     is_custom_field,
     profile_field_defs,
 )
@@ -335,19 +341,26 @@ class WypisProfileDialog(QDialog):
         fields_box = QGroupBox("Co jest czym — pola wypisu")
         fields_layout = QVBoxLayout(fields_box)
 
-        self.table = QTableWidget(len(FIELD_KEYS), 4)
+        self.table = QTableWidget(len(FIELD_KEYS), 5)
         self.table.setHorizontalHeaderLabels(
             [
                 "① Pole w programie",
                 "② Etykiety w PDF",
-                "③ Stan",
-                "④ Odczytana wartość",
+                "③ Skąd czytać",
+                "④ Stan",
+                "⑤ Odczytana wartość",
             ]
+        )
+        self.table.horizontalHeaderItem(2).setToolTip(
+            "Gdzie w dokumencie stoi wartość względem nazwy pola:\n"
+            "obok (po prawej) czy pod spodem. „Sam wybierz” zwykle\n"
+            "trafia dobrze — ustaw ręcznie, gdy się myli."
         )
         self.table.horizontalHeaderItem(1).setToolTip(
             "Nazwy pól używane w Twoim PDF. Kilka wariantów oddziel średnikiem."
         )
-        self.table.setColumnWidth(1, 240)
+        self.table.setColumnWidth(1, 190)
+        self.table.setColumnWidth(2, 150)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
@@ -359,8 +372,9 @@ class WypisProfileDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.table.itemChanged.connect(self._on_label_edited)
         self.table.itemDoubleClicked.connect(self._before_cell_edit)
         self.table.currentCellChanged.connect(
@@ -395,6 +409,16 @@ class WypisProfileDialog(QDialog):
         self.btn_clear_row.setShortcut("Delete")
         self.btn_clear_row.clicked.connect(self._clear_row)
         edit_row.addWidget(self.btn_clear_row)
+
+        self.btn_autofill = QPushButton("🪄 Wypełnij sam")
+        self.btn_autofill.setObjectName("btn_primary")
+        self.btn_autofill.setToolTip(
+            "Przechodzi po pustych polach i próbuje odczytać wartość\n"
+            "raz obok nazwy, raz pod spodem. Zapamiętuje to, co zadziała.\n"
+            "Pól już wypełnionych nie rusza."
+        )
+        self.btn_autofill.clicked.connect(self._autofill)
+        edit_row.addWidget(self.btn_autofill)
 
         self.btn_clear_value = QPushButton("🚫 Usuń wartość")
         self.btn_clear_value.setToolTip(
@@ -764,15 +788,36 @@ class WypisProfileDialog(QDialog):
             )
             self.table.setItem(row, 1, label_item)
 
+            # Kolumna „Skąd czytać” — lista wyboru dla każdego pola.
+            wybor = QComboBox()
+            for wartosc, opis in DIRECTIONS:
+                wybor.addItem(opis, wartosc)
+            biezacy = field_direction(profile, key)
+            wybor.setCurrentIndex(max(0, wybor.findData(biezacy)))
+            wybor.setToolTip(
+                "Gdzie stoi wartość względem nazwy pola.\n"
+                "Zmień, gdy program czyta nie z tego miejsca."
+            )
+            # Lista ma się mieścić w swojej kolumnie, a nie zachodzić
+            # na sąsiednie — inaczej trudno odczytać stan pola.
+            wybor.setMaximumWidth(146)
+            wybor.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            wybor.currentIndexChanged.connect(
+                lambda _i, k=key, w=wybor: self._on_direction_changed(k, w)
+            )
+            self.table.setCellWidget(row, 2, wybor)
+
             # Kolumna „Stan” jest tylko do odczytu…
             status_item = QTableWidgetItem("")
             status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 2, status_item)
+            self.table.setItem(row, 3, status_item)
 
             # …a „Odczytana wartość” daje się poprawić ręcznie.
             value_item = QTableWidgetItem("")
             value_item.setToolTip("Kliknij dwa razy, aby poprawić wartość ręcznie.")
-            self.table.setItem(row, 3, value_item)
+            self.table.setItem(row, 4, value_item)
 
         # Obszary odczytu zapisane w tym wzorze.
         self._areas = {
@@ -919,6 +964,27 @@ class WypisProfileDialog(QDialog):
                 f"🔲 Obszar dla „{key_item.text()}” zapisany, ale nie ma w nim "
                 "tekstu. Narysuj go jeszcze raz.  •  " + self.lbl_summary.text()
             )
+
+    def _clear_direction(self, key: str) -> None:
+        """Przywraca polu automatyczny wybór kierunku odczytu."""
+
+        index = self._current_index()
+        if index < 0:
+            return
+        kierunki = dict(self.profiles[index].get("directions") or {})
+        if kierunki.pop(key, None) is None:
+            return
+        self.profiles[index]["directions"] = kierunki
+        for row in range(self.table.rowCount()):
+            pozycja = self.table.item(row, 0)
+            if pozycja and pozycja.data(Qt.ItemDataRole.UserRole) == key:
+                widget = self.table.cellWidget(row, 2)
+                if widget is not None:
+                    poprzednie = self._loading
+                    self._loading = True
+                    widget.setCurrentIndex(max(0, widget.findData(DIRECTION_AUTO)))
+                    self._loading = poprzednie
+                break
 
     def _store_areas_into_profile(self) -> None:
         """Zapisuje obszary odczytu we wzorze."""
@@ -1081,6 +1147,101 @@ class WypisProfileDialog(QDialog):
 
     # ── Usuwanie przypisań ───────────────────────────────────────────
 
+    def _on_direction_changed(self, key: str, widget) -> None:
+        """Zapisuje wybrany kierunek odczytu i od razu czyta na nowo."""
+
+        if self._loading:
+            return
+
+        kierunek = widget.currentData()
+        index = self._current_index()
+        if index < 0:
+            return
+
+        self._remember()
+        kierunki = dict(self.profiles[index].get("directions") or {})
+        if kierunek and kierunek != DIRECTION_AUTO:
+            kierunki[key] = kierunek
+        else:
+            kierunki.pop(key, None)
+        self.profiles[index]["directions"] = kierunki
+
+        # Zmiana kierunku ma sens tylko wtedy, gdy pole nie jest zablokowane
+        # ręcznym wpisem ani narysowanym obszarem.
+        self._skipped_values.discard(key)
+        self._store_skipped_into_profile()
+        if self.pdf_text:
+            self._analyze()
+        self._refresh_marks()
+
+    def _autofill(self) -> None:
+        """Wypełnia wszystkie puste pola tym, co program sam znajdzie.
+
+        Dla każdego nieodczytanego pola sprawdza oba kierunki — obok i pod
+        spodem — i zapisuje ten, który dał wynik. Pola już uzupełnione
+        (ręcznie, obszarem albo odczytem) zostawia w spokoju.
+        """
+
+        if not self.pdf_text:
+            QMessageBox.information(
+                self,
+                "Najpierw wczytaj wypis",
+                "Wczytaj przykładowy wypis (PDF), a program spróbuje "
+                "sam dopasować pola.",
+            )
+            return
+
+        index = self._current_index()
+        if index < 0:
+            return
+
+        self._remember()
+        profile = self.profiles[index]
+        kierunki = dict(profile.get("directions") or {})
+        uzupelnione: list[str] = []
+
+        for row in range(self.table.rowCount()):
+            key_item = self.table.item(row, 0)
+            if key_item is None:
+                continue
+            key = key_item.data(Qt.ItemDataRole.UserRole)
+
+            # Nie ruszamy pól, które już mają wartość albo są zablokowane.
+            obecna = self.table.item(row, 4)
+            if obecna is not None and obecna.text().strip():
+                continue
+            if key in self._areas or key in self._manual_values:
+                continue
+            if not profile["fields"].get(key):
+                continue          # bez etykiety nie ma czego szukać
+
+            for kierunek in (DIRECTION_RIGHT, DIRECTION_BELOW):
+                proba = dict(profile)
+                proba["directions"] = {**kierunki, key: kierunek}
+                if extract_field(self.pdf_text, proba, key).strip():
+                    kierunki[key] = kierunek
+                    self._skipped_values.discard(key)
+                    uzupelnione.append(key_item.text())
+                    break
+
+        profile["directions"] = kierunki
+        self._store_skipped_into_profile()
+        self._load_profile_into_table()
+        self._analyze()
+        self._refresh_marks()
+
+        if uzupelnione:
+            lista = ", ".join(uzupelnione[:4])
+            reszta = f" i {len(uzupelnione) - 4} więcej" if len(uzupelnione) > 4 else ""
+            self.lbl_summary.setText(
+                f"🪄 Uzupełniono {len(uzupelnione)} pól: {lista}{reszta}."
+            )
+        else:
+            self.lbl_summary.setText(
+                "🪄 Nie znalazłem nic nowego — pozostałe pola trzeba "
+                "wskazać na dokumencie."
+            )
+
     def _clear_row_value(self) -> None:
         """Kasuje odczytaną wartość, zostawiając przypisane etykiety."""
 
@@ -1096,7 +1257,7 @@ class WypisProfileDialog(QDialog):
         key_item = self.table.item(row, 0)
         key = key_item.data(Qt.ItemDataRole.UserRole)
 
-        obecna = self.table.item(row, 3)
+        obecna = self.table.item(row, 4)
         obecna = obecna.text().strip() if obecna else ""
         if not obecna and key not in self._areas and key not in self._manual_values:
             return
@@ -1111,7 +1272,7 @@ class WypisProfileDialog(QDialog):
         self._store_skipped_into_profile()
 
         self._loading = True
-        self.table.setItem(row, 3, QTableWidgetItem(""))
+        self.table.setItem(row, 4, QTableWidgetItem(""))
         self._loading = False
 
         if self.pdf_text:
@@ -1299,18 +1460,30 @@ class WypisProfileDialog(QDialog):
 
         item = self.table.item(row, 1)
         key = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-        ma_obszar = key in self._areas
-        if not (item and item.text().strip()) and not ma_obszar:
+        wartosc_item = self.table.item(row, 4)
+        ma_cokolwiek = bool(
+            (item and item.text().strip())
+            or key in self._areas
+            or key in self._manual_values
+            or (wartosc_item and wartosc_item.text().strip())
+            or self._current_profile().get("directions", {}).get(key)
+        )
+        if not ma_cokolwiek:
             return
 
         self._remember()
         name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+        # Kasujemy wszystko, co wiąże pole z dokumentem — bez względu na to,
+        # czy etykieta powstała z kliknięcia, z wpisania ręcznego, czy
+        # z prostokąta narysowanego w trybie „ETYKIETA (rysuj)”.
         self._areas.pop(key, None)
         self._manual_values.pop(key, None)
         self._store_areas_into_profile()
         self._store_manual_into_profile()
+        self._clear_direction(key)
         self._loading = True
         self.table.setItem(row, 1, QTableWidgetItem(""))
+        self.table.setItem(row, 4, QTableWidgetItem(""))
         self._loading = False
         self._store_table_into_profile()
         if self.pdf_text:
@@ -1369,7 +1542,7 @@ class WypisProfileDialog(QDialog):
         if self._loading:
             return
 
-        if item.column() == 3:
+        if item.column() == 4:
             self._on_value_edited(item)
             return
 
@@ -1648,7 +1821,7 @@ class WypisProfileDialog(QDialog):
                     self._analyze()
                 self._refresh_marks()
 
-                odczytane = self.table.item(row, 3)
+                odczytane = self.table.item(row, 4)
                 odczytane = odczytane.text() if odczytane else ""
                 if odczytane:
                     self.lbl_summary.setText(
@@ -1665,7 +1838,7 @@ class WypisProfileDialog(QDialog):
             self._skipped_values.discard(key)
             self._store_manual_into_profile()
             self._loading = True
-            self.table.setItem(row, 3, QTableWidgetItem(wpis))
+            self.table.setItem(row, 4, QTableWidgetItem(wpis))
             self._loading = False
             if self.pdf_text:
                 self._analyze()
@@ -1756,11 +1929,11 @@ class WypisProfileDialog(QDialog):
 
             # Komórki tworzymy tylko raz — ponowne setItem() na istniejącym
             # elemencie Qt zgłasza ostrzeżenie o zmianie właściciela.
-            status_item = self.table.item(row, 2)
+            status_item = self.table.item(row, 3)
             if status_item is None:
                 status_item = QTableWidgetItem()
                 status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, 2, status_item)
+                self.table.setItem(row, 3, status_item)
             status_item.setText(STATUS_TEXTS.get(status, ""))
             status_item.setForeground(QColor(STATUS_COLORS.get(status, "#cccccc")))
             tip = STATUS_HINTS.get(status, "")
@@ -1768,13 +1941,13 @@ class WypisProfileDialog(QDialog):
                 tip += f"\nDopasowana etykieta: {data['matched_label']}"
             status_item.setToolTip(tip)
 
-            value_item = self.table.item(row, 3)
+            value_item = self.table.item(row, 4)
             if value_item is None:
                 value_item = QTableWidgetItem()
                 value_item.setToolTip(
                     "Kliknij dwa razy, aby poprawić wartość ręcznie."
                 )
-                self.table.setItem(row, 3, value_item)
+                self.table.setItem(row, 4, value_item)
 
             # Obszar narysowany myszką ma pierwszeństwo — użytkownik
             # wskazał wprost, skąd czytać tę wartość.

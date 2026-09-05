@@ -1279,6 +1279,46 @@ Pola własne zapisują się razem ze wzorem, więc każdy urząd może mieć
 swój zestaw. Nazw pól wbudowanych nie zmieniamy — korzystają z nich inne
 części programu — ale można je ukryć i dodać własne pod swoją nazwą.
 
+## 53. Odczyt wartości spod nazwy pola, wybór kierunku i „Wypełnij sam”
+
+**Co było nie tak.** Program szukał wartości tylko *obok* nazwy pola — po jej
+prawej stronie. W wypisach, gdzie „Numer działki” i „Bliższe określenie
+położenia” stoją jako nagłówki tabelki, a `27/176` leży **pod spodem**, pola
+zostawały puste. Nie było też jak temu zaradzić ręcznie ani jednym ruchem
+uzupełnić tego, co program potrafi znaleźć sam.
+
+**Wartość pod nazwą pola.** Odczyt rozpoznaje teraz oba układy — wartość obok
+nazwy i wartość pod nią. Działa to zarówno przy klikaniu w dokument, jak i przy
+odczycie z tekstu. Program pilnuje, żeby nie pomylić tabelki z pionową listą:
+przy „Powiat  kartuski” nad „Gmina  Żukowo” nadal czyta „kartuski”, a nie
+„Gmina”. Za tabelkę uznaje dopiero wiersz stojący dokładnie pod rubrykami,
+w tych samych kolumnach, zaczynający się od danej (z cyfrą).
+
+**Nowa kolumna „③ Skąd czytać”.** Każde pole ma własną listę wyboru:
+
+| Ustawienie | Co robi |
+|---|---|
+| 🔎 **Sam wybierz** | program decyduje sam (ustawienie domyślne) |
+| ➡️ **Obok, z prawej** | wartość zawsze po prawej stronie nazwy |
+| ⬇️ **Pod spodem** | wartość zawsze pod nazwą — dla tabelek |
+
+Wybór zapisuje się we wzorze, więc kolejne wypisy z tego samego urzędu czytają
+się już poprawnie. Gdy program czyta nie z tego miejsca, wystarczy przestawić
+listę — bez rysowania prostokątów.
+
+**Nowy przycisk „🪄 Wypełnij sam”.** Bierze wszystkie pola, które mają
+przypisaną etykietę, ale pustą wartość, i próbuje odczytać je raz obok nazwy,
+raz spod spodu. Kierunek, który zadziałał, zapisuje w polu. Na końcu pisze,
+ile pól udało się uzupełnić. Nie rusza pól już wypełnionych, wpisanych ręcznie
+ani mających narysowany obszar.
+
+**„Usuń z pola” sprząta do końca.** Przycisk kasuje teraz wszystko, co wiąże
+pole z dokumentem — etykiety wpisane ręcznie, etykiety wskazane kliknięciem,
+etykiety narysowane w trybie „🏷️🔲 ETYKIETA (rysuj)”, narysowane obszary,
+wartości ręczne oraz wymuszony kierunek odczytu, który wraca do „Sam wybierz”.
+Wiersz zostaje pusty także w kolumnie z wartością. Całość cofa się przyciskiem
+„↩ Cofnij”.
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

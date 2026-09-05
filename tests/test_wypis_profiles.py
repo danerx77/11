@@ -17,7 +17,10 @@ from utils.wypis_profiles import (  # noqa: E402
     FIELD_LABELS,
     analyze_text,
     default_profiles,
+    DIRECTION_BELOW,
+    DIRECTION_RIGHT,
     custom_field_key,
+    field_direction,
     is_custom_field,
     profile_field_defs,
     profile_field_keys,
@@ -793,3 +796,67 @@ class SkasowaneWartosciTests(unittest.TestCase):
 
     def test_domyslnie_nic_nie_jest_skasowane(self):
         self.assertEqual(normalize_profile({"name": "t"})["skipped_values"], [])
+
+
+class KierunekOdczytuTests(unittest.TestCase):
+    """Runda 23: wartość bywa POD nazwą pola, nie tylko obok niej."""
+
+    POD = (
+        "Numer dzialki   Blizsze okreslenie polozenia\n"
+        "27/176   Borkowo, ul. Polna\n"
+    )
+    OBOK = "Wojewodztwo   POMORSKIE\nPowiat   kartuski\n"
+
+    def _profil(self, pole, etykieta, kierunek=None):
+        dane = {"name": "t", "fields": {pole: [etykieta]}}
+        if kierunek:
+            dane["directions"] = {pole: kierunek}
+        return normalize_profile(dane)
+
+    def test_domyslnie_czyta_wartosc_pod_spodem(self):
+        profil = self._profil("parcel_number", "Numer dzialki")
+        self.assertEqual(
+            extract_field(self.POD, profil, "parcel_number"), "27/176"
+        )
+
+    def test_domyslnie_czyta_tez_wartosc_obok(self):
+        profil = self._profil("voivodeship", "Wojewodztwo")
+        self.assertEqual(
+            extract_field(self.OBOK, profil, "voivodeship"), "POMORSKIE"
+        )
+
+    def test_wymuszony_kierunek_w_dol(self):
+        profil = self._profil(
+            "parcel_number", "Numer dzialki", DIRECTION_BELOW
+        )
+        self.assertEqual(
+            extract_field(self.POD, profil, "parcel_number"), "27/176"
+        )
+
+    def test_wymuszony_kierunek_obok_nie_bierze_z_dolu(self):
+        profil = self._profil(
+            "parcel_number", "Numer dzialki", DIRECTION_RIGHT
+        )
+        self.assertNotEqual(
+            extract_field(self.POD, profil, "parcel_number"), "27/176"
+        )
+
+    def test_profil_pamieta_kierunek(self):
+        profil = self._profil("area", "Pow.", DIRECTION_BELOW)
+        self.assertEqual(field_direction(profil, "area"), DIRECTION_BELOW)
+
+    def test_bez_ustawienia_kierunek_jest_automatyczny(self):
+        profil = self._profil("area", "Pow.")
+        self.assertEqual(field_direction(profil, "area"), "auto")
+
+    def test_odrzuca_nieznany_kierunek(self):
+        profil = normalize_profile(
+            {"name": "t", "directions": {"area": "byle co"}}
+        )
+        self.assertEqual(profil["directions"], {})
+
+    def test_lista_pol_nie_myli_sie_z_tabela(self):
+        # „Powiat  kartuski” nad „Gmina  Zukowo” to lista, nie tabela —
+        # wartością Powiatu jest „kartuski”, a nie „Gmina”.
+        profil = self._profil("county", "Powiat")
+        self.assertEqual(extract_field(self.OBOK, profil, "county"), "kartuski")

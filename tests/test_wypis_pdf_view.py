@@ -725,41 +725,41 @@ class RecznaWartoscTests(unittest.TestCase):
 
     def test_kolumna_wartosci_jest_edytowalna(self):
         row = self._wiersz("Powiat")
-        item = self.dialog.table.item(row, 3)
+        item = self.dialog.table.item(row, 4)
         self.assertTrue(item.flags() & Qt.ItemFlag.ItemIsEditable)
 
     def test_kolumna_stanu_nie_jest_edytowalna(self):
         row = self._wiersz("Powiat")
-        item = self.dialog.table.item(row, 2)
+        item = self.dialog.table.item(row, 3)
         self.assertFalse(item.flags() & Qt.ItemFlag.ItemIsEditable)
 
     def test_wpisana_wartosc_zostaje_zapamietana(self):
         row = self._wiersz("Powiat")
-        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.dialog.table.item(row, 4).setText("wejherowski")
         self.assertEqual(self.dialog._manual_values.get("county"), "wejherowski")
 
     def test_wpisana_wartosc_zmienia_stan(self):
         row = self._wiersz("Powiat")
-        self.dialog.table.item(row, 3).setText("wejherowski")
-        self.assertIn("ręcznie", self.dialog.table.item(row, 2).text())
+        self.dialog.table.item(row, 4).setText("wejherowski")
+        self.assertIn("ręcznie", self.dialog.table.item(row, 3).text())
 
     def test_ponowna_analiza_nie_kasuje_recznej_wartosci(self):
         row = self._wiersz("Powiat")
-        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.dialog.table.item(row, 4).setText("wejherowski")
         self.dialog._analyze()
-        self.assertEqual(self.dialog.table.item(row, 3).text(), "wejherowski")
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "wejherowski")
 
     def test_skasowanie_wraca_do_odczytu(self):
         row = self._wiersz("Powiat")
-        odczyt = self.dialog.table.item(row, 3).text()
-        self.dialog.table.item(row, 3).setText("wejherowski")
-        self.dialog.table.item(row, 3).setText("")
-        self.assertEqual(self.dialog.table.item(row, 3).text(), odczyt)
+        odczyt = self.dialog.table.item(row, 4).text()
+        self.dialog.table.item(row, 4).setText("wejherowski")
+        self.dialog.table.item(row, 4).setText("")
+        self.assertEqual(self.dialog.table.item(row, 4).text(), odczyt)
         self.assertNotIn("county", self.dialog._manual_values)
 
     def test_wartosc_trafia_do_wzoru(self):
         row = self._wiersz("Powiat")
-        self.dialog.table.item(row, 3).setText("wejherowski")
+        self.dialog.table.item(row, 4).setText("wejherowski")
         index = self.dialog._current_index()
         zapisane = self.dialog.profiles[index].get("manual_values", {})
         self.assertEqual(zapisane.get("county"), "wejherowski")
@@ -839,7 +839,7 @@ class TrybKlikaniaTests(unittest.TestCase):
         self.dialog.table.setCurrentCell(row, 0)
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
-        self.assertEqual(self.dialog.table.item(row, 3).text(), "0,4500")
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "0,4500")
 
     def test_tryb_wartosci_daje_stan_odczytano(self):
         # Kluczowe: ma być „odczytano”, nie „wpisano ręcznie”.
@@ -847,17 +847,17 @@ class TrybKlikaniaTests(unittest.TestCase):
         self.dialog.table.setCurrentCell(row, 0)
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
-        self.assertIn("odczytano", self.dialog.table.item(row, 2).text())
-        self.assertNotIn("ręcznie", self.dialog.table.item(row, 2).text())
+        self.assertIn("odczytano", self.dialog.table.item(row, 3).text())
+        self.assertNotIn("ręcznie", self.dialog.table.item(row, 3).text())
 
     def test_wskazana_wartosc_da_sie_cofnac(self):
         row = self._wiersz("Numer księgi wieczystej")
         self.dialog.table.setCurrentCell(row, 0)
-        przed = self.dialog.table.item(row, 3).text()
+        przed = self.dialog.table.item(row, 4).text()
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
         self.dialog._undo_change()
-        self.assertEqual(self.dialog.table.item(row, 3).text(), przed)
+        self.assertEqual(self.dialog.table.item(row, 4).text(), przed)
 
     def test_wskazana_wartosc_zapisuje_etykiete_we_wzorze(self):
         row = self._wiersz("Numer księgi wieczystej")
@@ -872,7 +872,7 @@ class TrybKlikaniaTests(unittest.TestCase):
         self.dialog.table.setCurrentCell(row, 0)
         self.dialog.btn_mode_value.setChecked(True)
         self._klik("0,4500")
-        self.assertEqual(self.dialog.table.item(row, 3).text(), "0,4500")
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "0,4500")
 
 
 @unittest.skipIf(
@@ -1106,11 +1106,11 @@ class ObszarWOknieTests(unittest.TestCase):
 
     def test_narysowany_obszar_daje_wartosc(self):
         row = self._narysuj("Numer księgi wieczystej", "0.0235")
-        self.assertEqual(self.dialog.table.item(row, 3).text(), "0.0235")
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "0.0235")
 
     def test_stan_pokazuje_obszar(self):
         row = self._narysuj("Numer księgi wieczystej", "0.0235")
-        self.assertIn("obszar", self.dialog.table.item(row, 2).text())
+        self.assertIn("obszar", self.dialog.table.item(row, 3).text())
 
     def test_obszar_zapisany_we_wzorze(self):
         self._narysuj("Numer księgi wieczystej", "0.0235")
@@ -1121,7 +1121,7 @@ class ObszarWOknieTests(unittest.TestCase):
         row = self._narysuj("Numer księgi wieczystej", "0.0235")
         self.dialog._undo_change()
         self.assertNotIn("kw", self.dialog._areas)
-        self.assertNotEqual(self.dialog.table.item(row, 3).text(), "0.0235")
+        self.assertNotEqual(self.dialog.table.item(row, 4).text(), "0.0235")
 
     def test_usuniecie_pola_kasuje_obszar(self):
         row = self._narysuj("Numer księgi wieczystej", "0.0235")
@@ -1132,7 +1132,7 @@ class ObszarWOknieTests(unittest.TestCase):
     def test_obszar_wygrywa_z_dopasowaniem_tekstu(self):
         # Pole „Obręb” czyta się samo, ale obszar ma pierwszeństwo.
         row = self._narysuj("Obręb", "0.0235")
-        self.assertEqual(self.dialog.table.item(row, 3).text(), "0.0235")
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "0.0235")
 
 
 @unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")
@@ -1292,3 +1292,156 @@ class ZakladkaTekstowaTests(unittest.TestCase):
             )
         finally:
             okno.deleteLater()
+
+
+class UsuwanieZPolaTests(unittest.TestCase):
+    """Runda 23: „Usuń z pola” czyści też etykiety z trybu ETYKIETA (rysuj)."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.chk_auto.setChecked(False)
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _wiersz(self, nazwa: str) -> int:
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return row
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def _etykieta_rysowana(self, row: int, tekst: str) -> None:
+        """Udaje prostokąt narysowany w trybie „ETYKIETA (rysuj)”."""
+
+        from PySide6.QtCore import QRect
+
+        self.dialog.table.setCurrentCell(row, 1)
+        self.dialog.btn_mode_area_label.setChecked(True)
+        self.dialog._on_area_selected(
+            {"rect": QRect(200, 150, 120, 20), "text": tekst}
+        )
+
+    def test_usuwa_etykiete_dodana_rysowaniem(self):
+        row = self._wiersz("Powiat")
+        self._etykieta_rysowana(row, "Powiat")
+        self.assertTrue(self.dialog.table.item(row, 1).text().strip())
+
+        self.dialog.table.setCurrentCell(row, 1)
+        self.dialog._clear_row()
+        self.assertEqual(self.dialog.table.item(row, 1).text(), "")
+
+    def test_po_usunieciu_nie_ma_tez_wartosci(self):
+        row = self._wiersz("Powiat")
+        self._etykieta_rysowana(row, "Powiat")
+        self.dialog.table.setCurrentCell(row, 1)
+        self.dialog._clear_row()
+        self.assertEqual(self.dialog.table.item(row, 4).text(), "")
+
+    def test_usuwa_takze_wymuszony_kierunek(self):
+        row = self._wiersz("Powiat")
+        self._etykieta_rysowana(row, "Powiat")
+        widget = self.dialog.table.cellWidget(row, 2)
+        widget.setCurrentIndex(widget.findData("below"))
+
+        self.dialog.table.setCurrentCell(row, 1)
+        self.dialog._clear_row()
+        profil = self.dialog._current_profile()
+        self.assertNotIn("county", profil.get("directions", {}))
+        self.assertEqual(widget.currentData(), "auto")
+
+    def test_cofnij_przywraca_usunieta_etykiete(self):
+        row = self._wiersz("Powiat")
+        self._etykieta_rysowana(row, "Powiat")
+        przed = self.dialog.table.item(row, 1).text()
+
+        self.dialog.table.setCurrentCell(row, 1)
+        self.dialog._clear_row()
+        self.dialog._undo_change()
+        self.assertEqual(self.dialog.table.item(row, 1).text(), przed)
+
+
+class KierunekWTabeliTests(unittest.TestCase):
+    """Runda 23: kolumna „Skąd czytać” i „Wypełnij automatycznie”."""
+
+    @classmethod
+    def setUpClass(cls):
+        PodgladStronyTests.setUpClass()
+        cls.pdf = PodgladStronyTests.pdf
+
+    @classmethod
+    def tearDownClass(cls):
+        PodgladStronyTests.tearDownClass()
+
+    def setUp(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        self._info = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: None)
+
+        from modules.wypis_profil_dialog import WypisProfileDialog
+
+        self.dialog = WypisProfileDialog({})
+        self.dialog.show()
+        self.dialog.chk_auto.setChecked(False)
+        self.dialog.load_pdf_path(self.pdf)
+
+    def tearDown(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information = self._info
+
+    def _wiersz(self, nazwa: str) -> int:
+        for row in range(self.dialog.table.rowCount()):
+            if self.dialog.table.item(row, 0).text() == nazwa:
+                return row
+        raise AssertionError(f"brak wiersza {nazwa!r}")
+
+    def test_kazdy_wiersz_ma_wybor_kierunku(self):
+        row = self._wiersz("Powiat")
+        widget = self.dialog.table.cellWidget(row, 2)
+        self.assertIsNotNone(widget)
+        self.assertEqual(widget.count(), 3)
+
+    def test_domyslnie_wybrany_jest_tryb_automatyczny(self):
+        row = self._wiersz("Powiat")
+        self.assertEqual(
+            self.dialog.table.cellWidget(row, 2).currentData(), "auto"
+        )
+
+    def test_wybor_kierunku_zapisuje_sie_we_wzorze(self):
+        row = self._wiersz("Powiat")
+        widget = self.dialog.table.cellWidget(row, 2)
+        widget.setCurrentIndex(widget.findData("below"))
+        profil = self.dialog._current_profile()
+        self.assertEqual(profil["directions"].get("county"), "below")
+
+    def test_jest_przycisk_wypelnij_automatycznie(self):
+        self.assertTrue(self.dialog.btn_autofill.isEnabled())
+        self.assertIn("ypełnij", self.dialog.btn_autofill.text())
+
+    def test_wypelnij_automatycznie_nie_psuje_odczytanych_pol(self):
+        row = self._wiersz("Powiat")
+        przed = self.dialog.table.item(row, 4).text()
+        self.dialog._autofill()
+        self.assertEqual(self.dialog.table.item(row, 4).text(), przed)
+
