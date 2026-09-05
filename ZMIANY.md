@@ -677,6 +677,80 @@ wartości domyślne, pełny obieg odczyt→zapis oraz sprawdzenie, że w
 `ustawienia.py` faktycznie nie ma już kodu pól wypisów. Razem
 **411 testów** (było 385).
 
+## 41. Wypisy na górze Ustawień i wskazywanie pól myszą
+
+**Prośby:** sekcja „Wzory odczytu wypisów (PDF)” ma być **u góry**
+Ustawień, a nie gdzieś na dole; wskazywanie „co jest czym” ma być
+**graficzne** — normalne klikanie po dokumencie, nie wpisywanie tekstu.
+
+### Sekcja przeniesiona na samą górę
+
+„Wypisy — odczyt danych z dokumentu” stoi teraz **jako pierwsza**, zaraz
+pod nagłówkiem „⚙️ Ustawienia Aplikacji” — przed wyglądem zakładek,
+nazewnictwem plików i folderami. Wcześniej trzeba było przewinąć przez
+kilkanaście ramek.
+
+### Wskazywanie pól myszą
+
+Prawa strona okna wzorów ma teraz dwie zakładki:
+
+| Zakładka | Do czego służy |
+| --- | --- |
+| **🖱️ Wskaż na dokumencie** | prawdziwa strona wypisu — klikasz po niej |
+| **📄 Tekst dokumentu** | dotychczasowy widok tekstowy, jako zapas |
+
+Domyślnie otwiera się widok graficzny. Przypisanie pola to teraz dwa
+kliknięcia:
+
+1. klikasz wiersz w tabeli (np. „Położenie działki”),
+2. klikasz tę nazwę **na dokumencie** — i gotowe.
+
+### Co widać na dokumencie
+
+- **Żółte podświetlenie** pod kursorem pokazuje, w co trafisz, zanim
+  klikniesz. Podpowiedź obok podaje pełną nazwę.
+- **Zielone ramki** z podpisem oznaczają pola już przypisane — od razu
+  widać, co jest rozpoznane, a czego brakuje.
+- Przełącznik „Pokaż przypisane pola” chowa ramki, gdyby zasłaniały
+  dokument.
+- Strzałki **◀ Poprzednia / Następna ▶** przechodzą po stronach
+  wielostronicowego wypisu.
+
+Program sam odczytuje przy kliknięciu nie tylko etykietę, ale i wartość
+stojącą obok, więc od razu widzisz w tabeli, co się z danego pola
+wyciągnie.
+
+### Rozpoznawanie etykiet
+
+Kilka rzeczy, które musiały zadziałać, żeby klikanie było wygodne:
+
+- **Etykieta kończy się na dwukropku.** Kliknięcie w „Dzialka” z linii
+  `Dzialka nr: 145/7` daje etykietę `Dzialka nr` i wartość `145/7`,
+  a nie samo słowo, w które akurat trafił kursor.
+- **Kliknięcie w wartość też działa** — program cofa się do etykiety
+  z tej samej linii.
+- **Trafienie w odstęp** między słowami nie jest błędem; brane jest
+  najbliższe słowo w tej samej linii.
+- **Ogonki nie mają znaczenia** — wypis drukowany jako „Wojewodztwo”
+  dopasuje się do pola „Województwo”.
+- Przy kilku wariantach wygrywa **najdłuższy** — `Pow. [ha]` zamiast
+  krótszego `Pow.`.
+
+Strona dopasowuje szerokość do panelu, więc nie trzeba przewijać w bok.
+
+### Nowy plik
+
+Kod podglądu mieszka osobno w `modules/wypis_pdf_view.py` — renderowanie
+strony, położenie słów i rysowanie ramek. Okno wzorów tylko z niego
+korzysta.
+
+### Testy
+
+`tests/test_wypis_pdf_view.py` — 21 testów: renderowanie strony, odczyt
+położenia słów, klikanie w etykietę, w wartość i w odstęp, ogonki,
+najdłuższe dopasowanie oraz zachowanie przy braku pliku. Doszedł też test
+kolejności sekcji w Ustawieniach. Razem **434 testy** (było 411).
+
 ## Uwagi techniczne
 
 * Cała nowa logika siedzi w `utils/` (`parcel_indicators.py`,

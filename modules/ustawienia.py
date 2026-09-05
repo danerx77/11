@@ -277,6 +277,11 @@ class SettingsTabWidget(QWidget):
         header.setStyleSheet("font-size: 16px; font-weight: 700;")
         main_layout.addWidget(header)
 
+        # Odczyt wypisów stoi na samej górze — to ustawienie, z którego
+        # korzysta się najczęściej, więc nie powinno być schowane na dole
+        # długiej strony.
+        main_layout.addWidget(self._build_wypis_box())
+
         # WYGLĄD GŁÓWNYCH ZAKŁADEK
         appearance_box = QGroupBox("Wygląd zakładek modułów")
         appearance_form = QFormLayout(appearance_box)
@@ -564,7 +569,6 @@ class SettingsTabWidget(QWidget):
 
         main_layout.addWidget(self._build_project_folder_box())
         main_layout.addWidget(self._build_output_folders_box())
-        main_layout.addWidget(self._build_wypis_box())
 
         # PISMA PRZEWODNIE — REGUŁY SERII
         cover_rules_box = QGroupBox(

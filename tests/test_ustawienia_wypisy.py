@@ -139,5 +139,35 @@ class RozdzieleniePlikowTests(unittest.TestCase):
         self.assertIn("WypisProfileDialog", text)
 
 
+
+@unittest.skipIf(QApplication is None, "PySide6 nie jest dostępne")
+class KolejnoscSekcjiTests(unittest.TestCase):
+    """Sekcja Wypisy ma stać u góry Ustawień, nie na dole strony."""
+
+    def _kod(self) -> str:
+        root = Path(__file__).resolve().parent.parent
+        return (root / "modules" / "ustawienia.py").read_text(encoding="utf-8")
+
+    def test_wypisy_sa_przed_pozostalymi_sekcjami(self):
+        kod = self._kod()
+        wypisy = kod.index("self._build_wypis_box()")
+        for pozniejsza in (
+            "self._build_naming_box()",
+            "self._build_project_folder_box()",
+            "self._build_output_folders_box()",
+        ):
+            self.assertLess(
+                wypisy, kod.index(pozniejsza),
+                f"sekcja Wypisy powinna być przed {pozniejsza}",
+            )
+
+    def test_wypisy_stoja_zaraz_pod_naglowkiem(self):
+        kod = self._kod()
+        naglowek = kod.index('QLabel("⚙️ Ustawienia Aplikacji")')
+        wypisy = kod.index("self._build_wypis_box()")
+        # Między nagłówkiem a sekcją nie ma innej ramki ustawień.
+        miedzy = kod[naglowek:wypisy]
+        self.assertNotIn("QGroupBox(", miedzy)
+
 if __name__ == "__main__":
     unittest.main()

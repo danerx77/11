@@ -28,12 +28,16 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
+
+from modules.wypis_pdf_view import WypisPdfView, load_page, page_count
 
 from utils.global_settings import wypis_profiles_path
 from utils.wypis_profiles import (
@@ -79,6 +83,8 @@ class WypisProfileDialog(QDialog):
         self.pdf_text = ""
         self.pdf_path = ""
         self._loading = False
+        self._page_index = 0
+        self._page_total = 0
 
         self._build_ui()
         self._reload_profile_combo()
@@ -208,18 +214,70 @@ class WypisProfileDialog(QDialog):
         fields_layout.addWidget(self.lbl_summary)
 
         hint = QLabel(
-            "Jak poprawić odczyt: kliknij wiersz w tabeli, zaznacz w tekście "
-            "po prawej właściwą nazwę pola i użyj przycisku „⬅️ Użyj "
-            "zaznaczenia jako etykiety”. Możesz też wpisać etykiety wprost "
-            "w kolumnie „Etykiety w PDF”, oddzielając je średnikami."
+            "Jak przypisać pole: <b>1.</b> kliknij wiersz w tabeli, "
+            "<b>2.</b> kliknij nazwę tego pola na dokumencie po prawej. "
+            "Gotowe. Etykiety można też wpisać ręcznie w kolumnie "
+            "„Etykiety w PDF”, oddzielając je średnikami."
         )
         hint.setObjectName("muted_hint")
         hint.setWordWrap(True)
         fields_layout.addWidget(hint)
         splitter.addWidget(fields_box)
 
-        text_box = QGroupBox("Tekst wczytanego dokumentu")
+        # ── Prawa strona: podgląd graficzny (domyślny) i tekst zapasowo ──
+        self.doc_tabs = QTabWidget()
+
+        # 1. Widok graficzny — klikanie po prawdziwej stronie wypisu.
+        page_box = QWidget()
+        page_layout = QVBoxLayout(page_box)
+        page_layout.setContentsMargins(6, 6, 6, 6)
+
+        page_hint = QLabel(
+            "Kliknij w dokumencie nazwę pola (np. „Powiat”), a program "
+            "przypisze ją do wiersza zaznaczonego w tabeli po lewej. "
+            "Podświetlenie pokazuje, w co trafisz."
+        )
+        page_hint.setObjectName("muted_hint")
+        page_hint.setWordWrap(True)
+        page_layout.addWidget(page_hint)
+
+        nav_row = QHBoxLayout()
+        self.btn_prev_page = QPushButton("◀ Poprzednia")
+        self.btn_prev_page.clicked.connect(lambda: self._change_page(-1))
+        nav_row.addWidget(self.btn_prev_page)
+
+        self.lbl_page = QLabel("Strona —")
+        self.lbl_page.setObjectName("muted_hint")
+        nav_row.addWidget(self.lbl_page)
+
+        self.btn_next_page = QPushButton("Następna ▶")
+        self.btn_next_page.clicked.connect(lambda: self._change_page(1))
+        nav_row.addWidget(self.btn_next_page)
+
+        self.chk_show_marks = QCheckBox("Pokaż przypisane pola")
+        self.chk_show_marks.setChecked(True)
+        self.chk_show_marks.setToolTip(
+            "Zielone ramki to etykiety przypisane do pól, niebieskie — "
+            "odczytane wartości."
+        )
+        self.chk_show_marks.toggled.connect(self._refresh_marks)
+        nav_row.addWidget(self.chk_show_marks)
+        nav_row.addStretch()
+        page_layout.addLayout(nav_row)
+
+        self.page_scroll = QScrollArea()
+        self.page_scroll.setWidgetResizable(False)
+        self.page_view = WypisPdfView()
+        self.page_view.label_clicked.connect(self._on_label_clicked)
+        self.page_scroll.setWidget(self.page_view)
+        page_layout.addWidget(self.page_scroll, 1)
+
+        self.doc_tabs.addTab(page_box, "🖱️ Wskaż na dokumencie")
+
+        # 2. Widok tekstowy — dotychczasowy sposób, przydatny przy skanach.
+        text_box = QWidget()
         text_layout = QVBoxLayout(text_box)
+        text_layout.setContentsMargins(6, 6, 6, 6)
         self.text_view = QPlainTextEdit()
         self.text_view.setReadOnly(True)
         self.text_view.setPlaceholderText(
@@ -239,8 +297,10 @@ class WypisProfileDialog(QDialog):
         use_row.addStretch()
         text_layout.addLayout(use_row)
 
-        splitter.addWidget(text_box)
-        splitter.setSizes([680, 480])
+        self.doc_tabs.addTab(text_box, "📄 Tekst dokumentu")
+
+        splitter.addWidget(self.doc_tabs)
+        splitter.setSizes([620, 620])
         layout.addWidget(splitter, 1)
 
         # ── Przyciski ──
@@ -316,6 +376,8 @@ class WypisProfileDialog(QDialog):
         self.table.resizeRowsToContents()
         if self.pdf_text:
             self._analyze()
+        if getattr(self, "page_view", None) is not None and self.pdf_path:
+            self._refresh_marks()
 
     def _store_markers(self):
         index = self._current_index()
@@ -445,11 +507,108 @@ class WypisProfileDialog(QDialog):
         self.text_view.setPlainText(self.pdf_text)
         self.lbl_pdf.setText(f"Wczytano: {Path(path).name}")
 
+        # Podgląd graficzny — to na nim wskazuje się pola myszą.
+        self._page_total = page_count(path)
+        self._page_index = 0
+        self._load_page_view()
+
         if self.chk_auto.isChecked():
             self._detect_for_loaded(silent=True)
         else:
             self._analyze()
         return True
+
+    # ── Podgląd graficzny ────────────────────────────────────────────
+
+    def _load_page_view(self) -> None:
+        """Renderuje bieżącą stronę wypisu do podglądu graficznego."""
+
+        if not self.pdf_path:
+            self.page_view.set_page(None)
+            self.lbl_page.setText("Strona —")
+            return
+
+        # Szerokość dobieramy do panelu, aby nie trzeba było przewijać w bok.
+        available = max(self.page_scroll.viewport().width() - 24, 380)
+        page = load_page(self.pdf_path, self._page_index, dpi=96)
+        if page is not None and page.image.width() > available:
+            dpi = max(int(96 * available / page.image.width()), 48)
+            page = load_page(self.pdf_path, self._page_index, dpi=dpi) or page
+        self.page_view.set_page(page)
+        if page is None:
+            self.lbl_page.setText(
+                "Nie udało się narysować strony — użyj zakładki „Tekst dokumentu”."
+            )
+        else:
+            self.lbl_page.setText(
+                f"Strona {self._page_index + 1} z {self._page_total}"
+            )
+        self.btn_prev_page.setEnabled(self._page_index > 0)
+        self.btn_next_page.setEnabled(self._page_index + 1 < self._page_total)
+        self._refresh_marks()
+
+    def _change_page(self, step: int) -> None:
+        new_index = self._page_index + step
+        if 0 <= new_index < self._page_total:
+            self._page_index = new_index
+            self._load_page_view()
+
+    def _refresh_marks(self) -> None:
+        """Rysuje ramki pól, które mają już przypisane etykiety."""
+
+        if not self.chk_show_marks.isChecked():
+            self.page_view.set_marks({}, {})
+            return
+
+        profile = self._current_profile()
+        marks: dict[str, object] = {}
+        for key in FIELD_KEYS:
+            rect = self.page_view.label_rects(profile["fields"].get(key, []))
+            if rect is not None:
+                marks[FIELD_LABELS[key]] = rect
+        self.page_view.set_marks(marks, {})
+
+    def _on_label_clicked(self, hit: dict) -> None:
+        """Przypisuje klikniętą etykietę do wiersza wybranego w tabeli."""
+
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Nie wybrano pola",
+                "Kliknij najpierw wiersz w tabeli po lewej, aby wskazać, "
+                "do którego pola przypisać tę etykietę.",
+            )
+            return
+
+        label = str(hit.get("label") or "").strip()
+        if not label:
+            return
+
+        item = self.table.item(row, 1)
+        current = [p.strip() for p in (item.text() if item else "").split(";") if p.strip()]
+        if label in current:
+            QMessageBox.information(
+                self,
+                "Etykieta już przypisana",
+                f"„{label}” jest już przypisana do tego pola.",
+            )
+            return
+
+        current.insert(0, label)
+        self.table.setItem(row, 1, QTableWidgetItem("; ".join(current)))
+        self._store_table_into_profile()
+        self._analyze()
+        self._refresh_marks()
+
+        field_name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+        value = str(hit.get("value") or "").strip()
+        self.lbl_summary.setText(
+            f"Przypisano „{label}” → {field_name}"
+            + (f" (odczytano: {value})" if value else "")
+            + "  •  "
+            + self.lbl_summary.text()
+        )
 
     def _detect_for_loaded(self, silent: bool = False):
         if not self.pdf_text:
